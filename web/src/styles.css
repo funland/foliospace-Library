@@ -214,6 +214,21 @@ h1 {
   margin-top: 3px;
 }
 
+.rowActions {
+  display: flex;
+  gap: 8px;
+}
+
+button.danger {
+  border-color: #dfc8c8;
+  color: #8f2f2f;
+}
+
+button.danger:hover {
+  border-color: #b84a4a;
+  background: #fff6f6;
+}
+
 .list {
   display: flex;
   flex-direction: column;

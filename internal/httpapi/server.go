@@ -58,8 +58,16 @@ func (s *Server) handleLibraries(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLibraryAction(w http.ResponseWriter, r *http.Request) {
-	id, action, ok := parseIDAction(r.URL.Path, "/api/libraries/")
-	if !ok || action != "scan" {
+	id, tail, ok := parseIDTail(r.URL.Path, "/api/libraries/")
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	if tail == "" && r.Method == http.MethodDelete {
+		writeJSONOrError(w, map[string]bool{"ok": true}, s.service.DeleteLibrary(id))
+		return
+	}
+	if tail != "scan" {
 		http.NotFound(w, r)
 		return
 	}

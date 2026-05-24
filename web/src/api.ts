@@ -75,6 +75,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ name, rootPath }),
     }),
+  deleteLibrary: (libraryId: number) => request<{ ok: boolean }>(`/api/libraries/${libraryId}`, { method: "DELETE" }),
   scan: (libraryId: number) => request<ScanJob>(`/api/libraries/${libraryId}/scan`, { method: "POST" }),
   series: () => request<Series[]>("/api/series"),
   books: (seriesId: number) => request<Book[]>(`/api/series/${seriesId}/books`),

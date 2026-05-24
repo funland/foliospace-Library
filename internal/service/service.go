@@ -39,6 +39,10 @@ func (s *Service) ListLibraries() ([]domain.Library, error) {
 	return s.store.ListLibraries()
 }
 
+func (s *Service) DeleteLibrary(id int64) error {
+	return s.store.DeleteLibrary(id)
+}
+
 func (s *Service) ScanLibrary(id int64) (domain.ScanJob, error) {
 	lib, err := s.store.LibraryByID(id)
 	if err != nil {

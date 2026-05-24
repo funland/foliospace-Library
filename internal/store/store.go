@@ -53,6 +53,73 @@ func (s *Store) ListLibraries() ([]domain.Library, error) {
 	return out, rows.Err()
 }
 
+func (s *Store) DeleteLibrary(id int64) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.Query(`SELECT b.id FROM books b JOIN series s ON s.id = b.series_id WHERE s.library_id = ?`, id)
+	if err != nil {
+		return err
+	}
+	var bookIDs []int64
+	for rows.Next() {
+		var bookID int64
+		if err := rows.Scan(&bookID); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		bookIDs = append(bookIDs, bookID)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	for _, bookID := range bookIDs {
+		if _, err := tx.Exec(`DELETE FROM read_progress WHERE book_id = ?`, bookID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`DELETE FROM pages WHERE book_id = ?`, bookID); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(`DELETE FROM file_errors WHERE library_id = ?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM job_events WHERE job_id IN (SELECT id FROM scan_jobs WHERE library_id = ?)`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM scan_jobs WHERE library_id = ?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM files WHERE library_id = ?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM books WHERE series_id IN (SELECT id FROM series WHERE library_id = ?)`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM series WHERE library_id = ?`, id); err != nil {
+		return err
+	}
+	res, err := tx.Exec(`DELETE FROM libraries WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return sql.ErrNoRows
+	}
+	return tx.Commit()
+}
+
 func (s *Store) UpsertSeries(libraryID int64, title string) (domain.Series, error) {
 	_, err := s.db.Exec(`INSERT INTO series(library_id, title) VALUES(?, ?)
 		ON CONFLICT(library_id, title) DO UPDATE SET updated_at = CURRENT_TIMESTAMP`, libraryID, title)

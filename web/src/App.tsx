@@ -87,6 +87,24 @@ export function App() {
     }
   }
 
+  async function deleteLibrary(library: Library) {
+    const confirmed = window.confirm(`Remove "${library.name}" from FolioSpace Reader? Files on disk will not be deleted.`);
+    if (!confirmed) return;
+
+    setActiveTask(`Removing ${library.name}`);
+    try {
+      await api.deleteLibrary(library.id);
+      setStatus(`Library removed: ${library.rootPath}`);
+      setSelectedSeries(null);
+      setBooks([]);
+      await refreshAll();
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Failed to remove library");
+    } finally {
+      setActiveTask(null);
+    }
+  }
+
   async function addLibrary(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setActiveTask("Adding library");
@@ -285,7 +303,10 @@ export function App() {
                     <strong>{library.name}</strong>
                     <small>{library.rootPath}</small>
                   </div>
-                  <button onClick={() => scan(library)}>Scan</button>
+                  <div className="rowActions">
+                    <button onClick={() => scan(library)}>Scan</button>
+                    <button className="danger" onClick={() => deleteLibrary(library)}>Delete</button>
+                  </div>
                 </div>
               ))}
             </section>
