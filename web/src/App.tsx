@@ -148,6 +148,12 @@ export function App() {
     return series.filter((item) => item.title.toLowerCase().includes(value));
   }, [query, series]);
 
+  const filteredBooks = useMemo(() => {
+    const value = query.trim().toLowerCase();
+    if (!value || !selectedSeries) return books;
+    return books.filter((book) => book.title.toLowerCase().includes(value));
+  }, [books, query, selectedSeries]);
+
   const scanProgressLabel = activeScan
     ? `${activeScan.indexedFiles} indexed · ${activeScan.skippedFiles} skipped · ${activeScan.errorCount} errors`
     : null;
@@ -236,19 +242,37 @@ export function App() {
               </div>
             </section>
 
-            <section className="panel wide">
-              <h1>{selectedSeries ? selectedSeries.title : "Books"}</h1>
-              <div className="books">
-                {books.map((book) => (
-                  <button className="book" key={book.id} onClick={() => openBook(book)}>
-                    <img src={`/api/books/${book.id}/cover`} alt="" />
-                    <strong>{book.title}</strong>
-                    <small>
-                      {book.format.toUpperCase()} · {book.pageCount || "?"} pages
-                    </small>
-                  </button>
-                ))}
+            <section className="coverWall panel wide">
+              <div className="coverWallHeader">
+                <div>
+                  <h1>{selectedSeries ? selectedSeries.title : "Cover Wall"}</h1>
+                  <small>
+                    {selectedSeries
+                      ? `${filteredBooks.length} of ${books.length} books`
+                      : "Select a series to browse its books"}
+                  </small>
+                </div>
+                {selectedSeries && <span>{selectedSeries.bookCount} indexed</span>}
               </div>
+              {selectedSeries && filteredBooks.length > 0 ? (
+                <div className="books">
+                  {filteredBooks.map((book) => (
+                    <button className="book" key={book.id} onClick={() => openBook(book)} title={book.title}>
+                      <span className="coverFrame">
+                        <img src={`/api/books/${book.id}/cover`} alt="" loading="lazy" />
+                        <span className="coverBadge">{book.format.toUpperCase()}</span>
+                      </span>
+                      <strong>{book.title}</strong>
+                      <small>{book.pageCount ? `${book.pageCount} pages` : "Not analyzed"}</small>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="coverEmpty">
+                  <strong>{selectedSeries ? "No matching books" : "No series selected"}</strong>
+                  <small>{selectedSeries ? "Clear the search field to show all books." : "Choose a series from the list above."}</small>
+                </div>
+              )}
             </section>
           </div>
         )}

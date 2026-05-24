@@ -226,25 +226,132 @@ h1 {
   border-radius: 0;
 }
 
+.coverWall {
+  padding: 0;
+  overflow: hidden;
+}
+
+.coverWallHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid #d9e0e3;
+  background: linear-gradient(180deg, #ffffff 0%, #f3f8f9 100%);
+  padding: 16px 18px;
+}
+
+.coverWallHeader h1 {
+  margin-bottom: 4px;
+}
+
+.coverWallHeader small,
+.coverWallHeader span {
+  color: #647177;
+  font-size: 13px;
+}
+
 .books {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(172px, 1fr));
+  gap: 18px;
+  padding: 18px;
 }
 
 .book {
+  position: relative;
   display: grid;
-  gap: 8px;
+  align-content: start;
+  gap: 9px;
+  min-width: 0;
   text-align: left;
-  padding: 10px;
+  border-color: transparent;
+  background: transparent;
+  padding: 0;
 }
 
-.book img {
+.book:hover,
+.book:focus-visible {
+  border-color: transparent;
+}
+
+.book:hover .coverFrame,
+.book:focus-visible .coverFrame {
+  border-color: #6c8a96;
+  box-shadow: 0 14px 28px rgba(31, 42, 46, 0.16);
+  transform: translateY(-2px);
+}
+
+.book strong {
+  display: -webkit-box;
+  min-height: 40px;
+  overflow: hidden;
+  color: #1f2a2e;
+  font-size: 14px;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.book small {
+  color: #647177;
+  margin-top: 0;
+}
+
+.coverFrame {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  border: 1px solid #cfd9dd;
+  border-radius: 8px;
+  background: #dfe7ea;
+  box-shadow: 0 8px 18px rgba(31, 42, 46, 0.09);
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease,
+    transform 140ms ease;
+}
+
+.coverFrame::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(0, 0, 0, 0.08));
+}
+
+.coverFrame img {
+  display: block;
   width: 100%;
-  aspect-ratio: 3 / 4;
+  aspect-ratio: 3 / 4.15;
   object-fit: cover;
-  background: #e8edef;
-  border-radius: 4px;
+}
+
+.coverBadge {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  z-index: 1;
+  border-radius: 999px;
+  background: rgba(31, 42, 46, 0.78);
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 4px 7px;
+}
+
+.coverEmpty {
+  display: grid;
+  gap: 4px;
+  min-height: 180px;
+  place-content: center;
+  padding: 24px;
+  text-align: center;
+}
+
+.coverEmpty small {
+  color: #647177;
 }
 
 .reader {
