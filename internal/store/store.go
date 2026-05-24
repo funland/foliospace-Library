@@ -151,6 +151,13 @@ func (s *Store) ListSeries() ([]domain.Series, error) {
 	return out, rows.Err()
 }
 
+func (s *Store) DeleteEmptySeries(libraryID int64) error {
+	_, err := s.db.Exec(`DELETE FROM series
+		WHERE library_id = ?
+		AND id NOT IN (SELECT DISTINCT series_id FROM books)`, libraryID)
+	return err
+}
+
 func (s *Store) UpsertBook(seriesID int64, title string, format string) (domain.Book, error) {
 	_, err := s.db.Exec(`INSERT INTO books(series_id, title, format) VALUES(?, ?, ?)
 		ON CONFLICT(series_id, title, format) DO UPDATE SET updated_at = CURRENT_TIMESTAMP`, seriesID, title, format)
@@ -172,6 +179,16 @@ func (s *Store) BookByID(id int64) (domain.Book, error) {
 		FROM books b LEFT JOIN files f ON f.book_id = b.id
 		WHERE b.id = ?`, id)
 	return scanBook(row)
+}
+
+func (s *Store) UpdateBookIdentity(bookID int64, seriesID int64, title string, format string) (domain.Book, error) {
+	_, err := s.db.Exec(`UPDATE books
+		SET series_id = ?, title = ?, format = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?`, seriesID, title, format, bookID)
+	if err != nil {
+		return domain.Book{}, err
+	}
+	return s.BookByID(bookID)
 }
 
 func (s *Store) ListBooks(seriesID int64) ([]domain.Book, error) {

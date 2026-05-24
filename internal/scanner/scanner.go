@@ -79,6 +79,13 @@ func (s *Scanner) RunScanJob(library domain.Library, job domain.ScanJob) (domain
 			return nil
 		}
 		if s.canSkipUnchanged(path, info, ext) {
+			if _, err := s.indexFileMetadata(library, path, info, ext); err != nil {
+				job.ErrorCount++
+				_ = s.recordPathError(library.ID, job.ID, path, domain.ErrorUnknownIO, err.Error())
+				_ = s.store.AddJobEvent(job.ID, "error", "metadata update failed: "+path)
+				_ = s.store.UpdateScanJob(job)
+				return nil
+			}
 			job.SkippedFiles++
 			_ = s.store.AddJobEvent(job.ID, "debug", "skipped unchanged: "+path)
 			_ = s.store.UpdateScanJob(job)
@@ -105,6 +112,14 @@ func (s *Scanner) RunScanJob(library domain.Library, job domain.ScanJob) (domain
 		_ = s.store.AddJobEvent(job.ID, "error", "scan failed: "+walkErr.Error())
 		return job, walkErr
 	}
+	if err := s.store.DeleteEmptySeries(library.ID); err != nil {
+		job.Status = "failed"
+		job.CurrentPath = ""
+		job.FinishedAt = time.Now()
+		_ = s.store.UpdateScanJob(job)
+		_ = s.store.AddJobEvent(job.ID, "error", "cleanup failed: "+err.Error())
+		return job, err
+	}
 
 	job.Status = "completed"
 	job.CurrentPath = ""
@@ -129,24 +144,7 @@ func (s *Scanner) canSkipUnchanged(path string, info fs.FileInfo, ext string) bo
 }
 
 func (s *Scanner) indexFile(library domain.Library, jobID int64, path string, info fs.FileInfo, ext string) error {
-	relPath, err := filepath.Rel(library.RootPath, path)
-	if err != nil {
-		return fmt.Errorf("relative path: %w", err)
-	}
-
-	seriesTitle := seriesTitleForRelPath(relPath)
-	bookTitle := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-	format := strings.TrimPrefix(ext, ".")
-
-	series, err := s.store.UpsertSeries(library.ID, seriesTitle)
-	if err != nil {
-		return err
-	}
-	book, err := s.store.UpsertBook(series.ID, bookTitle, format)
-	if err != nil {
-		return err
-	}
-	_, err = s.store.UpsertFile(book.ID, library.ID, path, relPath, info.Size(), info.ModTime(), ext)
+	book, err := s.indexFileMetadata(library, path, info, ext)
 	if err != nil {
 		return err
 	}
@@ -161,6 +159,41 @@ func (s *Scanner) indexFile(library domain.Library, jobID int64, path string, in
 	return nil
 }
 
+func (s *Scanner) indexFileMetadata(library domain.Library, path string, info fs.FileInfo, ext string) (domain.Book, error) {
+	relPath, err := filepath.Rel(library.RootPath, path)
+	if err != nil {
+		return domain.Book{}, fmt.Errorf("relative path: %w", err)
+	}
+
+	seriesTitle := seriesTitleForRelPath(library.RootPath, relPath)
+	bookTitle := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	format := strings.TrimPrefix(ext, ".")
+
+	series, err := s.store.UpsertSeries(library.ID, seriesTitle)
+	if err != nil {
+		return domain.Book{}, err
+	}
+
+	var book domain.Book
+	existing, err := s.store.FileIndexByPath(path)
+	if err == nil {
+		book, err = s.store.UpdateBookIdentity(existing.File.BookID, series.ID, bookTitle, format)
+		if err != nil {
+			return domain.Book{}, err
+		}
+	} else {
+		book, err = s.store.UpsertBook(series.ID, bookTitle, format)
+		if err != nil {
+			return domain.Book{}, err
+		}
+	}
+	_, err = s.store.UpsertFile(book.ID, library.ID, path, relPath, info.Size(), info.ModTime(), ext)
+	if err != nil {
+		return domain.Book{}, err
+	}
+	return book, nil
+}
+
 func (s *Scanner) recordPathError(libraryID int64, jobID int64, path string, code domain.ErrorCode, message string) error {
 	return s.store.RecordFileError(domain.FileErrorInput{
 		LibraryID: libraryID,
@@ -171,9 +204,13 @@ func (s *Scanner) recordPathError(libraryID int64, jobID int64, path string, cod
 	})
 }
 
-func seriesTitleForRelPath(relPath string) string {
+func seriesTitleForRelPath(rootPath string, relPath string) string {
 	dir := filepath.Dir(relPath)
 	if dir == "." || dir == "/" {
+		rootName := filepath.Base(filepath.Clean(rootPath))
+		if rootName != "." && rootName != string(filepath.Separator) && rootName != "" {
+			return rootName
+		}
 		return "Unsorted"
 	}
 	return filepath.Base(dir)
