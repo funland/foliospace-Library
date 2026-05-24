@@ -67,9 +67,39 @@ button:hover {
 }
 
 .workspace {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
+}
+
+.globalProgress {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 5;
+  display: grid;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.92);
+  border-bottom: 1px solid #d9e0e3;
+  padding: 0 18px 7px;
+  color: #3d4b50;
+  font-size: 12px;
+}
+
+.progressBar {
+  position: relative;
+  height: 3px;
+  overflow: hidden;
+  background: #d8e3e6;
+}
+
+.progressBar::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 42%;
+  background: #337f92;
+  animation: progressSlide 1.1s ease-in-out infinite;
 }
 
 .topbar {
@@ -199,6 +229,7 @@ h1 {
 }
 
 .pageStage {
+  position: relative;
   min-height: 0;
   background: #14191b;
   display: grid;
@@ -210,6 +241,38 @@ h1 {
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.pageStage img.loaded {
+  opacity: 1;
+}
+
+.pageLoading {
+  position: absolute;
+  z-index: 2;
+  min-width: min(320px, calc(100% - 32px));
+  display: grid;
+  gap: 10px;
+  color: #e8f0f2;
+  text-align: center;
+  font-size: 13px;
+}
+
+.pageProgress {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #293337;
+}
+
+.pageProgress div {
+  width: 38%;
+  height: 100%;
+  border-radius: inherit;
+  background: #62bfd0;
+  animation: progressSlide 1s ease-in-out infinite;
 }
 
 .empty {
@@ -258,5 +321,15 @@ h1 {
 
   .errorRow {
     grid-template-columns: 1fr;
+  }
+}
+
+@keyframes progressSlide {
+  0% {
+    transform: translateX(-120%);
+  }
+
+  100% {
+    transform: translateX(260%);
   }
 }
