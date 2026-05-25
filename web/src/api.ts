@@ -31,6 +31,21 @@ export type Book = {
   lastReadAt: string;
 };
 
+export type BookListPage = {
+  items: Book[];
+  total: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+};
+
+export type BookListOptions = {
+  limit?: number;
+  offset?: number;
+  q?: string;
+  sort?: string;
+};
+
 export type Page = {
   index: number;
   name: string;
@@ -149,6 +164,14 @@ export const api = {
   scan: (libraryId: number) => request<ScanJob>(`/api/libraries/${libraryId}/scan`, { method: "POST" }),
   series: () => request<Series[]>("/api/collections"),
   books: (seriesId: number) => request<Book[]>(`/api/collections/${seriesId}/volumes`),
+  booksPage: (seriesId: number, options: BookListOptions) => {
+    const params = new URLSearchParams();
+    if (options.limit) params.set("limit", String(options.limit));
+    if (options.offset) params.set("offset", String(options.offset));
+    if (options.q) params.set("q", options.q);
+    if (options.sort) params.set("sort", options.sort);
+    return request<BookListPage>(`/api/collections/${seriesId}/volumes?${params.toString()}`);
+  },
   continueReading: () => request<Book[]>("/api/books/continue-reading?limit=12"),
   recentBooks: () => request<Book[]>("/api/books/recent?limit=12"),
   pages: (bookId: number) => request<Page[]>(`/api/books/${bookId}/pages`),

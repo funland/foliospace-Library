@@ -453,6 +453,15 @@ button.danger:hover {
   padding: 18px;
 }
 
+.bookLoadMore {
+  grid-column: 1 / -1;
+  min-height: 42px;
+  display: grid;
+  place-items: center;
+  color: #68777d;
+  font-size: 13px;
+}
+
 .book {
   position: relative;
   display: grid;

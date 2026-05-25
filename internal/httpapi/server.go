@@ -378,6 +378,17 @@ func (s *Server) handleCollectionAction(w http.ResponseWriter, r *http.Request) 
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+	if hasBookListQuery(r) {
+		page, err := s.service.ListBooksPage(domain.BookListOptions{
+			SeriesID: id,
+			Limit:    queryInt(r, "limit", 60, 200),
+			Offset:   queryInt(r, "offset", 0, 0),
+			Query:    r.URL.Query().Get("q"),
+			Sort:     r.URL.Query().Get("sort"),
+		})
+		writeJSONOrError(w, page, err)
+		return
+	}
 	items, err := s.service.ListBooks(id)
 	writeJSONOrError(w, items, err)
 }
@@ -480,18 +491,30 @@ func domainDefaultProgress(bookID int64) map[string]any {
 }
 
 func queryLimit(r *http.Request, fallback int) int {
-	value := strings.TrimSpace(r.URL.Query().Get("limit"))
+	return queryInt(r, "limit", fallback, 50)
+}
+
+func queryInt(r *http.Request, key string, fallback int, max int) int {
+	value := strings.TrimSpace(r.URL.Query().Get(key))
 	if value == "" {
 		return fallback
 	}
 	parsed, err := strconv.Atoi(value)
-	if err != nil || parsed <= 0 {
+	if err != nil || parsed < 0 {
 		return fallback
 	}
-	if parsed > 50 {
-		return 50
+	if key == "limit" && parsed <= 0 {
+		return fallback
+	}
+	if max > 0 && parsed > max {
+		return max
 	}
 	return parsed
+}
+
+func hasBookListQuery(r *http.Request) bool {
+	query := r.URL.Query()
+	return query.Has("limit") || query.Has("offset") || query.Has("q") || query.Has("sort")
 }
 
 func (s *Server) streamPage(w http.ResponseWriter, bookID int64, pageIndex int) {

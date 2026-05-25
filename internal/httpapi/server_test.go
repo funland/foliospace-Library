@@ -76,10 +76,12 @@ func TestAPIIndexesAndStreamsCBZPages(t *testing.T) {
 		t.Fatal(err)
 	}
 	var cbzBookID int64
+	var cbzSeriesID int64
 	for _, seriesItem := range series {
 		if seriesItem.Title != "Series A" {
 			continue
 		}
+		cbzSeriesID = seriesItem.ID
 		books, err := st.ListBooks(seriesItem.ID)
 		if err != nil {
 			t.Fatal(err)
@@ -89,9 +91,13 @@ func TestAPIIndexesAndStreamsCBZPages(t *testing.T) {
 	if cbzBookID == 0 {
 		t.Fatal("cbz book was not indexed")
 	}
-	volumesBody := get(t, ts.URL+"/api/collections/"+itoa(series[0].ID)+"/volumes")
+	volumesBody := get(t, ts.URL+"/api/collections/"+itoa(cbzSeriesID)+"/volumes")
 	if !strings.Contains(volumesBody, `"bookType":"single_volume"`) {
 		t.Fatalf("volumes response %q does not include single-volume book type", volumesBody)
+	}
+	pagedVolumesBody := get(t, ts.URL+"/api/collections/"+itoa(cbzSeriesID)+"/volumes?limit=1&offset=0&sort=title&q=book")
+	if !strings.Contains(pagedVolumesBody, `"items"`) || !strings.Contains(pagedVolumesBody, `"total":1`) || !strings.Contains(pagedVolumesBody, `"hasMore":false`) {
+		t.Fatalf("paged volumes response %q does not include paging metadata", pagedVolumesBody)
 	}
 
 	pages := get(t, ts.URL+"/api/books/"+itoa(cbzBookID)+"/pages")

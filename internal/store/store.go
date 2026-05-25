@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"foliospace-reader/internal/domain"
@@ -216,6 +217,92 @@ func (s *Store) ListBooks(seriesID int64) ([]domain.Book, error) {
 		out = append(out, book)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) ListBooksPage(options domain.BookListOptions) (domain.BookListPage, error) {
+	options.Limit = normalizeBookListLimit(options.Limit)
+	if options.Offset < 0 {
+		options.Offset = 0
+	}
+
+	where, args := bookListWhere(options)
+	countArgs := append([]any(nil), args...)
+	var total int64
+	if err := s.db.QueryRow(`SELECT COUNT(*)
+		FROM books b
+		JOIN series s ON s.id = b.series_id
+		LEFT JOIN read_progress rp ON rp.book_id = b.id`+where, countArgs...).Scan(&total); err != nil {
+		return domain.BookListPage{}, err
+	}
+
+	queryArgs := append([]any(nil), args...)
+	queryArgs = append(queryArgs, options.Limit, options.Offset)
+	rows, err := s.db.Query(bookSelectSQL()+where+bookListOrderBy(options.Sort)+`
+		LIMIT ? OFFSET ?`, queryArgs...)
+	if err != nil {
+		return domain.BookListPage{}, err
+	}
+	defer rows.Close()
+
+	items := make([]domain.Book, 0)
+	for rows.Next() {
+		book, err := scanBook(rows)
+		if err != nil {
+			return domain.BookListPage{}, err
+		}
+		items = append(items, book)
+	}
+	if err := rows.Err(); err != nil {
+		return domain.BookListPage{}, err
+	}
+	return domain.BookListPage{
+		Items:   items,
+		Total:   total,
+		Limit:   options.Limit,
+		Offset:  options.Offset,
+		HasMore: int64(options.Offset+len(items)) < total,
+	}, nil
+}
+
+func normalizeBookListLimit(limit int) int {
+	if limit <= 0 {
+		return 60
+	}
+	if limit > 200 {
+		return 200
+	}
+	return limit
+}
+
+func bookListWhere(options domain.BookListOptions) (string, []any) {
+	where := " WHERE b.series_id = ?"
+	args := []any{options.SeriesID}
+	query := strings.TrimSpace(options.Query)
+	if query != "" {
+		where += ` AND LOWER(b.title) LIKE LOWER(?) ESCAPE '\'`
+		args = append(args, "%"+escapeLike(query)+"%")
+	}
+	return where, args
+}
+
+func bookListOrderBy(sort string) string {
+	switch sort {
+	case "recently_added":
+		return " ORDER BY b.created_at DESC, b.id DESC"
+	case "last_read":
+		return " ORDER BY rp.updated_at IS NULL, rp.updated_at DESC, b.title"
+	case "progress":
+		return " ORDER BY rp.progress_fraction DESC, rp.updated_at DESC, b.title"
+	case "unread":
+		return " ORDER BY COALESCE(rp.progress_fraction, 0) ASC, b.title"
+	default:
+		return " ORDER BY b.title"
+	}
+}
+
+func escapeLike(value string) string {
+	replacer := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return replacer.Replace(value)
 }
 
 func (s *Store) ListContinueReading(limit int) ([]domain.Book, error) {

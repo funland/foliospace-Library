@@ -38,6 +38,8 @@ Authentication helpers:
 
 ## Client API v1
 
+Detailed client integration docs are in [`docs/api/client-v1.md`](docs/api/client-v1.md).
+
 - `GET /api/client/info`: service metadata, supported formats, and capability flags.
 - `GET /api/client/home`: `continueReading`, `recentBooks`, and `collections` in one response.
 - `GET /api/client/books/:id/manifest`: a client-safe open manifest. CBZ/ZIP books include page URLs; EPUB books include spine, TOC, `resourceBaseUrl`, `coverUrl`, and progress.

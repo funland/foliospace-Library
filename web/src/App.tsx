@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, MouseEvent, TouchEvent } from "react";
 import { api, Book, clearAuthToken, EpubManifest, FileError, getAuthToken, JobEvent, Library, Page, ScanJob, Series, setAuthToken } from "./api";
 
@@ -6,6 +6,7 @@ type View = "library" | "reader" | "jobs" | "errors";
 type ReaderPageMode = "single" | "double";
 type EpubTheme = "light" | "sepia" | "dark";
 type BookSort = "title" | "recently_added" | "last_read" | "progress" | "unread";
+const bookPageSize = 60;
 
 export function App() {
   const [view, setView] = useState<View>("library");
@@ -22,6 +23,9 @@ export function App() {
   const [selectedSeries, setSelectedSeries] = useState<Series | null>(null);
   const [selectedBook, setSelectedBook] = useState<Book | null>(null);
   const [pages, setPages] = useState<Page[]>([]);
+  const [bookTotal, setBookTotal] = useState(0);
+  const [bookHasMore, setBookHasMore] = useState(false);
+  const [bookListLoading, setBookListLoading] = useState(false);
   const [epubManifest, setEpubManifest] = useState<EpubManifest | null>(null);
   const [pageIndex, setPageIndex] = useState(0);
   const [displayedPageIndex, setDisplayedPageIndex] = useState(0);
@@ -48,6 +52,8 @@ export function App() {
   const [newLibraryPath, setNewLibraryPath] = useState("");
   const imageCache = useRef<Set<string>>(new Set());
   const readerRef = useRef<HTMLElement | null>(null);
+  const bookLoadMoreRef = useRef<HTMLDivElement | null>(null);
+  const bookListRequest = useRef(0);
   const swipeStart = useRef<{ x: number; y: number } | null>(null);
   const epubRestorePosition = useRef<number | null>(null);
 
@@ -213,6 +219,8 @@ export function App() {
       setStatus(`Library removed: ${library.rootPath}`);
       setSelectedSeries(null);
       setBooks([]);
+      setBookTotal(0);
+      setBookHasMore(false);
       await refreshAll();
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Failed to remove library");
@@ -249,15 +257,74 @@ export function App() {
     }
   }
 
-  async function openSeries(item: Series) {
-    setActiveTask(`Loading ${item.title}`);
+  function openSeries(item: Series) {
+    setStatus(`Loading ${item.title}`);
     setSelectedSeries(item);
-    try {
-      setBooks(await api.books(item.id));
-    } finally {
-      setActiveTask(null);
-    }
+    setQuery("");
+    setBooks([]);
+    setBookTotal(0);
+    setBookHasMore(false);
   }
+
+  const loadBooksPage = useCallback(
+    async (seriesItem: Series, offset: number, reset: boolean) => {
+      const requestID = ++bookListRequest.current;
+      setBookListLoading(true);
+      try {
+        const page = await api.booksPage(seriesItem.id, {
+          limit: bookPageSize,
+          offset,
+          q: query.trim(),
+          sort: bookSort,
+        });
+        if (requestID !== bookListRequest.current) return;
+        const pageItems = page.items ?? [];
+        setBooks((currentBooks) => {
+          const nextBooks = reset ? pageItems : [...currentBooks, ...pageItems];
+          const seen = new Set<number>();
+          return nextBooks.filter((book) => {
+            if (seen.has(book.id)) return false;
+            seen.add(book.id);
+            return true;
+          });
+        });
+        setBookTotal(page.total);
+        setBookHasMore(page.hasMore);
+        setStatus("Ready");
+      } catch (error) {
+        if (requestID !== bookListRequest.current) return;
+        setStatus(error instanceof Error ? error.message : "Failed to load volumes");
+      } finally {
+        if (requestID === bookListRequest.current) {
+          setBookListLoading(false);
+        }
+      }
+    },
+    [bookSort, query],
+  );
+
+  useEffect(() => {
+    if (!selectedSeries) return;
+    setBooks([]);
+    setBookTotal(0);
+    setBookHasMore(false);
+    void loadBooksPage(selectedSeries, 0, true);
+  }, [loadBooksPage, selectedSeries]);
+
+  useEffect(() => {
+    const node = bookLoadMoreRef.current;
+    if (!node || !selectedSeries || !bookHasMore || bookListLoading) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          void loadBooksPage(selectedSeries, books.length, false);
+        }
+      },
+      { rootMargin: "600px 0px" },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [bookHasMore, bookListLoading, books.length, loadBooksPage, selectedSeries]);
 
   async function openBook(book: Book) {
     setActiveTask(`Opening ${book.title}`);
@@ -506,12 +573,6 @@ export function App() {
     return series.filter((item) => item.title.toLowerCase().includes(value));
   }, [query, series]);
 
-  const filteredBooks = useMemo(() => {
-    const value = query.trim().toLowerCase();
-    const matching = !value || !selectedSeries ? books : books.filter((book) => book.title.toLowerCase().includes(value));
-    return [...matching].sort((left, right) => compareBooks(left, right, bookSort));
-  }, [books, bookSort, query, selectedSeries]);
-
   const scanProgressLabel = activeScan
     ? `${activeScan.indexedFiles} indexed · ${activeScan.skippedFiles} skipped · ${activeScan.errorCount} errors`
     : null;
@@ -639,7 +700,7 @@ export function App() {
                   <h1>{selectedSeries ? selectedSeries.title : "Volume Wall"}</h1>
                   <small>
                     {selectedSeries
-                      ? `${filteredBooks.length} of ${books.length} volumes`
+                      ? `${books.length} of ${bookTotal || selectedSeries.bookCount} volumes`
                       : "Select a collection to browse its single volumes"}
                   </small>
                 </div>
@@ -659,9 +720,9 @@ export function App() {
                   )}
                 </div>
               </div>
-              {selectedSeries && filteredBooks.length > 0 ? (
+              {selectedSeries && books.length > 0 ? (
                 <div className="books">
-                  {filteredBooks.map((book) => (
+                  {books.map((book) => (
                     <button className="book" key={book.id} onClick={() => openBook(book)} title={book.title}>
                       <span className="coverFrame">
                         <img src={`/api/books/${book.id}/cover`} alt="" loading="lazy" />
@@ -673,10 +734,17 @@ export function App() {
                       </small>
                     </button>
                   ))}
+                  <div className="bookLoadMore" ref={bookLoadMoreRef} aria-live="polite">
+                    {bookListLoading
+                      ? "Loading more volumes..."
+                      : bookHasMore
+                        ? "Scroll to load more"
+                        : `${books.length} volumes loaded`}
+                  </div>
                 </div>
               ) : (
                 <div className="coverEmpty">
-                  <strong>{selectedSeries ? "No matching volumes" : "No collection selected"}</strong>
+                  <strong>{selectedSeries ? (bookListLoading ? "Loading volumes" : "No matching volumes") : "No collection selected"}</strong>
                   <small>
                     {selectedSeries ? "Clear the search field to show all volumes." : "Choose a collection from the list above."}
                   </small>
@@ -1035,10 +1103,10 @@ function EpubFrame({
     const viewportWidth = Math.max(320, frame.clientWidth);
     const viewportHeight = Math.max(320, frame.clientHeight);
     const isDoublePage = pageMode === "double";
-    const horizontalPadding = isDoublePage ? 44 : 52;
-    const verticalPadding = isDoublePage ? 38 : 42;
+    const horizontalPadding = isDoublePage ? 34 : 52;
+    const verticalPadding = isDoublePage ? 34 : 42;
     const gap = isDoublePage
-      ? Math.min(42, Math.max(26, Math.round(viewportWidth * 0.028)))
+      ? Math.min(34, Math.max(22, Math.round(viewportWidth * 0.022)))
       : horizontalPadding * 2;
     const dividerWidth = isDoublePage ? 2 : 0;
     const readableWidth = Math.max(260, viewportWidth - horizontalPadding * 2);

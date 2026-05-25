@@ -53,6 +53,22 @@ type Book struct {
 	LastReadAt       time.Time `json:"lastReadAt"`
 }
 
+type BookListOptions struct {
+	SeriesID int64
+	Limit    int
+	Offset   int
+	Query    string
+	Sort     string
+}
+
+type BookListPage struct {
+	Items   []Book `json:"items"`
+	Total   int64  `json:"total"`
+	Limit   int    `json:"limit"`
+	Offset  int    `json:"offset"`
+	HasMore bool   `json:"hasMore"`
+}
+
 type File struct {
 	ID        int64     `json:"id"`
 	BookID    int64     `json:"bookId"`
