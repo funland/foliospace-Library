@@ -168,6 +168,16 @@ button:hover {
   padding: 9px 10px;
 }
 
+.localeSelect {
+  min-height: 36px;
+  margin-left: auto;
+  border: 1px solid #ccd4d8;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #1e2528;
+  padding: 0 8px;
+}
+
 .topbar span {
   color: #5d6a70;
   font-size: 13px;
@@ -225,6 +235,76 @@ button:hover {
 .homeRows {
   display: grid;
   gap: 18px;
+}
+
+.globalSearch {
+  display: grid;
+  gap: 12px;
+}
+
+.globalSearchHeader {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.globalSearchHeader h1 {
+  margin-bottom: 3px;
+}
+
+.globalSearchHeader small {
+  color: #647177;
+  font-size: 13px;
+}
+
+.searchResults {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.searchResult {
+  display: grid;
+  grid-template-columns: 54px 1fr;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px;
+  text-align: left;
+}
+
+.searchResult strong {
+  display: -webkit-box;
+  overflow: hidden;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.searchResult small {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #647177;
+  font-size: 12px;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.searchCover {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  border: 1px solid #cfd9dd;
+  border-radius: 6px;
+  background: #dfe7ea;
+}
+
+.searchCover img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 3 / 4.15;
+  object-fit: cover;
 }
 
 .bookShelf {
@@ -306,6 +386,22 @@ button:hover {
   line-height: 1.35;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
+}
+
+.shelfProgress {
+  display: block;
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #d9e5e8;
+  margin-top: 7px;
+}
+
+.shelfProgress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #337f92;
 }
 
 .shelfCover {
@@ -502,6 +598,10 @@ button.danger:hover {
   margin-top: 0;
 }
 
+.book .privateMeta {
+  color: #337f92;
+}
+
 .coverFrame {
   position: relative;
   display: block;
@@ -554,13 +654,17 @@ button.danger:hover {
   text-align: center;
 }
 
+.coverEmpty.compact {
+  min-height: 90px;
+}
+
 .coverEmpty small {
   color: #647177;
 }
 
 .reader {
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto auto 1fr auto;
   height: calc(100vh - 58px);
   min-height: 0;
   background: #14191b;
@@ -623,6 +727,46 @@ button.danger:hover {
   background: #ffffff;
   color: #1e2528;
   padding: 0 8px;
+}
+
+.readerStateBar {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.6fr) auto 86px minmax(160px, 1fr) minmax(180px, 1.2fr) auto;
+  gap: 8px;
+  align-items: end;
+  border-bottom: 1px solid #d9e0e3;
+  background: #fbfcfc;
+  padding: 10px 16px;
+}
+
+.readerStateBar label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  color: #5d6a70;
+  font-size: 12px;
+}
+
+.readerStateBar input,
+.readerStateBar select {
+  min-width: 0;
+  min-height: 34px;
+  border: 1px solid #ccd4d8;
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 0 8px;
+}
+
+.readerStateBar input[type="checkbox"] {
+  min-height: auto;
+}
+
+.readerStateBar .inlineCheck {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  color: #1e2528;
 }
 
 .fontControl {
@@ -1039,6 +1183,10 @@ button.danger:hover {
 
   .readerToolbar {
     justify-content: flex-start;
+  }
+
+  .readerStateBar {
+    grid-template-columns: 1fr;
   }
 
   .readerControls input {

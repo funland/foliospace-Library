@@ -63,12 +63,39 @@ func (s *Service) ListBooksPage(options domain.BookListOptions) (domain.BookList
 	return s.store.ListBooksPage(options)
 }
 
+func (s *Service) SearchBooks(query string, limit int) ([]domain.Book, error) {
+	return s.store.SearchBooks(query, limit)
+}
+
+func (s *Service) UpdateBookPrivateState(bookID int64, state domain.BookPrivateState) (domain.Book, error) {
+	state.Status = strings.TrimSpace(state.Status)
+	state.Summary = strings.TrimSpace(state.Summary)
+	if state.Rating < 0 {
+		state.Rating = 0
+	}
+	if state.Rating > 5 {
+		state.Rating = 5
+	}
+	if err := s.store.UpdateBookPrivateState(bookID, state); err != nil {
+		return domain.Book{}, err
+	}
+	return s.store.BookByID(bookID)
+}
+
 func (s *Service) ContinueReading(limit int) ([]domain.Book, error) {
 	return s.store.ListContinueReading(limit)
 }
 
 func (s *Service) RecentBooks(limit int) ([]domain.Book, error) {
 	return s.store.ListRecentBooks(limit)
+}
+
+func (s *Service) FavoriteBooks(limit int) ([]domain.Book, error) {
+	return s.store.ListFavoriteBooks(limit)
+}
+
+func (s *Service) BooksByPrivateStatus(status string, limit int) ([]domain.Book, error) {
+	return s.store.ListBooksByPrivateStatus(status, limit)
 }
 
 func (s *Service) Book(id int64) (domain.Book, error) {

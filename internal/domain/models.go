@@ -51,6 +51,19 @@ type Book struct {
 	CurrentPage      int       `json:"currentPage"`
 	ProgressFraction float64   `json:"progressFraction"`
 	LastReadAt       time.Time `json:"lastReadAt"`
+	PrivateStatus    string    `json:"privateStatus"`
+	Favorite         bool      `json:"favorite"`
+	Rating           int       `json:"rating"`
+	Tags             []string  `json:"tags"`
+	Summary          string    `json:"summary"`
+}
+
+type BookPrivateState struct {
+	Status   string   `json:"status"`
+	Favorite bool     `json:"favorite"`
+	Rating   int      `json:"rating"`
+	Tags     []string `json:"tags"`
+	Summary  string   `json:"summary"`
 }
 
 type BookListOptions struct {

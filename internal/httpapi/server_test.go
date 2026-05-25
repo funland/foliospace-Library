@@ -252,6 +252,122 @@ func TestClientAPIHomeAndManifestsHideFilePaths(t *testing.T) {
 	}
 }
 
+func TestAPISearchAndPrivateState(t *testing.T) {
+	root := t.TempDir()
+	makeZip(t, filepath.Join(root, "Series A", "neon.cbz"), map[string]string{"001.jpg": "image"})
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibrary("Test", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ts := httptest.NewServer(New(service.New(st), nil).Routes())
+	defer ts.Close()
+
+	post(t, ts.URL+"/api/libraries/"+itoa(lib.ID)+"/scan", "")
+	waitFor(t, func() bool {
+		jobs, err := st.ListScanJobs()
+		return err == nil && len(jobs) > 0 && jobs[0].Status == "completed"
+	})
+
+	series, err := st.ListSeries()
+	if err != nil {
+		t.Fatal(err)
+	}
+	books, err := st.ListBooks(series[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bookID := books[0].ID
+
+	putJSON(t, ts.URL+"/api/books/"+itoa(bookID)+"/private-state", `{"status":"reading","favorite":true,"rating":5,"tags":["vision","noir"],"summary":"Private note"}`)
+
+	bookBody := get(t, ts.URL+"/api/books/"+itoa(bookID))
+	if !strings.Contains(bookBody, `"privateStatus":"reading"`) || !strings.Contains(bookBody, `"favorite":true`) || !strings.Contains(bookBody, `"rating":5`) || !strings.Contains(bookBody, `"vision"`) {
+		t.Fatalf("book response %q does not include private state", bookBody)
+	}
+
+	searchBody := get(t, ts.URL+"/api/search?q=vision&limit=5")
+	if !strings.Contains(searchBody, `"books"`) || !strings.Contains(searchBody, `"neon"`) || !strings.Contains(searchBody, `"privateStatus":"reading"`) {
+		t.Fatalf("search response %q does not include private-state match", searchBody)
+	}
+
+	collectionSearchBody := get(t, ts.URL+"/api/search?q=Series%20A&limit=5")
+	if !strings.Contains(collectionSearchBody, `"neon"`) {
+		t.Fatalf("collection search response %q does not include collection match", collectionSearchBody)
+	}
+}
+
+func TestClientAPIPrivateStateUsesSafeDTOs(t *testing.T) {
+	root := t.TempDir()
+	makeZip(t, filepath.Join(root, "Series A", "neon.cbz"), map[string]string{"001.jpg": "image"})
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibrary("Test", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ts := httptest.NewServer(New(service.New(st), nil).Routes())
+	defer ts.Close()
+
+	post(t, ts.URL+"/api/libraries/"+itoa(lib.ID)+"/scan", "")
+	waitFor(t, func() bool {
+		jobs, err := st.ListScanJobs()
+		return err == nil && len(jobs) > 0 && jobs[0].Status == "completed"
+	})
+
+	series, err := st.ListSeries()
+	if err != nil {
+		t.Fatal(err)
+	}
+	books, err := st.ListBooks(series[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bookID := books[0].ID
+
+	stateBody := putJSONBody(t, ts.URL+"/api/client/books/"+itoa(bookID)+"/private-state", `{"status":"want","favorite":true,"rating":4,"tags":["vision","spatial"],"summary":"Vision Pro candidate"}`)
+	if strings.Contains(stateBody, root) || strings.Contains(stateBody, "filePath") {
+		t.Fatalf("client private-state response leaked file path: %q", stateBody)
+	}
+	if !strings.Contains(stateBody, `"summary":"Vision Pro candidate"`) || !strings.Contains(stateBody, `"privateStatus":"want"`) {
+		t.Fatalf("client private-state response %q does not include saved state", stateBody)
+	}
+
+	getStateBody := get(t, ts.URL+"/api/client/books/"+itoa(bookID)+"/private-state")
+	if !strings.Contains(getStateBody, `"favorite":true`) || !strings.Contains(getStateBody, `"rating":4`) || !strings.Contains(getStateBody, `"vision"`) {
+		t.Fatalf("client private-state get response %q does not include saved state", getStateBody)
+	}
+
+	searchBody := get(t, ts.URL+"/api/client/search?q=spatial&limit=5")
+	if strings.Contains(searchBody, root) || strings.Contains(searchBody, "filePath") {
+		t.Fatalf("client search response leaked file path: %q", searchBody)
+	}
+	if !strings.Contains(searchBody, `"books"`) || !strings.Contains(searchBody, `"summary":"Vision Pro candidate"`) {
+		t.Fatalf("client search response %q does not include private-state match", searchBody)
+	}
+
+	favoritesBody := get(t, ts.URL+"/api/client/books/favorites?limit=5")
+	if !strings.Contains(favoritesBody, `"favorite":true`) || strings.Contains(favoritesBody, "filePath") {
+		t.Fatalf("client favorites response %q is not a safe private-state shelf", favoritesBody)
+	}
+
+	wantBody := get(t, ts.URL+"/api/client/books/private-status/want?limit=5")
+	if !strings.Contains(wantBody, `"privateStatus":"want"`) || strings.Contains(wantBody, "filePath") {
+		t.Fatalf("client private-status response %q is not a safe private-state shelf", wantBody)
+	}
+}
+
 func TestAPIRequiresBearerTokenWhenConfigured(t *testing.T) {
 	conn, err := db.Open(t.TempDir())
 	if err != nil {
@@ -360,6 +476,28 @@ func putJSON(t *testing.T, url string, body string) {
 		data, _ := io.ReadAll(resp.Body)
 		t.Fatalf("PUT %s status %d: %s", url, resp.StatusCode, data)
 	}
+}
+
+func putJSONBody(t *testing.T, url string, body string) string {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPut, url, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode >= 400 {
+		t.Fatalf("PUT %s status %d: %s", url, resp.StatusCode, data)
+	}
+	return string(data)
 }
 
 func waitFor(t *testing.T, condition func() bool) {

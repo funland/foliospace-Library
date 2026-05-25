@@ -166,3 +166,137 @@ func TestStoreListsBooksPageWithSearchAndSort(t *testing.T) {
 		t.Fatalf("empty page = %#v, want empty non-nil items", empty)
 	}
 }
+
+func TestStoreSearchesBooksAndPersistsPrivateState(t *testing.T) {
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	s := New(conn)
+	lib, err := s.CreateLibrary("Comics", "/library")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seriesA, err := s.UpsertSeries(lib.ID, "Cyberpunk", "Cyberpunk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seriesB, err := s.UpsertSeries(lib.ID, "Quiet Drama", "Quiet Drama")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bookA, err := s.UpsertBook(seriesA.ID, "Neon City", "cbz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpsertBook(seriesB.ID, "Winter Notes", "epub"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpsertFile(bookA.ID, lib.ID, "/library/Cyberpunk/Neon City.cbz", "Cyberpunk/Neon City.cbz", 100, time.Now(), ".cbz"); err != nil {
+		t.Fatal(err)
+	}
+
+	state := domain.BookPrivateState{
+		Status:   "reading",
+		Favorite: true,
+		Rating:   5,
+		Tags:     []string{"noir", "vision"},
+		Summary:  "Private note",
+	}
+	if err := s.UpdateBookPrivateState(bookA.ID, state); err != nil {
+		t.Fatal(err)
+	}
+
+	book, err := s.BookByID(bookA.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if book.PrivateStatus != "reading" || !book.Favorite || book.Rating != 5 || book.Summary != "Private note" {
+		t.Fatalf("book private state = %#v, want persisted state", book)
+	}
+	if len(book.Tags) != 2 || book.Tags[0] != "noir" || book.Tags[1] != "vision" {
+		t.Fatalf("book tags = %#v, want stored tags", book.Tags)
+	}
+
+	tagResults, err := s.SearchBooks("vision", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tagResults) != 1 || tagResults[0].ID != bookA.ID {
+		t.Fatalf("tag search = %#v, want Neon City", tagResults)
+	}
+
+	collectionResults, err := s.SearchBooks("quiet", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(collectionResults) != 1 || collectionResults[0].Title != "Winter Notes" {
+		t.Fatalf("collection search = %#v, want Winter Notes", collectionResults)
+	}
+}
+
+func TestStoreListsPrivateShelves(t *testing.T) {
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	s := New(conn)
+	lib, err := s.CreateLibrary("Comics", "/library")
+	if err != nil {
+		t.Fatal(err)
+	}
+	series, err := s.UpsertSeries(lib.ID, "Series A", "Series A")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantBook, err := s.UpsertBook(series.ID, "Want Book", "cbz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	favoriteBook, err := s.UpsertBook(series.ID, "Favorite Book", "epub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	finishedBook, err := s.UpsertBook(series.ID, "Finished Book", "cbz")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.UpdateBookPrivateState(wantBook.ID, domain.BookPrivateState{Status: "want"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateBookPrivateState(favoriteBook.ID, domain.BookPrivateState{Status: "reading", Favorite: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateBookPrivateState(finishedBook.ID, domain.BookPrivateState{Status: "finished"}); err != nil {
+		t.Fatal(err)
+	}
+
+	favorites, err := s.ListFavoriteBooks(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(favorites) != 1 || favorites[0].ID != favoriteBook.ID || !favorites[0].Favorite {
+		t.Fatalf("favorites = %#v, want favorite book", favorites)
+	}
+
+	wantBooks, err := s.ListBooksByPrivateStatus("want", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wantBooks) != 1 || wantBooks[0].ID != wantBook.ID || wantBooks[0].PrivateStatus != "want" {
+		t.Fatalf("want books = %#v, want wanted book", wantBooks)
+	}
+
+	finishedBooks, err := s.ListBooksByPrivateStatus("finished", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(finishedBooks) != 1 || finishedBooks[0].ID != finishedBook.ID {
+		t.Fatalf("finished books = %#v, want finished book", finishedBooks)
+	}
+}

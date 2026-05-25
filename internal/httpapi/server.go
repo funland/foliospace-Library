@@ -42,6 +42,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/auth/logout", s.handleAuthLogout)
 	mux.HandleFunc("/api/client/info", s.handleClientInfo)
 	mux.HandleFunc("/api/client/home", s.handleClientHome)
+	mux.HandleFunc("/api/client/search", s.handleClientSearch)
+	mux.HandleFunc("/api/client/books/favorites", s.handleClientFavoriteBooks)
+	mux.HandleFunc("/api/client/books/private-status/", s.handleClientPrivateStatusBooks)
 	mux.HandleFunc("/api/client/books/", s.handleClientBookAction)
 	mux.HandleFunc("/api/libraries", s.handleLibraries)
 	mux.HandleFunc("/api/libraries/", s.handleLibraryAction)
@@ -51,7 +54,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/series/", s.handleSeriesAction)
 	mux.HandleFunc("/api/books/continue-reading", s.handleContinueReading)
 	mux.HandleFunc("/api/books/recent", s.handleRecentBooks)
+	mux.HandleFunc("/api/books/favorites", s.handleFavoriteBooks)
+	mux.HandleFunc("/api/books/private-status/", s.handlePrivateStatusBooks)
 	mux.HandleFunc("/api/books/", s.handleBookAction)
+	mux.HandleFunc("/api/search", s.handleSearch)
 	mux.HandleFunc("/api/jobs", s.handleJobs)
 	mux.HandleFunc("/api/jobs/", s.handleJobAction)
 	mux.HandleFunc("/api/errors", s.handleErrors)
@@ -125,7 +131,7 @@ func (s *Server) handleClientInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, clientInfoResponse{
-		ServiceName:      "FolioSpace Reader",
+		ServiceName:      "FolioSpace Library",
 		APIVersion:       "v1",
 		SupportedFormats: []string{"cbz", "zip", "epub"},
 		Capabilities: clientCapabilities{
@@ -134,6 +140,8 @@ func (s *Server) handleClientInfo(w http.ResponseWriter, r *http.Request) {
 			ProgressSync:     true,
 			EPUBStreaming:    true,
 			PageStreaming:    true,
+			PrivateState:     true,
+			Search:           true,
 			BearerTokenAuth:  s.options.APIToken != "",
 			ScannerJobEvents: true,
 		},
@@ -158,6 +166,16 @@ func (s *Server) handleClientHome(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	favoriteBooks, err := s.service.FavoriteBooks(queryLimit(r, 12))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	wantBooks, err := s.service.BooksByPrivateStatus("want", queryLimit(r, 12))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
 	collections, err := s.service.ListSeries()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -166,6 +184,8 @@ func (s *Server) handleClientHome(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, clientHomeResponse{
 		ContinueReading: clientBooks(continueReading),
 		RecentBooks:     clientBooks(recentBooks),
+		FavoriteBooks:   clientBooks(favoriteBooks),
+		WantToRead:      clientBooks(wantBooks),
 		Collections:     clientCollections(collections),
 	})
 }
@@ -175,16 +195,87 @@ func (s *Server) handleClientBookAction(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	id, tail, ok := parseIDTail(r.URL.Path, "/api/client/books/")
-	if !ok || tail != "manifest" {
+	if !ok {
 		http.NotFound(w, r)
+		return
+	}
+	if tail == "manifest" && r.Method == http.MethodGet {
+		manifest, err := s.clientBookManifest(id)
+		writeJSONOrError(w, manifest, err)
+		return
+	}
+	if tail == "private-state" && r.Method == http.MethodGet {
+		response, err := s.clientBookPrivateState(id)
+		writeJSONOrError(w, response, err)
+		return
+	}
+	if tail == "private-state" && r.Method == http.MethodPut {
+		var req domain.BookPrivateState
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		book, err := s.service.UpdateBookPrivateState(id, req)
+		if err != nil {
+			writeJSONOrError(w, nil, err)
+			return
+		}
+		writeJSON(w, clientPrivateStateResponse{
+			Book:         clientBookItem(book),
+			PrivateState: privateStateFromBook(book),
+		})
+		return
+	}
+	http.NotFound(w, r)
+}
+
+func (s *Server) handleClientFavoriteBooks(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeClient(w, r) {
 		return
 	}
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	manifest, err := s.clientBookManifest(id)
-	writeJSONOrError(w, manifest, err)
+	items, err := s.service.FavoriteBooks(queryLimit(r, 12))
+	writeJSONOrError(w, clientBooks(items), err)
+}
+
+func (s *Server) handleClientPrivateStatusBooks(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeClient(w, r) {
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	status := strings.TrimPrefix(r.URL.Path, "/api/client/books/private-status/")
+	if status == "" || strings.Contains(status, "/") {
+		http.NotFound(w, r)
+		return
+	}
+	items, err := s.service.BooksByPrivateStatus(status, queryLimit(r, 12))
+	writeJSONOrError(w, clientBooks(items), err)
+}
+
+func (s *Server) handleClientSearch(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeClient(w, r) {
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	books, err := s.service.SearchBooks(query, queryInt(r, "limit", 20, 100))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, clientSearchResponse{
+		Query: query,
+		Books: clientBooks(books),
+	})
 }
 
 func (s *Server) authorizeClient(w http.ResponseWriter, r *http.Request) bool {
@@ -195,7 +286,7 @@ func (s *Server) authorizeAPI(w http.ResponseWriter, r *http.Request) bool {
 	if s.validToken(bearerToken(r.Header.Get("Authorization"))) || s.validCookie(r) {
 		return true
 	}
-	w.Header().Set("WWW-Authenticate", `Bearer realm="FolioSpace Reader"`)
+	w.Header().Set("WWW-Authenticate", `Bearer realm="FolioSpace Library"`)
 	writeError(w, http.StatusUnauthorized, errors.New("missing or invalid bearer token"))
 	return false
 }
@@ -284,6 +375,17 @@ func (s *Server) clientBookManifest(bookID int64) (clientBookManifestResponse, e
 		})
 	}
 	return out, nil
+}
+
+func (s *Server) clientBookPrivateState(bookID int64) (clientPrivateStateResponse, error) {
+	book, err := s.service.Book(bookID)
+	if err != nil {
+		return clientPrivateStateResponse{}, err
+	}
+	return clientPrivateStateResponse{
+		Book:         clientBookItem(book),
+		PrivateState: privateStateFromBook(book),
+	}, nil
 }
 
 func (s *Server) clientProgress(bookID int64) (clientProgress, error) {
@@ -411,6 +513,46 @@ func (s *Server) handleRecentBooks(w http.ResponseWriter, r *http.Request) {
 	writeJSONOrError(w, items, err)
 }
 
+func (s *Server) handleFavoriteBooks(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	items, err := s.service.FavoriteBooks(queryLimit(r, 12))
+	writeJSONOrError(w, items, err)
+}
+
+func (s *Server) handlePrivateStatusBooks(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	status := strings.TrimPrefix(r.URL.Path, "/api/books/private-status/")
+	if status == "" || strings.Contains(status, "/") {
+		http.NotFound(w, r)
+		return
+	}
+	items, err := s.service.BooksByPrivateStatus(status, queryLimit(r, 12))
+	writeJSONOrError(w, items, err)
+}
+
+func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	books, err := s.service.SearchBooks(query, queryInt(r, "limit", 20, 100))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, searchResponse{
+		Query: query,
+		Books: books,
+	})
+}
+
 func (s *Server) handleBookAction(w http.ResponseWriter, r *http.Request) {
 	id, tail, ok := parseIDTail(r.URL.Path, "/api/books/")
 	if !ok {
@@ -470,6 +612,16 @@ func (s *Server) handleBookAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSONOrError(w, progress, err)
+		return
+	}
+	if tail == "private-state" && r.Method == http.MethodPut {
+		var req domain.BookPrivateState
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		book, err := s.service.UpdateBookPrivateState(id, req)
+		writeJSONOrError(w, book, err)
 		return
 	}
 	if tail == "analyze" && r.Method == http.MethodPost {
@@ -606,7 +758,7 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	_, _ = w.Write([]byte("FolioSpace Reader"))
+	_, _ = w.Write([]byte("FolioSpace Library"))
 }
 
 func (s *Server) handleFavicon(w http.ResponseWriter, r *http.Request) {
@@ -674,6 +826,8 @@ type clientCapabilities struct {
 	ProgressSync     bool `json:"progressSync"`
 	EPUBStreaming    bool `json:"epubStreaming"`
 	PageStreaming    bool `json:"pageStreaming"`
+	PrivateState     bool `json:"privateState"`
+	Search           bool `json:"search"`
 	BearerTokenAuth  bool `json:"bearerTokenAuth"`
 	ScannerJobEvents bool `json:"scannerJobEvents"`
 }
@@ -681,7 +835,19 @@ type clientCapabilities struct {
 type clientHomeResponse struct {
 	ContinueReading []clientBook       `json:"continueReading"`
 	RecentBooks     []clientBook       `json:"recentBooks"`
+	FavoriteBooks   []clientBook       `json:"favoriteBooks"`
+	WantToRead      []clientBook       `json:"wantToRead"`
 	Collections     []clientCollection `json:"collections"`
+}
+
+type searchResponse struct {
+	Query string        `json:"query"`
+	Books []domain.Book `json:"books"`
+}
+
+type clientSearchResponse struct {
+	Query string       `json:"query"`
+	Books []clientBook `json:"books"`
 }
 
 type clientCollection struct {
@@ -692,17 +858,22 @@ type clientCollection struct {
 }
 
 type clientBook struct {
-	ID               int64   `json:"id"`
-	CollectionID     int64   `json:"collectionId"`
-	CollectionTitle  string  `json:"collectionTitle,omitempty"`
-	Title            string  `json:"title"`
-	BookType         string  `json:"bookType"`
-	Format           string  `json:"format"`
-	PageCount        int     `json:"pageCount"`
-	CoverStatus      string  `json:"coverStatus"`
-	CoverURL         string  `json:"coverUrl"`
-	CurrentPage      int     `json:"currentPage"`
-	ProgressFraction float64 `json:"progressFraction"`
+	ID               int64    `json:"id"`
+	CollectionID     int64    `json:"collectionId"`
+	CollectionTitle  string   `json:"collectionTitle,omitempty"`
+	Title            string   `json:"title"`
+	BookType         string   `json:"bookType"`
+	Format           string   `json:"format"`
+	PageCount        int      `json:"pageCount"`
+	CoverStatus      string   `json:"coverStatus"`
+	CoverURL         string   `json:"coverUrl"`
+	CurrentPage      int      `json:"currentPage"`
+	ProgressFraction float64  `json:"progressFraction"`
+	PrivateStatus    string   `json:"privateStatus"`
+	Favorite         bool     `json:"favorite"`
+	Rating           int      `json:"rating"`
+	Tags             []string `json:"tags"`
+	Summary          string   `json:"summary"`
 }
 
 type clientBookManifestResponse struct {
@@ -712,6 +883,11 @@ type clientBookManifestResponse struct {
 	Progress clientProgress      `json:"progress"`
 	Pages    []clientPageRef     `json:"pages,omitempty"`
 	EPUB     *clientEPUBOpenInfo `json:"epub,omitempty"`
+}
+
+type clientPrivateStateResponse struct {
+	Book         clientBook              `json:"book"`
+	PrivateState domain.BookPrivateState `json:"privateState"`
 }
 
 type clientProgress struct {
@@ -771,9 +947,24 @@ func clientBookItem(book domain.Book) clientBook {
 		CoverURL:         clientCoverURL(book.ID),
 		CurrentPage:      book.CurrentPage,
 		ProgressFraction: book.ProgressFraction,
+		PrivateStatus:    book.PrivateStatus,
+		Favorite:         book.Favorite,
+		Rating:           book.Rating,
+		Tags:             book.Tags,
+		Summary:          book.Summary,
 	}
 }
 
 func clientCoverURL(bookID int64) string {
 	return fmt.Sprintf("/api/books/%d/cover", bookID)
+}
+
+func privateStateFromBook(book domain.Book) domain.BookPrivateState {
+	return domain.BookPrivateState{
+		Status:   book.PrivateStatus,
+		Favorite: book.Favorite,
+		Rating:   book.Rating,
+		Tags:     book.Tags,
+		Summary:  book.Summary,
+	}
 }

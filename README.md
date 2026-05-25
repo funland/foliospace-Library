@@ -1,12 +1,22 @@
-# FolioSpace Reader
+# FolioSpace Library
 
-FolioSpace Reader is a lightweight self-hosted manga/book reader service for a NAS library. The first implementation targets CBZ/ZIP scanning and reading with SQLite persistence, observable scan jobs, categorized file errors, and a compact web UI.
+FolioSpace Library is a personal digital asset library that runs on a NAS, Docker host, or local server. It provides a unified indexing layer and stable client service layer for Apple-device experiences across reading, games, spatial media, documents, photos, videos, and related audio collections.
+
+It is not trying to become a complete Plex, Jellyfin, or Immich replacement. The first priority is personal asset indexing: scanning, identifying, covers/thumbnails, classification, search, favorites, recent access, progress, and private state. Dedicated clients such as a reader app, GameEMU, and Vision Pro experiences own the actual consumption UI.
+
+The current implementation still starts from the FolioSpace Reader codebase and keeps the existing reading MVP operational while the model evolves toward `Asset` / `LibraryItem`.
 
 ## Runtime Layout
 
-- `/config`: SQLite database, generated covers, runtime cache.
-- `/library`: read-only mounted manga/book library.
+- `/config`: SQLite database, generated covers/thumbnails, runtime cache.
+- `/library`: read-only mounted asset library root.
 - `8080`: web UI and HTTP API.
+
+Recommended NAS config root:
+
+```text
+/volume1/docker/foliospace-library
+```
 
 ## Local Development
 
@@ -43,8 +53,25 @@ Detailed client integration docs are in [`docs/api/client-v1.md`](docs/api/clien
 - `GET /api/client/info`: service metadata, supported formats, and capability flags.
 - `GET /api/client/home`: `continueReading`, `recentBooks`, and `collections` in one response.
 - `GET /api/client/books/:id/manifest`: a client-safe open manifest. CBZ/ZIP books include page URLs; EPUB books include spine, TOC, `resourceBaseUrl`, `coverUrl`, and progress.
+- `GET/PUT /api/client/books/:id/private-state`: client-safe private status, favorite, rating, tags, and note sync.
+- `GET /api/client/search`, `/api/client/books/favorites`, and `/api/client/books/private-status/:status`: private-state-aware discovery shelves.
 
 Client API book and collection responses omit local NAS file paths.
+
+## Product Direction
+
+Detailed product direction and the proposed `Asset` / `LibraryItem` model are in [`docs/product/foliospace-library-direction.md`](docs/product/foliospace-library-direction.md).
+
+Core asset types:
+
+- Books and EPUBs.
+- Comics and CBZ/ZIP archives.
+- Game ROMs and ROM sets.
+- PDFs, manuals, art books, guides, and reference documents.
+- Photos, videos, Vision Pro spatial photos, and spatial videos.
+- OSTs and audio material connected to games, books, and collections.
+
+ROM support is for indexing and launching user-owned local content. FolioSpace Library does not distribute ROMs, provide download sources, or bundle pirated assets.
 
 ## Docker
 
@@ -59,19 +86,26 @@ For a NAS deployment, mount your real library as read-only:
 
 ```bash
 docker run -p 8080:8080 \
-  -v /volume1/docker/foliospace-reader/config:/config \
+  -v /volume1/docker/foliospace-library/config:/config \
   -v /volume2/ComicCenter:/library:ro \
-  foliospace-reader:dev
+  foliospace-library:dev
 ```
 
-Open `http://localhost:8080`, scan the configured library, then browse series and books.
+Open `http://localhost:8080`, scan the configured library, then browse collections and books.
 
 ## Current MVP Support
 
-- P0 formats: `.cbz`, `.zip`.
+- P0 reading formats: `.cbz`, `.zip`, `.epub`.
 - Series derivation: immediate parent directory, with root-level files grouped under `Unsorted`.
-- Reading: backend streams one ZIP image entry at a time.
+- Reading: backend streams one ZIP image entry or EPUB resource at a time.
 - Errors: empty files, archive open failures, walk errors, and unsupported future categories are recorded as structured rows.
+
+Near-term expansion priority:
+
+1. Keep existing EPUB/comic reader APIs stable.
+2. Add game asset indexing for local ROMs and ROM sets.
+3. Add spatial photo / spatial video indexing.
+4. Move data model language from Book/Series toward Asset/LibraryItem after the first non-reading asset type is real.
 
 ## Git Remote
 

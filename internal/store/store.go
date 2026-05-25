@@ -199,6 +199,26 @@ func (s *Store) UpdateBookIdentity(bookID int64, seriesID int64, title string, f
 	return s.BookByID(bookID)
 }
 
+func (s *Store) UpdateBookPrivateState(bookID int64, state domain.BookPrivateState) error {
+	status := strings.TrimSpace(state.Status)
+	summary := strings.TrimSpace(state.Summary)
+	rating := state.Rating
+	if rating < 0 {
+		rating = 0
+	}
+	if rating > 5 {
+		rating = 5
+	}
+	favorite := 0
+	if state.Favorite {
+		favorite = 1
+	}
+	_, err := s.db.Exec(`UPDATE books
+		SET private_status = ?, favorite = ?, rating = ?, tags = ?, summary = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?`, status, favorite, rating, encodeTags(state.Tags), summary, bookID)
+	return err
+}
+
 func (s *Store) ListBooks(seriesID int64) ([]domain.Book, error) {
 	rows, err := s.db.Query(bookSelectSQL()+`
 		WHERE b.series_id = ?
@@ -217,6 +237,47 @@ func (s *Store) ListBooks(seriesID int64) ([]domain.Book, error) {
 		out = append(out, book)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) SearchBooks(query string, limit int) ([]domain.Book, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return []domain.Book{}, nil
+	}
+	limit = normalizeSearchLimit(limit)
+	pattern := "%" + escapeLike(query) + "%"
+	rows, err := s.db.Query(bookSelectSQL()+`
+		WHERE LOWER(b.title) LIKE LOWER(?) ESCAPE '\'
+			OR LOWER(s.title) LIKE LOWER(?) ESCAPE '\'
+			OR LOWER(b.format) LIKE LOWER(?) ESCAPE '\'
+			OR LOWER(b.tags) LIKE LOWER(?) ESCAPE '\'
+			OR LOWER(b.summary) LIKE LOWER(?) ESCAPE '\'
+		ORDER BY b.favorite DESC, rp.updated_at IS NULL, rp.updated_at DESC, b.updated_at DESC, b.title
+		LIMIT ?`, pattern, pattern, pattern, pattern, pattern, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]domain.Book, 0)
+	for rows.Next() {
+		book, err := scanBook(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, book)
+	}
+	return out, rows.Err()
+}
+
+func normalizeSearchLimit(limit int) int {
+	if limit <= 0 {
+		return 20
+	}
+	if limit > 100 {
+		return 100
+	}
+	return limit
 }
 
 func (s *Store) ListBooksPage(options domain.BookListOptions) (domain.BookListPage, error) {
@@ -342,6 +403,54 @@ func (s *Store) ListRecentBooks(limit int) ([]domain.Book, error) {
 	defer rows.Close()
 
 	var out []domain.Book
+	for rows.Next() {
+		book, err := scanBook(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, book)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ListFavoriteBooks(limit int) ([]domain.Book, error) {
+	limit = normalizeShelfLimit(limit)
+	rows, err := s.db.Query(bookSelectSQL()+`
+		WHERE b.favorite = 1
+		ORDER BY b.updated_at DESC, b.title
+		LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanBooks(rows)
+}
+
+func (s *Store) ListBooksByPrivateStatus(status string, limit int) ([]domain.Book, error) {
+	limit = normalizeShelfLimit(limit)
+	rows, err := s.db.Query(bookSelectSQL()+`
+		WHERE b.private_status = ?
+		ORDER BY b.updated_at DESC, b.title
+		LIMIT ?`, strings.TrimSpace(status), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanBooks(rows)
+}
+
+func normalizeShelfLimit(limit int) int {
+	if limit <= 0 {
+		return 12
+	}
+	if limit > 50 {
+		return 50
+	}
+	return limit
+}
+
+func scanBooks(rows *sql.Rows) ([]domain.Book, error) {
+	out := make([]domain.Book, 0)
 	for rows.Next() {
 		book, err := scanBook(rows)
 		if err != nil {
@@ -586,9 +695,11 @@ func scanSeries(row scanner) (domain.Series, error) {
 func scanBook(row scanner) (domain.Book, error) {
 	var book domain.Book
 	var analyzed int
+	var favorite int
 	var addedAt string
 	var updatedAt string
 	var lastReadAt string
+	var tags string
 	if err := row.Scan(
 		&book.ID,
 		&book.SeriesID,
@@ -604,21 +715,58 @@ func scanBook(row scanner) (domain.Book, error) {
 		&book.CurrentPage,
 		&book.ProgressFraction,
 		&lastReadAt,
+		&book.PrivateStatus,
+		&favorite,
+		&book.Rating,
+		&tags,
+		&book.Summary,
 	); err != nil {
 		return book, err
 	}
 	book.BookType = "single_volume"
 	book.Analyzed = analyzed != 0
+	book.Favorite = favorite != 0
+	book.Tags = decodeTags(tags)
 	book.AddedAt = parseTime(addedAt)
 	book.UpdatedAt = parseTime(updatedAt)
 	book.LastReadAt = parseTime(lastReadAt)
 	return book, nil
 }
 
+func encodeTags(tags []string) string {
+	clean := make([]string, 0, len(tags))
+	seen := map[string]bool{}
+	for _, tag := range tags {
+		tag = strings.TrimSpace(tag)
+		if tag == "" || seen[tag] {
+			continue
+		}
+		seen[tag] = true
+		clean = append(clean, tag)
+	}
+	return strings.Join(clean, ",")
+}
+
+func decodeTags(value string) []string {
+	if strings.TrimSpace(value) == "" {
+		return []string{}
+	}
+	parts := strings.Split(value, ",")
+	tags := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			tags = append(tags, part)
+		}
+	}
+	return tags
+}
+
 func bookSelectSQL() string {
 	return `SELECT b.id, b.series_id, s.title, b.title, b.format, b.page_count, b.cover_status, b.analyzed,
 			COALESCE(f.abs_path, ''), b.created_at, b.updated_at,
-			COALESCE(rp.page_index, 0), COALESCE(rp.progress_fraction, 0), COALESCE(rp.updated_at, '')
+			COALESCE(rp.page_index, 0), COALESCE(rp.progress_fraction, 0), COALESCE(rp.updated_at, ''),
+			b.private_status, b.favorite, b.rating, b.tags, b.summary
 		FROM books b
 		JOIN series s ON s.id = b.series_id
 		LEFT JOIN files f ON f.book_id = b.id

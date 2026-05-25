@@ -29,6 +29,24 @@ export type Book = {
   currentPage: number;
   progressFraction: number;
   lastReadAt: string;
+  privateStatus: string;
+  favorite: boolean;
+  rating: number;
+  tags: string[];
+  summary: string;
+};
+
+export type BookPrivateState = {
+  status: string;
+  favorite: boolean;
+  rating: number;
+  tags: string[];
+  summary: string;
+};
+
+export type SearchResponse = {
+  query: string;
+  books: Book[];
 };
 
 export type BookListPage = {
@@ -174,6 +192,10 @@ export const api = {
   },
   continueReading: () => request<Book[]>("/api/books/continue-reading?limit=12"),
   recentBooks: () => request<Book[]>("/api/books/recent?limit=12"),
+  favoriteBooks: () => request<Book[]>("/api/books/favorites?limit=12"),
+  privateStatusBooks: (status: string) => request<Book[]>(`/api/books/private-status/${encodeURIComponent(status)}?limit=12`),
+  search: (q: string, limit = 12) =>
+    request<SearchResponse>(`/api/search?q=${encodeURIComponent(q)}&limit=${limit}`),
   pages: (bookId: number) => request<Page[]>(`/api/books/${bookId}/pages`),
   epubManifest: (bookId: number) => request<EpubManifest>(`/api/books/${bookId}/epub/manifest`),
   jobs: () => request<ScanJob[]>("/api/jobs"),
@@ -190,5 +212,10 @@ export const api = {
     request<{ ok: boolean }>(`/api/books/${bookId}/progress`, {
       method: "PUT",
       body: JSON.stringify({ pageIndex, locator, progressFraction }),
+    }),
+  privateState: (bookId: number, state: BookPrivateState) =>
+    request<Book>(`/api/books/${bookId}/private-state`, {
+      method: "PUT",
+      body: JSON.stringify(state),
     }),
 };

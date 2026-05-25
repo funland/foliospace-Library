@@ -1,6 +1,6 @@
-# FolioSpace Reader Client API v1
+# FolioSpace Library Client API v1
 
-This document describes the stable HTTP surface intended for native clients such as a Vision Pro reader. The client API is a facade over the existing web reader routes, so native clients do not need to depend on every web UI endpoint directly.
+This document describes the stable HTTP surface intended for native clients such as a Vision Pro reader, GameEMU, and future spatial media clients. The client API is a facade over the current reading routes, so native clients do not need to depend on every web UI endpoint directly.
 
 ## Base URL
 
@@ -77,6 +77,7 @@ Public. Clears the web auth cookie.
 6. For CBZ/ZIP, load page image URLs from `pages`.
 7. For EPUB, load chapters/resources from `epub.resourceBaseUrl`.
 8. Sync progress with `GET /api/books/{bookId}/progress` and `PUT /api/books/{bookId}/progress`.
+9. Sync private state with `GET/PUT /api/client/books/{bookId}/private-state`.
 
 ## Client Endpoints
 
@@ -88,7 +89,7 @@ Response:
 
 ```json
 {
-  "serviceName": "FolioSpace Reader",
+  "serviceName": "FolioSpace Library",
   "apiVersion": "v1",
   "supportedFormats": ["cbz", "zip", "epub"],
   "capabilities": {
@@ -97,6 +98,8 @@ Response:
     "progressSync": true,
     "epubStreaming": true,
     "pageStreaming": true,
+    "privateState": true,
+    "search": true,
     "bearerTokenAuth": true,
     "scannerJobEvents": true
   }
@@ -109,7 +112,7 @@ Returns the data needed for a native home screen in one request.
 
 Query:
 
-- `limit`: optional, default `12`, max `50`. Applies to `continueReading` and `recentBooks`.
+- `limit`: optional, default `12`, max `50`. Applies to `continueReading`, `recentBooks`, `favoriteBooks`, and `wantToRead`.
 
 Response:
 
@@ -127,10 +130,17 @@ Response:
       "coverStatus": "ready",
       "coverUrl": "/api/books/42/cover",
       "currentPage": 16,
-      "progressFraction": 0.09
+      "progressFraction": 0.09,
+      "privateStatus": "reading",
+      "favorite": true,
+      "rating": 4,
+      "tags": ["vision", "spatial"],
+      "summary": "Vision Pro candidate"
     }
   ],
   "recentBooks": [],
+  "favoriteBooks": [],
+  "wantToRead": [],
   "collections": [
     {
       "id": 7,
@@ -163,7 +173,12 @@ Returns all stable metadata needed to open one book.
     "coverStatus": "ready",
     "coverUrl": "/api/books/42/cover",
     "currentPage": 16,
-    "progressFraction": 0.09
+    "progressFraction": 0.09,
+    "privateStatus": "reading",
+    "favorite": true,
+    "rating": 4,
+    "tags": ["vision", "spatial"],
+    "summary": "Vision Pro candidate"
   },
   "format": "cbz",
   "coverUrl": "/api/books/42/cover",
@@ -200,7 +215,12 @@ Use `pages[index].url` to stream the image bytes. The returned page URL is relat
     "coverStatus": "ready",
     "coverUrl": "/api/books/84/cover",
     "currentPage": 3,
-    "progressFraction": 0.25
+    "progressFraction": 0.25,
+    "privateStatus": "want",
+    "favorite": false,
+    "rating": 0,
+    "tags": [],
+    "summary": ""
   },
   "format": "epub",
   "coverUrl": "/api/books/84/cover",
@@ -241,6 +261,127 @@ Example:
 
 ```text
 /api/books/84/epub/resources/OPS/text/chapter1.xhtml
+```
+
+## Private State
+
+Private state is user-owned metadata on a book. It is stored server-side and returned through client-safe DTOs, without local NAS file paths.
+
+Fields:
+
+- `status`: free string. Current UI uses `want`, `reading`, `finished`, and `dropped`.
+- `favorite`: boolean.
+- `rating`: integer, clamped by the service to `0...5`.
+- `tags`: string array. Empty and duplicate tags are normalized by persistence.
+- `summary`: private note.
+
+### `GET /api/client/books/{bookId}/private-state`
+
+Returns the current private state and the current client book DTO.
+
+```json
+{
+  "book": {
+    "id": 42,
+    "collectionId": 7,
+    "collectionTitle": "Series A",
+    "title": "Volume 01",
+    "bookType": "single_volume",
+    "format": "cbz",
+    "pageCount": 180,
+    "coverStatus": "ready",
+    "coverUrl": "/api/books/42/cover",
+    "currentPage": 16,
+    "progressFraction": 0.09,
+    "privateStatus": "want",
+    "favorite": true,
+    "rating": 4,
+    "tags": ["vision", "spatial"],
+    "summary": "Vision Pro candidate"
+  },
+  "privateState": {
+    "status": "want",
+    "favorite": true,
+    "rating": 4,
+    "tags": ["vision", "spatial"],
+    "summary": "Vision Pro candidate"
+  }
+}
+```
+
+### `PUT /api/client/books/{bookId}/private-state`
+
+Saves private state and returns the same shape as `GET /api/client/books/{bookId}/private-state`.
+
+Request:
+
+```json
+{
+  "status": "want",
+  "favorite": true,
+  "rating": 4,
+  "tags": ["vision", "spatial"],
+  "summary": "Vision Pro candidate"
+}
+```
+
+### `GET /api/client/books/favorites`
+
+Returns favorite books as client-safe book DTOs.
+
+Query:
+
+- `limit`: optional, default `12`, max `50`.
+
+### `GET /api/client/books/private-status/{status}`
+
+Returns books with a matching private status as client-safe book DTOs.
+
+Query:
+
+- `limit`: optional, default `12`, max `50`.
+
+Example:
+
+```text
+/api/client/books/private-status/want?limit=12
+```
+
+### `GET /api/client/search`
+
+Searches title, collection title, format, tags, and private summary.
+
+Query:
+
+- `q`: search text.
+- `limit`: optional, default `20`, max `100`.
+
+Response:
+
+```json
+{
+  "query": "spatial",
+  "books": [
+    {
+      "id": 42,
+      "collectionId": 7,
+      "collectionTitle": "Series A",
+      "title": "Volume 01",
+      "bookType": "single_volume",
+      "format": "cbz",
+      "pageCount": 180,
+      "coverStatus": "ready",
+      "coverUrl": "/api/books/42/cover",
+      "currentPage": 16,
+      "progressFraction": 0.09,
+      "privateStatus": "want",
+      "favorite": true,
+      "rating": 4,
+      "tags": ["vision", "spatial"],
+      "summary": "Vision Pro candidate"
+    }
+  ]
+}
 ```
 
 ## Supporting Resource Endpoints
@@ -382,6 +523,8 @@ Good MCP tools:
 - `foliospace.home`: return continue-reading, recent books, and collections.
 - `foliospace.search_books`: search/filter books by title, collection, format, progress, or unread state.
 - `foliospace.open_manifest`: return the client manifest for a book.
+- `foliospace.get_private_state` and `foliospace.save_private_state`: inspect or update status, favorite, rating, tags, and notes.
+- `foliospace.list_favorites` and `foliospace.list_private_status`: browse private shelves such as favorites and want-to-read.
 - `foliospace.get_progress` and `foliospace.save_progress`: inspect or update reading progress.
 - `foliospace.list_collections` and `foliospace.list_volumes`: browse the indexed library.
 - `foliospace.scan_library`: start a scan for a configured library.
@@ -395,6 +538,9 @@ Good MCP resources:
 - `foliospace://home`
 - `foliospace://collections/{collectionId}`
 - `foliospace://books/{bookId}/manifest`
+- `foliospace://books/{bookId}/private-state`
+- `foliospace://books/favorites`
+- `foliospace://books/private-status/{status}`
 - `foliospace://books/{bookId}/progress`
 - `foliospace://jobs/{jobId}/events`
 - `foliospace://errors`
@@ -402,6 +548,8 @@ Good MCP resources:
 Useful assistant workflows:
 
 - "Find unread EPUBs in this collection."
+- "Show books tagged Vision Pro that are marked want-to-read."
+- "Mark this book as favorite and add the spatial tag."
 - "Show books with scan errors."
 - "Explain why this book will not open."
 - "Start a scan and watch job events."
@@ -418,5 +566,5 @@ Suggested first MCP scope:
 
 1. Read-only discovery: `client_info`, `home`, `search_books`, `open_manifest`.
 2. Diagnostics: `list_jobs`, `job_events`, `list_errors`, `library_health`.
-3. Controlled progress sync: `get_progress`, `save_progress`.
+3. Controlled progress and private state sync: `get_progress`, `save_progress`, `get_private_state`, `save_private_state`.
 4. Admin actions later: `scan_library`, library root management, reindex/repair operations.
