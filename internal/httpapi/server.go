@@ -51,6 +51,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/client/books/", s.handleClientBookAction)
 	mux.HandleFunc("/api/libraries", s.handleLibraries)
 	mux.HandleFunc("/api/libraries/", s.handleLibraryAction)
+	mux.HandleFunc("/api/fs/directories", s.handleDirectories)
 	mux.HandleFunc("/api/collections", s.handleSeries)
 	mux.HandleFunc("/api/collections/", s.handleCollectionAction)
 	mux.HandleFunc("/api/series", s.handleSeries)
@@ -140,18 +141,19 @@ func (s *Server) handleClientInfo(w http.ResponseWriter, r *http.Request) {
 		APIVersion:       "v1",
 		SupportedFormats: []string{"cbz", "zip", "epub", "nes", "sfc", "smc", "gba", "gb", "gbc", "nds", "3ds", "cia", "chd", "iso", "bin", "cue", "7z"},
 		Capabilities: clientCapabilities{
-			ClientHome:       true,
-			UnifiedManifest:  true,
-			ProgressSync:     true,
-			EPUBStreaming:    true,
-			PageStreaming:    true,
-			GameShelf:        true,
-			GameCatalog:      true,
-			PrivateState:     true,
-			Search:           true,
-			Preferences:      true,
-			BearerTokenAuth:  s.options.APIToken != "",
-			ScannerJobEvents: true,
+			ClientHome:        true,
+			UnifiedManifest:   true,
+			ProgressSync:      true,
+			EPUBStreaming:     true,
+			PageStreaming:     true,
+			GameShelf:         true,
+			GameCatalog:       true,
+			PrivateState:      true,
+			Search:            true,
+			Preferences:       true,
+			BearerTokenAuth:   s.options.APIToken != "",
+			ScannerJobEvents:  true,
+			ScannerJobControl: true,
 		},
 	})
 }
@@ -539,6 +541,15 @@ func (s *Server) handleLibraries(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) handleDirectories(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	listing, err := s.service.ListDirectories(r.URL.Query().Get("path"))
+	writeJSONOrError(w, listing, err)
+}
+
 func (s *Server) handleLibraryAction(w http.ResponseWriter, r *http.Request) {
 	id, tail, ok := parseIDTail(r.URL.Path, "/api/libraries/")
 	if !ok {
@@ -572,12 +583,16 @@ func (s *Server) handleSeries(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSeriesAction(w http.ResponseWriter, r *http.Request) {
 	id, action, ok := parseIDAction(r.URL.Path, "/api/series/")
-	if !ok || action != "books" {
+	if !ok || (action != "books" && action != "cover") {
 		http.NotFound(w, r)
 		return
 	}
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if action == "cover" {
+		s.streamSeriesCover(w, id)
 		return
 	}
 	items, err := s.service.ListBooks(id)
@@ -836,6 +851,19 @@ func (s *Server) streamCover(w http.ResponseWriter, bookID int64) {
 	_, _ = io.Copy(w, page.Body)
 }
 
+func (s *Server) streamSeriesCover(w http.ResponseWriter, seriesID int64) {
+	page, err := s.service.OpenSeriesCover(seriesID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	defer page.Body.Close()
+
+	w.Header().Set("Content-Type", page.ContentType)
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	_, _ = io.Copy(w, page.Body)
+}
+
 func (s *Server) streamEPUBResource(w http.ResponseWriter, bookID int64, resourcePath string) {
 	page, err := s.service.OpenEPUBResource(bookID, resourcePath)
 	if err != nil {
@@ -859,16 +887,42 @@ func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleJobAction(w http.ResponseWriter, r *http.Request) {
 	id, action, ok := parseIDAction(r.URL.Path, "/api/jobs/")
-	if !ok || action != "events" {
+	if !ok {
 		http.NotFound(w, r)
 		return
 	}
-	if r.Method != http.MethodGet {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
+	switch action {
+	case "events":
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		items, err := s.service.JobEvents(id)
+		writeJSONOrError(w, items, err)
+	case "pause":
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		job, err := s.service.PauseScanJob(id)
+		writeJSONOrError(w, job, err)
+	case "cancel":
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		job, err := s.service.CancelScanJob(id)
+		writeJSONOrError(w, job, err)
+	case "resume":
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		job, err := s.service.ResumeScanJob(id)
+		writeJSONOrError(w, job, err)
+	default:
+		http.NotFound(w, r)
 	}
-	items, err := s.service.JobEvents(id)
-	writeJSONOrError(w, items, err)
 }
 
 func (s *Server) handleErrors(w http.ResponseWriter, r *http.Request) {
@@ -964,18 +1018,19 @@ type clientInfoResponse struct {
 }
 
 type clientCapabilities struct {
-	ClientHome       bool `json:"clientHome"`
-	UnifiedManifest  bool `json:"unifiedManifest"`
-	ProgressSync     bool `json:"progressSync"`
-	EPUBStreaming    bool `json:"epubStreaming"`
-	PageStreaming    bool `json:"pageStreaming"`
-	GameShelf        bool `json:"gameShelf"`
-	GameCatalog      bool `json:"gameCatalog"`
-	PrivateState     bool `json:"privateState"`
-	Search           bool `json:"search"`
-	Preferences      bool `json:"preferences"`
-	BearerTokenAuth  bool `json:"bearerTokenAuth"`
-	ScannerJobEvents bool `json:"scannerJobEvents"`
+	ClientHome        bool `json:"clientHome"`
+	UnifiedManifest   bool `json:"unifiedManifest"`
+	ProgressSync      bool `json:"progressSync"`
+	EPUBStreaming     bool `json:"epubStreaming"`
+	PageStreaming     bool `json:"pageStreaming"`
+	GameShelf         bool `json:"gameShelf"`
+	GameCatalog       bool `json:"gameCatalog"`
+	PrivateState      bool `json:"privateState"`
+	Search            bool `json:"search"`
+	Preferences       bool `json:"preferences"`
+	BearerTokenAuth   bool `json:"bearerTokenAuth"`
+	ScannerJobEvents  bool `json:"scannerJobEvents"`
+	ScannerJobControl bool `json:"scannerJobControl"`
 }
 
 type clientHomeResponse struct {
@@ -1001,6 +1056,7 @@ type clientCollection struct {
 	ID             int64  `json:"id"`
 	Title          string `json:"title"`
 	CollectionType string `json:"collectionType"`
+	PrimaryType    string `json:"primaryType"`
 	BookCount      int64  `json:"bookCount"`
 }
 
@@ -1009,6 +1065,8 @@ type clientBook struct {
 	CollectionID     int64    `json:"collectionId"`
 	CollectionTitle  string   `json:"collectionTitle,omitempty"`
 	Title            string   `json:"title"`
+	Creator          string   `json:"creator,omitempty"`
+	Description      string   `json:"description,omitempty"`
 	BookType         string   `json:"bookType"`
 	Format           string   `json:"format"`
 	PageCount        int      `json:"pageCount"`
@@ -1097,6 +1155,7 @@ func clientCollections(collections []domain.Series) []clientCollection {
 			ID:             collection.ID,
 			Title:          collection.Title,
 			CollectionType: collection.CollectionType,
+			PrimaryType:    collection.PrimaryType,
 			BookCount:      collection.BookCount,
 		})
 	}
@@ -1171,6 +1230,8 @@ func clientBookItem(book domain.Book) clientBook {
 		CollectionID:     book.SeriesID,
 		CollectionTitle:  book.CollectionTitle,
 		Title:            book.Title,
+		Creator:          book.Creator,
+		Description:      book.Description,
 		BookType:         book.BookType,
 		Format:           book.Format,
 		PageCount:        book.PageCount,

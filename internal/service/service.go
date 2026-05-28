@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -50,6 +51,137 @@ func (s *Service) CreateLibraryWithType(name string, rootPath string, assetType 
 	return s.store.CreateLibraryWithType(name, rootPath, normalizeLibraryAssetType(assetType))
 }
 
+func (s *Service) ListDirectories(path string) (domain.DirectoryListing, error) {
+	path = strings.TrimSpace(path)
+	roots, err := s.directoryRoots()
+	if err != nil {
+		return domain.DirectoryListing{}, err
+	}
+	if path == "" || path == string(filepath.Separator) {
+		return domain.DirectoryListing{
+			Path:    string(filepath.Separator),
+			Entries: roots,
+		}, nil
+	}
+	if !filepath.IsAbs(path) {
+		path = string(filepath.Separator) + path
+	}
+	path = filepath.Clean(path)
+	if !pathWithinDirectoryRoots(path, roots) {
+		return domain.DirectoryListing{}, fmt.Errorf("directory %s is outside allowed roots", path)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return domain.DirectoryListing{}, err
+	}
+	if !info.IsDir() {
+		return domain.DirectoryListing{}, fmt.Errorf("%s is not a directory", path)
+	}
+	items, err := os.ReadDir(path)
+	if err != nil {
+		return domain.DirectoryListing{}, err
+	}
+	entries := make([]domain.DirectoryEntry, 0)
+	for _, item := range items {
+		if !item.IsDir() {
+			continue
+		}
+		entries = append(entries, domain.DirectoryEntry{
+			Name: item.Name(),
+			Path: filepath.Join(path, item.Name()),
+		})
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		return strings.ToLower(entries[i].Name) < strings.ToLower(entries[j].Name)
+	})
+	parent := ""
+	if directoryPathIsRoot(path, roots) {
+		parent = string(filepath.Separator)
+	} else if parentPath := filepath.Dir(path); parentPath != path && pathWithinDirectoryRoots(parentPath, roots) {
+		parent = parentPath
+	}
+	return domain.DirectoryListing{Path: path, Parent: parent, Entries: entries}, nil
+}
+
+func (s *Service) directoryRoots() ([]domain.DirectoryEntry, error) {
+	candidates := []string{os.Getenv("FOLIOSPACE_LIBRARY_DIR")}
+	candidates = append(candidates, strings.Split(os.Getenv("FOLIOSPACE_DIRECTORY_ROOTS"), ",")...)
+	candidates = append(candidates, "/library", "/games")
+	libraries, err := s.store.ListLibraries()
+	if err != nil {
+		return nil, err
+	}
+	for _, library := range libraries {
+		candidates = append(candidates, library.RootPath)
+	}
+
+	seen := map[string]bool{}
+	roots := make([]domain.DirectoryEntry, 0)
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		if !filepath.IsAbs(candidate) {
+			candidate = string(filepath.Separator) + candidate
+		}
+		candidate = filepath.Clean(candidate)
+		info, err := os.Stat(candidate)
+		if err != nil || !info.IsDir() || seen[candidate] {
+			continue
+		}
+		seen[candidate] = true
+		roots = append(roots, domain.DirectoryEntry{
+			Name: directoryRootName(candidate),
+			Path: candidate,
+		})
+	}
+	sort.Slice(roots, func(i, j int) bool {
+		return strings.ToLower(roots[i].Path) < strings.ToLower(roots[j].Path)
+	})
+	return roots, nil
+}
+
+func pathWithinDirectoryRoots(path string, roots []domain.DirectoryEntry) bool {
+	path = filepath.Clean(path)
+	for _, root := range roots {
+		rootPath := filepath.Clean(root.Path)
+		if path == rootPath {
+			return true
+		}
+		prefix := rootPath
+		if !strings.HasSuffix(prefix, string(filepath.Separator)) {
+			prefix += string(filepath.Separator)
+		}
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func directoryPathIsRoot(path string, roots []domain.DirectoryEntry) bool {
+	path = filepath.Clean(path)
+	for _, root := range roots {
+		if path == filepath.Clean(root.Path) {
+			return true
+		}
+	}
+	return false
+}
+
+func directoryRootName(path string) string {
+	if path == string(filepath.Separator) {
+		return path
+	}
+	name := filepath.Base(path)
+	if name == "." || name == string(filepath.Separator) || name == "" {
+		return path
+	}
+	return name
+}
+
 func normalizeLibraryAssetType(value string) string {
 	if oneOf(value, "mixed", "book", "comic", "game") {
 		return value
@@ -87,6 +219,21 @@ func (s *Service) ListSeries() ([]domain.Series, error) {
 
 func (s *Service) ListBooks(seriesID int64) ([]domain.Book, error) {
 	return s.store.ListBooks(seriesID)
+}
+
+func (s *Service) OpenSeriesCover(seriesID int64) (PageStream, error) {
+	page, err := s.store.ListBooksPage(domain.BookListOptions{
+		SeriesID: seriesID,
+		Limit:    1,
+		Sort:     "title",
+	})
+	if err != nil {
+		return PageStream{}, err
+	}
+	if len(page.Items) == 0 {
+		return PageStream{}, fmt.Errorf("series has no books")
+	}
+	return s.OpenCover(page.Items[0].ID)
 }
 
 func (s *Service) CollectionAssets(seriesID int64) (domain.CollectionAssets, error) {
@@ -488,6 +635,45 @@ func (s *Service) Progress(bookID int64) (domain.ReadProgress, error) {
 
 func (s *Service) ListJobs() ([]domain.ScanJob, error) {
 	return s.store.ListScanJobs()
+}
+
+func (s *Service) PauseScanJob(jobID int64) (domain.ScanJob, error) {
+	job, err := s.store.RequestScanJobPause(jobID)
+	if err != nil {
+		return domain.ScanJob{}, err
+	}
+	_ = s.store.AddJobEvent(job.ID, "info", "pause requested")
+	return job, nil
+}
+
+func (s *Service) CancelScanJob(jobID int64) (domain.ScanJob, error) {
+	job, err := s.store.RequestScanJobCancel(jobID)
+	if err != nil {
+		return domain.ScanJob{}, err
+	}
+	_ = s.store.AddJobEvent(job.ID, "info", "cancel requested")
+	return job, nil
+}
+
+func (s *Service) ResumeScanJob(jobID int64) (domain.ScanJob, error) {
+	job, err := s.store.ScanJobByID(jobID)
+	if err != nil {
+		return domain.ScanJob{}, err
+	}
+	if job.Status != "paused" {
+		return domain.ScanJob{}, fmt.Errorf("scan job %d is not paused", jobID)
+	}
+	lib, err := s.store.LibraryByID(job.LibraryID)
+	if err != nil {
+		return domain.ScanJob{}, err
+	}
+	resumed, err := s.scanner.StartScanJob(lib)
+	if err != nil {
+		return domain.ScanJob{}, err
+	}
+	_ = s.store.AddJobEvent(job.ID, "info", fmt.Sprintf("resumed as job %d", resumed.ID))
+	_ = s.store.AddJobEvent(resumed.ID, "info", fmt.Sprintf("resumed from job %d", job.ID))
+	return resumed, nil
 }
 
 func (s *Service) JobEvents(jobID int64) ([]domain.JobEvent, error) {

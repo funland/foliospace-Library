@@ -54,6 +54,8 @@ func Migrate(conn *sql.DB) error {
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			series_id INTEGER NOT NULL REFERENCES series(id) ON DELETE CASCADE,
 			title TEXT NOT NULL,
+			creator TEXT NOT NULL DEFAULT '',
+			description TEXT NOT NULL DEFAULT '',
 			format TEXT NOT NULL,
 			page_count INTEGER NOT NULL DEFAULT 0,
 			cover_status TEXT NOT NULL DEFAULT 'pending',
@@ -117,6 +119,8 @@ func Migrate(conn *sql.DB) error {
 			indexed_files INTEGER NOT NULL DEFAULT 0,
 			skipped_files INTEGER NOT NULL DEFAULT 0,
 			error_count INTEGER NOT NULL DEFAULT 0,
+			metadata_updated_files INTEGER NOT NULL DEFAULT 0,
+			reclassified_files INTEGER NOT NULL DEFAULT 0,
 			started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			finished_at TEXT NOT NULL DEFAULT ''
 		)`,
@@ -166,6 +170,12 @@ func Migrate(conn *sql.DB) error {
 	if err := addColumnIfMissing(conn, "scan_jobs", "current_path", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	if err := addColumnIfMissing(conn, "scan_jobs", "metadata_updated_files", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(conn, "scan_jobs", "reclassified_files", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
 	if err := addColumnIfMissing(conn, "series", "directory_path", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
@@ -191,6 +201,12 @@ func Migrate(conn *sql.DB) error {
 		return err
 	}
 	if err := addColumnIfMissing(conn, "books", "summary", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(conn, "books", "creator", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(conn, "books", "description", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
 	if err := addColumnIfMissing(conn, "libraries", "asset_type", "TEXT NOT NULL DEFAULT 'mixed'"); err != nil {

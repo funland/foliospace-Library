@@ -18,6 +18,9 @@ func TestScanLibraryIndexesValidArchivesAndRecordsEmptyFile(t *testing.T) {
 	makeZip(t, filepath.Join(root, "Publisher", "Series A", "book2.cbz"), map[string]string{"001.jpg": "image"})
 	makeZip(t, filepath.Join(root, "Books", "novel.epub"), sampleEPUBEntries())
 	makeZip(t, filepath.Join(root, "root-book.zip"), map[string]string{"001.png": "image"})
+	makeZip(t, filepath.Join(root, "#recycle", "deleted.cbz"), map[string]string{"001.jpg": "image"})
+	makeZip(t, filepath.Join(root, "@eaDir", "thumbnail.cbz"), map[string]string{"001.jpg": "image"})
+	makeZip(t, filepath.Join(root, ".calnotes", "notes.cbz"), map[string]string{"001.jpg": "image"})
 	if err := os.WriteFile(filepath.Join(root, "Series A", "empty.cbz"), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -104,6 +107,157 @@ func TestScanLibraryIndexesValidArchivesAndRecordsEmptyFile(t *testing.T) {
 	}
 	if secondJob.IndexedFiles != 0 {
 		t.Fatalf("second scan indexed files = %d, want 0", secondJob.IndexedFiles)
+	}
+}
+
+func TestScanLibraryUsesEPUBMetadataForTitleCollectionAndBookDetails(t *testing.T) {
+	root := t.TempDir()
+	makeZip(t, filepath.Join(root, "Books", "ugly-file-name.epub"), sampleEPUBEntriesWithMetadata("Metadata Book Title", "Metadata Author", "Metadata description."))
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	st := store.New(conn)
+	lib, err := st.CreateLibrary("Books", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	job, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != "completed" || job.IndexedFiles != 1 {
+		t.Fatalf("job = %#v, want one indexed epub", job)
+	}
+
+	series, err := st.ListSeries()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(series) != 1 || series[0].Title != "Metadata Author" {
+		t.Fatalf("series = %#v, want creator collection", series)
+	}
+	books, err := st.ListBooks(series[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(books) != 1 || books[0].Title != "Metadata Book Title" || books[0].Creator != "Metadata Author" || books[0].Description != "Metadata description." {
+		t.Fatalf("books = %#v, want EPUB metadata details", books)
+	}
+
+	makeZip(t, filepath.Join(root, "Books", "ugly-file-name.epub"), sampleEPUBEntriesWithMetadata("Renamed Book Title", "Second Author", "Updated description."))
+	secondJob, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondJob.MetadataUpdatedFiles != 1 || secondJob.ReclassifiedFiles != 1 {
+		t.Fatalf("second job = %#v, want metadata and collection change counts", secondJob)
+	}
+}
+
+func TestScanLibraryUsesConfiguredWorkerPool(t *testing.T) {
+	t.Setenv("FOLIOSPACE_SCAN_WORKERS", "2")
+	root := t.TempDir()
+	for i := 0; i < 6; i++ {
+		makeZip(t, filepath.Join(root, "Series A", "book"+string(rune('A'+i))+".cbz"), map[string]string{"001.jpg": "image"})
+	}
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	st := store.New(conn)
+	lib, err := st.CreateLibrary("Test", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	job, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != "completed" || job.IndexedFiles != 6 || job.ErrorCount != 0 {
+		t.Fatalf("job = %#v, want six indexed files with no errors", job)
+	}
+	events, err := st.ListJobEvents(job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range events {
+		if event.Message == "scan workers: 2" {
+			return
+		}
+	}
+	t.Fatalf("events = %#v, want scan workers event", events)
+}
+
+func TestRunScanJobHonorsPauseRequest(t *testing.T) {
+	root := t.TempDir()
+	makeZip(t, filepath.Join(root, "Series A", "book1.cbz"), map[string]string{"001.jpg": "image"})
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	st := store.New(conn)
+	lib, err := st.CreateLibrary("Test", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := st.StartScanJob(lib.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.RequestScanJobPause(job.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	paused, err := New(st).RunScanJob(lib, job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if paused.Status != "paused" || paused.IndexedFiles != 0 || paused.CurrentPath != "" {
+		t.Fatalf("job = %#v, want paused before indexing", paused)
+	}
+}
+
+func TestRunScanJobHonorsCancelRequest(t *testing.T) {
+	root := t.TempDir()
+	makeZip(t, filepath.Join(root, "Series A", "book1.cbz"), map[string]string{"001.jpg": "image"})
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	st := store.New(conn)
+	lib, err := st.CreateLibrary("Test", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := st.StartScanJob(lib.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.RequestScanJobCancel(job.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	cancelled, err := New(st).RunScanJob(lib, job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cancelled.Status != "cancelled" || cancelled.IndexedFiles != 0 || cancelled.CurrentPath != "" {
+		t.Fatalf("job = %#v, want cancelled before indexing", cancelled)
 	}
 }
 
@@ -441,6 +595,22 @@ func makeZip(t *testing.T, path string, entries map[string]string) {
 }
 
 func sampleEPUBEntries() map[string]string {
+	return sampleEPUBEntriesWithMetadata("Sample EPUB", "", "")
+}
+
+func sampleEPUBEntriesWithTitle(title string) map[string]string {
+	return sampleEPUBEntriesWithMetadata(title, "", "")
+}
+
+func sampleEPUBEntriesWithMetadata(title string, creator string, description string) map[string]string {
+	creatorXML := ""
+	if creator != "" {
+		creatorXML = "\n    <dc:creator>" + creator + "</dc:creator>"
+	}
+	descriptionXML := ""
+	if description != "" {
+		descriptionXML = "\n    <dc:description>" + description + "</dc:description>"
+	}
 	return map[string]string{
 		"META-INF/container.xml": `<?xml version="1.0" encoding="UTF-8"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
@@ -451,7 +621,7 @@ func sampleEPUBEntries() map[string]string {
 		"OPS/package.opf": `<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
-    <dc:title>Sample EPUB</dc:title>
+    <dc:title>` + title + `</dc:title>` + creatorXML + descriptionXML + `
   </metadata>
   <manifest>
     <item id="chapter1" href="text/chapter1.xhtml" media-type="application/xhtml+xml"/>

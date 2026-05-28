@@ -3,6 +3,7 @@ package scanner
 import (
 	"crypto/sha1"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"io"
@@ -10,7 +11,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"foliospace-reader/internal/archive"
@@ -21,6 +24,11 @@ import (
 type Scanner struct {
 	store *store.Store
 }
+
+var (
+	errScanPaused    = errors.New("scan paused")
+	errScanCancelled = errors.New("scan cancelled")
+)
 
 func New(store *store.Store) *Scanner {
 	return &Scanner{store: store}
@@ -49,8 +57,19 @@ func (s *Scanner) RunScanJob(library domain.Library, job domain.ScanJob) (domain
 	_ = s.store.AddJobEvent(job.ID, "info", "scan started")
 	_ = s.store.AddJobEvent(job.ID, "info", "walking "+library.RootPath)
 
+	workers := scanWorkerCount()
+	if workers > 1 {
+		return s.runScanJobConcurrent(library, job, workers)
+	}
+
 	walkErr := filepath.WalkDir(library.RootPath, func(path string, entry fs.DirEntry, walkErr error) error {
+		if err := s.applyScanControl(&job); err != nil {
+			return err
+		}
 		if walkErr != nil {
+			if shouldSkipScanDir(library.RootPath, path) {
+				return filepath.SkipDir
+			}
 			job.CurrentPath = path
 			job.ErrorCount++
 			_ = s.recordPathError(library.ID, job.ID, path, classifyWalkError(walkErr), walkErr.Error())
@@ -59,6 +78,9 @@ func (s *Scanner) RunScanJob(library domain.Library, job domain.ScanJob) (domain
 			return nil
 		}
 		if entry.IsDir() {
+			if shouldSkipScanDir(library.RootPath, path) {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 
@@ -122,12 +144,19 @@ func (s *Scanner) RunScanJob(library domain.Library, job domain.ScanJob) (domain
 		}
 
 		if s.canSkipUnchanged(path, info, ext) {
-			if _, err := s.indexFileMetadata(library, path, info, ext); err != nil {
+			result, err := s.indexFileMetadata(library, path, info, ext)
+			if err != nil {
 				job.ErrorCount++
 				_ = s.recordPathError(library.ID, job.ID, path, domain.ErrorUnknownIO, err.Error())
 				_ = s.store.AddJobEvent(job.ID, "error", "metadata update failed: "+path)
 				_ = s.store.UpdateScanJob(job)
 				return nil
+			}
+			if result.MetadataUpdated {
+				job.MetadataUpdatedFiles++
+			}
+			if result.Reclassified {
+				job.ReclassifiedFiles++
 			}
 			job.SkippedFiles++
 			_ = s.store.AddJobEvent(job.ID, "debug", "skipped unchanged: "+path)
@@ -135,7 +164,8 @@ func (s *Scanner) RunScanJob(library domain.Library, job domain.ScanJob) (domain
 			return nil
 		}
 
-		if err := s.indexFile(library, job.ID, path, info, ext); err != nil {
+		result, err := s.indexFile(library, job.ID, path, info, ext)
+		if err != nil {
 			job.ErrorCount++
 			_ = s.recordPathError(library.ID, job.ID, path, domain.ErrorArchiveOpenFailed, err.Error())
 			_ = s.store.AddJobEvent(job.ID, "error", "archive failed: "+path)
@@ -143,10 +173,19 @@ func (s *Scanner) RunScanJob(library domain.Library, job domain.ScanJob) (domain
 			return nil
 		}
 		job.IndexedFiles++
+		if result.MetadataUpdated {
+			job.MetadataUpdatedFiles++
+		}
+		if result.Reclassified {
+			job.ReclassifiedFiles++
+		}
 		_ = s.store.AddJobEvent(job.ID, "info", "indexed: "+path)
 		_ = s.store.UpdateScanJob(job)
 		return nil
 	})
+	if errors.Is(walkErr, errScanPaused) || errors.Is(walkErr, errScanCancelled) {
+		return job, nil
+	}
 	if walkErr != nil {
 		job.Status = "failed"
 		job.CurrentPath = ""
@@ -172,6 +211,269 @@ func (s *Scanner) RunScanJob(library domain.Library, job domain.ScanJob) (domain
 	}
 	_ = s.store.AddJobEvent(job.ID, "info", "scan completed")
 	return job, nil
+}
+
+type scanFileTask struct {
+	path string
+	info fs.FileInfo
+	ext  string
+	kind string
+}
+
+func (s *Scanner) runScanJobConcurrent(library domain.Library, job domain.ScanJob, workers int) (domain.ScanJob, error) {
+	_ = s.store.AddJobEvent(job.ID, "info", fmt.Sprintf("scan workers: %d", workers))
+
+	var tasks []scanFileTask
+	walkErr := filepath.WalkDir(library.RootPath, func(path string, entry fs.DirEntry, walkErr error) error {
+		if err := s.applyScanControl(&job); err != nil {
+			return err
+		}
+		if walkErr != nil {
+			if shouldSkipScanDir(library.RootPath, path) {
+				return filepath.SkipDir
+			}
+			job.CurrentPath = path
+			job.ErrorCount++
+			_ = s.recordPathError(library.ID, job.ID, path, classifyWalkError(walkErr), walkErr.Error())
+			_ = s.store.AddJobEvent(job.ID, "error", "walk failed: "+path)
+			_ = s.store.UpdateScanJob(job)
+			return nil
+		}
+		if entry.IsDir() {
+			if shouldSkipScanDir(library.RootPath, path) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		ext := strings.ToLower(filepath.Ext(path))
+		kind := classifyFileKind(library, path, ext)
+		if kind == "" {
+			return nil
+		}
+		job.CurrentPath = path
+		job.DiscoveredFiles++
+
+		info, err := entry.Info()
+		if err != nil {
+			job.ErrorCount++
+			_ = s.recordPathError(library.ID, job.ID, path, domain.ErrorUnknownIO, err.Error())
+			_ = s.store.AddJobEvent(job.ID, "error", "stat failed: "+path)
+			_ = s.store.UpdateScanJob(job)
+			return nil
+		}
+		if info.Size() == 0 {
+			job.ErrorCount++
+			_ = s.recordPathError(library.ID, job.ID, path, domain.ErrorEmptyFile, "empty file")
+			_ = s.store.AddJobEvent(job.ID, "error", "empty file: "+path)
+			_ = s.store.UpdateScanJob(job)
+			return nil
+		}
+		tasks = append(tasks, scanFileTask{path: path, info: info, ext: ext, kind: kind})
+		return nil
+	})
+	if errors.Is(walkErr, errScanPaused) || errors.Is(walkErr, errScanCancelled) {
+		return job, nil
+	}
+	if walkErr != nil {
+		job.Status = "failed"
+		job.CurrentPath = ""
+		job.FinishedAt = time.Now()
+		_ = s.store.UpdateScanJob(job)
+		_ = s.store.AddJobEvent(job.ID, "error", "scan failed: "+walkErr.Error())
+		return job, walkErr
+	}
+
+	taskCh := make(chan scanFileTask, len(tasks))
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	stopped := false
+
+	updateJob := func(change func(*domain.ScanJob)) {
+		mu.Lock()
+		defer mu.Unlock()
+		change(&job)
+		_ = s.store.UpdateScanJob(job)
+	}
+	checkControl := func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		if stopped {
+			return false
+		}
+		if err := s.applyScanControl(&job); err != nil {
+			stopped = true
+			return false
+		}
+		return true
+	}
+
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for task := range taskCh {
+				if !checkControl() {
+					return
+				}
+				s.processScanTask(library, job.ID, task, updateJob)
+			}
+		}()
+	}
+	for _, task := range tasks {
+		mu.Lock()
+		shouldStop := stopped
+		mu.Unlock()
+		if shouldStop {
+			break
+		}
+		taskCh <- task
+	}
+	close(taskCh)
+	wg.Wait()
+
+	if job.Status == "paused" || job.Status == "cancelled" {
+		return job, nil
+	}
+	if err := s.store.DeleteEmptySeries(library.ID); err != nil {
+		job.Status = "failed"
+		job.CurrentPath = ""
+		job.FinishedAt = time.Now()
+		_ = s.store.UpdateScanJob(job)
+		_ = s.store.AddJobEvent(job.ID, "error", "cleanup failed: "+err.Error())
+		return job, err
+	}
+
+	job.Status = "completed"
+	job.CurrentPath = ""
+	job.FinishedAt = time.Now()
+	if err := s.store.UpdateScanJob(job); err != nil {
+		return job, err
+	}
+	_ = s.store.AddJobEvent(job.ID, "info", "scan completed")
+	return job, nil
+}
+
+func (s *Scanner) processScanTask(library domain.Library, jobID int64, task scanFileTask, updateJob func(func(*domain.ScanJob))) {
+	setCurrent := func(job *domain.ScanJob) {
+		job.CurrentPath = task.path
+	}
+	if task.kind == "game" {
+		relPath, err := filepath.Rel(library.RootPath, task.path)
+		if err != nil {
+			s.recordTaskError(library.ID, jobID, task.path, domain.ErrorUnknownIO, "relative path failed: ", err, updateJob)
+			return
+		}
+		expectedPlatform := inferGamePlatform(task.ext, relPath)
+		if s.store.CanSkipGame(task.path, task.info.Size(), task.info.ModTime(), expectedPlatform) {
+			updateJob(func(job *domain.ScanJob) {
+				setCurrent(job)
+				job.SkippedFiles++
+				_ = s.store.AddJobEvent(jobID, "debug", "skipped unchanged game: "+task.path)
+			})
+			return
+		}
+		if err := s.indexGameFile(library, task.path, task.info, task.ext); err != nil {
+			s.recordTaskError(library.ID, jobID, task.path, domain.ErrorUnknownIO, "game metadata failed: ", err, updateJob)
+			return
+		}
+		updateJob(func(job *domain.ScanJob) {
+			setCurrent(job)
+			job.IndexedFiles++
+			_ = s.store.AddJobEvent(jobID, "info", "indexed game: "+task.path)
+		})
+		return
+	}
+	if err := s.store.DeleteGameByPath(task.path); err != nil {
+		s.recordTaskError(library.ID, jobID, task.path, domain.ErrorUnknownIO, "game cleanup failed: ", err, updateJob)
+		return
+	}
+
+	if s.canSkipUnchanged(task.path, task.info, task.ext) {
+		result, err := s.indexFileMetadata(library, task.path, task.info, task.ext)
+		if err != nil {
+			s.recordTaskError(library.ID, jobID, task.path, domain.ErrorUnknownIO, "metadata update failed: ", err, updateJob)
+			return
+		}
+		updateJob(func(job *domain.ScanJob) {
+			setCurrent(job)
+			if result.MetadataUpdated {
+				job.MetadataUpdatedFiles++
+			}
+			if result.Reclassified {
+				job.ReclassifiedFiles++
+			}
+			job.SkippedFiles++
+			_ = s.store.AddJobEvent(jobID, "debug", "skipped unchanged: "+task.path)
+		})
+		return
+	}
+
+	result, err := s.indexFile(library, jobID, task.path, task.info, task.ext)
+	if err != nil {
+		s.recordTaskError(library.ID, jobID, task.path, domain.ErrorArchiveOpenFailed, "archive failed: ", err, updateJob)
+		return
+	}
+	updateJob(func(job *domain.ScanJob) {
+		setCurrent(job)
+		job.IndexedFiles++
+		if result.MetadataUpdated {
+			job.MetadataUpdatedFiles++
+		}
+		if result.Reclassified {
+			job.ReclassifiedFiles++
+		}
+		_ = s.store.AddJobEvent(jobID, "info", "indexed: "+task.path)
+	})
+}
+
+func (s *Scanner) recordTaskError(libraryID int64, jobID int64, path string, code domain.ErrorCode, eventPrefix string, err error, updateJob func(func(*domain.ScanJob))) {
+	_ = s.recordPathError(libraryID, jobID, path, code, err.Error())
+	updateJob(func(job *domain.ScanJob) {
+		job.CurrentPath = path
+		job.ErrorCount++
+		_ = s.store.AddJobEvent(jobID, "error", eventPrefix+path)
+	})
+}
+
+func scanWorkerCount() int {
+	value := strings.TrimSpace(os.Getenv("FOLIOSPACE_SCAN_WORKERS"))
+	if value == "" {
+		return 1
+	}
+	workers, err := strconv.Atoi(value)
+	if err != nil || workers < 1 {
+		return 1
+	}
+	if workers > 8 {
+		return 8
+	}
+	return workers
+}
+
+func (s *Scanner) applyScanControl(job *domain.ScanJob) error {
+	latest, err := s.store.ScanJobByID(job.ID)
+	if err != nil {
+		return nil
+	}
+	switch latest.Status {
+	case "pause_requested":
+		job.Status = "paused"
+		job.CurrentPath = ""
+		job.FinishedAt = time.Now()
+		_ = s.store.UpdateScanJob(*job)
+		_ = s.store.AddJobEvent(job.ID, "info", "scan paused")
+		return errScanPaused
+	case "cancel_requested":
+		job.Status = "cancelled"
+		job.CurrentPath = ""
+		job.FinishedAt = time.Now()
+		_ = s.store.UpdateScanJob(*job)
+		_ = s.store.AddJobEvent(job.ID, "info", "scan cancelled")
+		return errScanCancelled
+	default:
+		return nil
+	}
 }
 
 func classifyFileKind(library domain.Library, path string, ext string) string {
@@ -219,20 +521,20 @@ func (s *Scanner) canSkipUnchanged(path string, info fs.FileInfo, ext string) bo
 		index.PageCount > 0
 }
 
-func (s *Scanner) indexFile(library domain.Library, jobID int64, path string, info fs.FileInfo, ext string) error {
-	book, err := s.indexFileMetadata(library, path, info, ext)
+func (s *Scanner) indexFile(library domain.Library, jobID int64, path string, info fs.FileInfo, ext string) (indexedBookResult, error) {
+	result, err := s.indexFileMetadata(library, path, info, ext)
 	if err != nil {
-		return err
+		return result, err
 	}
 
 	pages, err := listBookPages(path, ext)
 	if err != nil {
-		return err
+		return result, err
 	}
-	if err := s.store.ReplacePages(book.ID, pages); err != nil {
-		return err
+	if err := s.store.ReplacePages(result.Book.ID, pages); err != nil {
+		return result, err
 	}
-	return nil
+	return result, nil
 }
 
 func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.FileInfo, ext string) error {
@@ -272,39 +574,101 @@ func listBookPages(path string, ext string) ([]domain.Page, error) {
 	return archive.ListPages(path)
 }
 
-func (s *Scanner) indexFileMetadata(library domain.Library, path string, info fs.FileInfo, ext string) (domain.Book, error) {
+type indexedBookResult struct {
+	Book            domain.Book
+	MetadataUpdated bool
+	Reclassified    bool
+}
+
+func (s *Scanner) indexFileMetadata(library domain.Library, path string, info fs.FileInfo, ext string) (indexedBookResult, error) {
 	relPath, err := filepath.Rel(library.RootPath, path)
 	if err != nil {
-		return domain.Book{}, fmt.Errorf("relative path: %w", err)
+		return indexedBookResult{}, fmt.Errorf("relative path: %w", err)
 	}
 
 	seriesTitle, seriesDirectoryPath := seriesIdentityForRelPath(library.RootPath, relPath)
-	bookTitle := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	metadata, err := bookMetadataForPath(path, ext)
+	if err != nil {
+		return indexedBookResult{}, err
+	}
+	if metadata.Creator != "" {
+		seriesTitle = metadata.Creator
+		seriesDirectoryPath = filepath.ToSlash(filepath.Dir(relPath))
+		if seriesDirectoryPath == "." || seriesDirectoryPath == "/" {
+			seriesDirectoryPath = "."
+		}
+	}
 	format := strings.TrimPrefix(ext, ".")
 
 	series, err := s.store.UpsertSeries(library.ID, seriesTitle, seriesDirectoryPath)
 	if err != nil {
-		return domain.Book{}, err
+		return indexedBookResult{}, err
 	}
 
 	var book domain.Book
 	existing, err := s.store.FileIndexByPath(path)
 	if err == nil {
-		book, err = s.store.UpdateBookIdentity(existing.File.BookID, series.ID, bookTitle, format)
+		previous, previousErr := s.store.BookByID(existing.File.BookID)
+		book, err = s.store.UpdateBookIdentity(existing.File.BookID, series.ID, metadata.Title, format)
 		if err != nil {
-			return domain.Book{}, err
+			return indexedBookResult{}, err
 		}
+		result := indexedBookResult{Book: book}
+		if previousErr == nil {
+			result.MetadataUpdated = previous.Title != metadata.Title || previous.Creator != metadata.Creator || previous.Description != metadata.Description
+			result.Reclassified = previous.SeriesID != series.ID
+		}
+		book, err = s.store.UpdateBookMetadata(book.ID, metadata.Creator, metadata.Description)
+		if err != nil {
+			return indexedBookResult{}, err
+		}
+		result.Book = book
+		_, err = s.store.UpsertFile(book.ID, library.ID, path, relPath, info.Size(), info.ModTime(), ext)
+		if err != nil {
+			return indexedBookResult{}, err
+		}
+		return result, nil
 	} else {
-		book, err = s.store.UpsertBook(series.ID, bookTitle, format)
+		book, err = s.store.UpsertBook(series.ID, metadata.Title, format)
 		if err != nil {
-			return domain.Book{}, err
+			return indexedBookResult{}, err
 		}
+	}
+	book, err = s.store.UpdateBookMetadata(book.ID, metadata.Creator, metadata.Description)
+	if err != nil {
+		return indexedBookResult{}, err
 	}
 	_, err = s.store.UpsertFile(book.ID, library.ID, path, relPath, info.Size(), info.ModTime(), ext)
 	if err != nil {
-		return domain.Book{}, err
+		return indexedBookResult{}, err
 	}
-	return book, nil
+	return indexedBookResult{Book: book}, nil
+}
+
+type bookMetadata struct {
+	Title       string
+	Creator     string
+	Description string
+}
+
+func bookMetadataForPath(path string, ext string) (bookMetadata, error) {
+	fallback := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	if ext != ".epub" {
+		return bookMetadata{Title: fallback}, nil
+	}
+	manifest, err := archive.ReadEPUBManifest(path)
+	if err != nil {
+		return bookMetadata{}, err
+	}
+	metadata := bookMetadata{
+		Title:       fallback,
+		Creator:     strings.TrimSpace(manifest.Creator),
+		Description: strings.TrimSpace(manifest.Description),
+	}
+	if title := strings.TrimSpace(manifest.Title); title != "" {
+		metadata.Title = title
+	}
+	return metadata, nil
 }
 
 func (s *Scanner) recordPathError(libraryID int64, jobID int64, path string, code domain.ErrorCode, message string) error {
@@ -315,6 +679,18 @@ func (s *Scanner) recordPathError(libraryID int64, jobID int64, path string, cod
 		Code:      code,
 		Message:   message,
 	})
+}
+
+func shouldSkipScanDir(rootPath string, path string) bool {
+	if filepath.Clean(path) == filepath.Clean(rootPath) {
+		return false
+	}
+	switch filepath.Base(path) {
+	case "#recycle", "@eaDir", ".calnotes":
+		return true
+	default:
+		return false
+	}
 }
 
 func seriesIdentityForRelPath(rootPath string, relPath string) (string, string) {

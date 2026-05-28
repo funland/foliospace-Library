@@ -137,7 +137,12 @@ func (s *Store) UpsertSeries(libraryID int64, title string, directoryPath string
 	if err != nil {
 		return domain.Series{}, err
 	}
-	row := s.db.QueryRow(`SELECT id, library_id, title, directory_path, collection_type, 0 FROM series WHERE library_id = ? AND title = ?`, libraryID, title)
+	row := s.db.QueryRow(`SELECT s.id, s.library_id, s.title, s.directory_path, s.collection_type,
+			CASE WHEN l.asset_type IN ('book', 'comic', 'game') THEN l.asset_type ELSE 'comic' END,
+			0
+		FROM series s
+		JOIN libraries l ON l.id = s.library_id
+		WHERE s.library_id = ? AND s.title = ?`, libraryID, title)
 	return scanSeries(row)
 }
 
@@ -145,11 +150,17 @@ func (s *Store) SeriesByID(id int64) (domain.Series, error) {
 	row := s.db.QueryRow(`SELECT s.id, s.library_id, s.title,
 			COALESCE(NULLIF(s.directory_path, ''), ''),
 			s.collection_type,
+			CASE
+				WHEN l.asset_type IN ('book', 'comic', 'game') THEN l.asset_type
+				WHEN SUM(CASE WHEN b.format IN ('epub', 'pdf') THEN 1 ELSE 0 END) > SUM(CASE WHEN b.format IN ('cbz', 'zip', 'cbr', 'rar', '7z') THEN 1 ELSE 0 END) THEN 'book'
+				ELSE 'comic'
+			END,
 			COUNT(DISTINCT b.id)
 		FROM series s
+		JOIN libraries l ON l.id = s.library_id
 		LEFT JOIN books b ON b.series_id = s.id
 		WHERE s.id = ?
-		GROUP BY s.id, s.library_id, s.title`, id)
+		GROUP BY s.id, s.library_id, s.title, l.asset_type`, id)
 	return scanSeries(row)
 }
 
@@ -161,11 +172,17 @@ func (s *Store) ListSeries() ([]domain.Series, error) {
 				ELSE SUBSTR(f.rel_path, 1, INSTR(f.rel_path, '/') - 1)
 			END), ''),
 			s.collection_type,
+			CASE
+				WHEN l.asset_type IN ('book', 'comic', 'game') THEN l.asset_type
+				WHEN SUM(CASE WHEN b.format IN ('epub', 'pdf') THEN 1 ELSE 0 END) > SUM(CASE WHEN b.format IN ('cbz', 'zip', 'cbr', 'rar', '7z') THEN 1 ELSE 0 END) THEN 'book'
+				ELSE 'comic'
+			END,
 			COUNT(DISTINCT b.id)
 		FROM series s
+		JOIN libraries l ON l.id = s.library_id
 		LEFT JOIN books b ON b.series_id = s.id
 		LEFT JOIN files f ON f.book_id = b.id
-		GROUP BY s.id, s.library_id, s.title
+		GROUP BY s.id, s.library_id, s.title, l.asset_type
 		ORDER BY s.title`)
 	if err != nil {
 		return nil, err
@@ -206,6 +223,7 @@ func (s *Store) ListGamePlatformCollections() ([]domain.Series, error) {
 			Title:          "Games / " + GamePlatformLabel(platform),
 			DirectoryPath:  "Games",
 			CollectionType: "game_platform",
+			PrimaryType:    "game",
 			BookCount:      count,
 		})
 	}
@@ -254,6 +272,16 @@ func (s *Store) UpdateBookIdentity(bookID int64, seriesID int64, title string, f
 	_, err := s.db.Exec(`UPDATE books
 		SET series_id = ?, title = ?, format = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?`, seriesID, title, format, bookID)
+	if err != nil {
+		return domain.Book{}, err
+	}
+	return s.BookByID(bookID)
+}
+
+func (s *Store) UpdateBookMetadata(bookID int64, creator string, description string) (domain.Book, error) {
+	_, err := s.db.Exec(`UPDATE books
+		SET creator = ?, description = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?`, strings.TrimSpace(creator), strings.TrimSpace(description), bookID)
 	if err != nil {
 		return domain.Book{}, err
 	}
@@ -901,18 +929,34 @@ func (s *Store) StartScanJob(libraryID int64) (domain.ScanJob, error) {
 }
 
 func (s *Store) UpdateScanJob(job domain.ScanJob) error {
-	_, err := s.db.Exec(`UPDATE scan_jobs SET status = ?, current_path = ?, discovered_files = ?, indexed_files = ?, skipped_files = ?, error_count = ?, finished_at = ? WHERE id = ?`,
-		job.Status, job.CurrentPath, job.DiscoveredFiles, job.IndexedFiles, job.SkippedFiles, job.ErrorCount, formatOptionalTime(job.FinishedAt), job.ID)
+	_, err := s.db.Exec(`UPDATE scan_jobs SET status = ?, current_path = ?, discovered_files = ?, indexed_files = ?, skipped_files = ?, error_count = ?, metadata_updated_files = ?, reclassified_files = ?, finished_at = ? WHERE id = ?`,
+		job.Status, job.CurrentPath, job.DiscoveredFiles, job.IndexedFiles, job.SkippedFiles, job.ErrorCount, job.MetadataUpdatedFiles, job.ReclassifiedFiles, formatOptionalTime(job.FinishedAt), job.ID)
 	return err
 }
 
+func (s *Store) RequestScanJobPause(id int64) (domain.ScanJob, error) {
+	_, err := s.db.Exec(`UPDATE scan_jobs SET status = 'pause_requested' WHERE id = ? AND status = 'running'`, id)
+	if err != nil {
+		return domain.ScanJob{}, err
+	}
+	return s.ScanJobByID(id)
+}
+
+func (s *Store) RequestScanJobCancel(id int64) (domain.ScanJob, error) {
+	_, err := s.db.Exec(`UPDATE scan_jobs SET status = 'cancel_requested' WHERE id = ? AND status IN ('running', 'pause_requested', 'paused')`, id)
+	if err != nil {
+		return domain.ScanJob{}, err
+	}
+	return s.ScanJobByID(id)
+}
+
 func (s *Store) ScanJobByID(id int64) (domain.ScanJob, error) {
-	row := s.db.QueryRow(`SELECT id, library_id, status, current_path, discovered_files, indexed_files, skipped_files, error_count, started_at, finished_at FROM scan_jobs WHERE id = ?`, id)
+	row := s.db.QueryRow(`SELECT id, library_id, status, current_path, discovered_files, indexed_files, skipped_files, error_count, metadata_updated_files, reclassified_files, started_at, finished_at FROM scan_jobs WHERE id = ?`, id)
 	return scanJob(row)
 }
 
 func (s *Store) ListScanJobs() ([]domain.ScanJob, error) {
-	rows, err := s.db.Query(`SELECT id, library_id, status, current_path, discovered_files, indexed_files, skipped_files, error_count, started_at, finished_at FROM scan_jobs ORDER BY id DESC LIMIT 50`)
+	rows, err := s.db.Query(`SELECT id, library_id, status, current_path, discovered_files, indexed_files, skipped_files, error_count, metadata_updated_files, reclassified_files, started_at, finished_at FROM scan_jobs ORDER BY id DESC LIMIT 50`)
 	if err != nil {
 		return nil, err
 	}
@@ -1052,11 +1096,22 @@ func scanSeries(row scanner) (domain.Series, error) {
 		&series.Title,
 		&series.DirectoryPath,
 		&series.CollectionType,
+		&series.PrimaryType,
 		&series.BookCount,
 	); err != nil {
 		return series, err
 	}
+	series.PrimaryType = normalizeCollectionPrimaryType(series.PrimaryType)
 	return series, nil
+}
+
+func normalizeCollectionPrimaryType(value string) string {
+	switch strings.TrimSpace(value) {
+	case "book", "comic", "game":
+		return strings.TrimSpace(value)
+	default:
+		return "comic"
+	}
 }
 
 func scanBook(row scanner) (domain.Book, error) {
@@ -1072,6 +1127,8 @@ func scanBook(row scanner) (domain.Book, error) {
 		&book.SeriesID,
 		&book.CollectionTitle,
 		&book.Title,
+		&book.Creator,
+		&book.Description,
 		&book.Format,
 		&book.PageCount,
 		&book.CoverStatus,
@@ -1130,7 +1187,7 @@ func decodeTags(value string) []string {
 }
 
 func bookSelectSQL() string {
-	return `SELECT b.id, b.series_id, s.title, b.title, b.format, b.page_count, b.cover_status, b.analyzed,
+	return `SELECT b.id, b.series_id, s.title, b.title, b.creator, b.description, b.format, b.page_count, b.cover_status, b.analyzed,
 			COALESCE(f.abs_path, ''), b.created_at, b.updated_at,
 			COALESCE(rp.page_index, 0), COALESCE(rp.progress_fraction, 0), COALESCE(rp.updated_at, ''),
 			b.private_status, b.favorite, b.rating, b.tags, b.summary
@@ -1205,7 +1262,7 @@ func scanJob(row scanner) (domain.ScanJob, error) {
 	var job domain.ScanJob
 	var started string
 	var finished string
-	if err := row.Scan(&job.ID, &job.LibraryID, &job.Status, &job.CurrentPath, &job.DiscoveredFiles, &job.IndexedFiles, &job.SkippedFiles, &job.ErrorCount, &started, &finished); err != nil {
+	if err := row.Scan(&job.ID, &job.LibraryID, &job.Status, &job.CurrentPath, &job.DiscoveredFiles, &job.IndexedFiles, &job.SkippedFiles, &job.ErrorCount, &job.MetadataUpdatedFiles, &job.ReclassifiedFiles, &started, &finished); err != nil {
 		return job, err
 	}
 	job.StartedAt = parseTime(started)

@@ -278,6 +278,52 @@ func TestClientAPIHomeAndManifestsHideFilePaths(t *testing.T) {
 	}
 }
 
+func TestAPIControlsScanJobs(t *testing.T) {
+	root := t.TempDir()
+	makeZip(t, filepath.Join(root, "Series A", "book1.cbz"), map[string]string{"001.jpg": "image"})
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibrary("Test", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ts := httptest.NewServer(New(service.New(st), nil).Routes())
+	defer ts.Close()
+
+	job, err := st.StartScanJob(lib.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pauseBody := postJSONBody(t, ts.URL+"/api/jobs/"+itoa(job.ID)+"/pause", "")
+	if !strings.Contains(pauseBody, `"status":"pause_requested"`) {
+		t.Fatalf("pause response %q, want pause_requested", pauseBody)
+	}
+	cancelBody := postJSONBody(t, ts.URL+"/api/jobs/"+itoa(job.ID)+"/cancel", "")
+	if !strings.Contains(cancelBody, `"status":"cancel_requested"`) {
+		t.Fatalf("cancel response %q, want cancel_requested", cancelBody)
+	}
+
+	pausedJob, err := st.StartScanJob(lib.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pausedJob.Status = "paused"
+	pausedJob.FinishedAt = time.Now()
+	if err := st.UpdateScanJob(pausedJob); err != nil {
+		t.Fatal(err)
+	}
+	resumeBody := postJSONBody(t, ts.URL+"/api/jobs/"+itoa(pausedJob.ID)+"/resume", "")
+	if !strings.Contains(resumeBody, `"libraryId":`+itoa(lib.ID)) || !strings.Contains(resumeBody, `"status":"running"`) {
+		t.Fatalf("resume response %q, want new running job", resumeBody)
+	}
+}
+
 func TestAPIClientGamesPage(t *testing.T) {
 	conn, err := db.Open(t.TempDir())
 	if err != nil {

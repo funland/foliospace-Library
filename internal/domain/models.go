@@ -27,12 +27,24 @@ type Library struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
+type DirectoryEntry struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+}
+
+type DirectoryListing struct {
+	Path    string           `json:"path"`
+	Parent  string           `json:"parent,omitempty"`
+	Entries []DirectoryEntry `json:"entries"`
+}
+
 type Series struct {
 	ID             int64  `json:"id"`
 	LibraryID      int64  `json:"libraryId"`
 	Title          string `json:"title"`
 	DirectoryPath  string `json:"directoryPath"`
 	CollectionType string `json:"collectionType"`
+	PrimaryType    string `json:"primaryType"`
 	BookCount      int64  `json:"bookCount"`
 }
 
@@ -41,6 +53,8 @@ type Book struct {
 	SeriesID         int64     `json:"seriesId"`
 	CollectionTitle  string    `json:"collectionTitle,omitempty"`
 	Title            string    `json:"title"`
+	Creator          string    `json:"creator,omitempty"`
+	Description      string    `json:"description,omitempty"`
 	BookType         string    `json:"bookType"`
 	Format           string    `json:"format"`
 	PageCount        int       `json:"pageCount"`
@@ -152,11 +166,12 @@ type Page struct {
 }
 
 type EPUBManifest struct {
-	Title     string          `json:"title"`
-	Creator   string          `json:"creator"`
-	CoverHref string          `json:"coverHref"`
-	Spine     []EPUBSpineItem `json:"spine"`
-	TOC       []EPUBTOCItem   `json:"toc"`
+	Title       string          `json:"title"`
+	Creator     string          `json:"creator"`
+	Description string          `json:"description"`
+	CoverHref   string          `json:"coverHref"`
+	Spine       []EPUBSpineItem `json:"spine"`
+	TOC         []EPUBTOCItem   `json:"toc"`
 }
 
 type EPUBSpineItem struct {
@@ -173,16 +188,18 @@ type EPUBTOCItem struct {
 }
 
 type ScanJob struct {
-	ID              int64     `json:"id"`
-	LibraryID       int64     `json:"libraryId"`
-	Status          string    `json:"status"`
-	CurrentPath     string    `json:"currentPath"`
-	DiscoveredFiles int       `json:"discoveredFiles"`
-	IndexedFiles    int       `json:"indexedFiles"`
-	SkippedFiles    int       `json:"skippedFiles"`
-	ErrorCount      int       `json:"errorCount"`
-	StartedAt       time.Time `json:"startedAt"`
-	FinishedAt      time.Time `json:"finishedAt,omitempty"`
+	ID                   int64     `json:"id"`
+	LibraryID            int64     `json:"libraryId"`
+	Status               string    `json:"status"`
+	CurrentPath          string    `json:"currentPath"`
+	DiscoveredFiles      int       `json:"discoveredFiles"`
+	IndexedFiles         int       `json:"indexedFiles"`
+	SkippedFiles         int       `json:"skippedFiles"`
+	ErrorCount           int       `json:"errorCount"`
+	MetadataUpdatedFiles int       `json:"metadataUpdatedFiles"`
+	ReclassifiedFiles    int       `json:"reclassifiedFiles"`
+	StartedAt            time.Time `json:"startedAt"`
+	FinishedAt           time.Time `json:"finishedAt,omitempty"`
 }
 
 type JobEvent struct {

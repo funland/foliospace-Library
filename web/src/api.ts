@@ -5,12 +5,24 @@ export type Library = {
   assetType: "mixed" | "book" | "comic" | "game";
 };
 
+export type DirectoryEntry = {
+  name: string;
+  path: string;
+};
+
+export type DirectoryListing = {
+  path: string;
+  parent?: string;
+  entries: DirectoryEntry[];
+};
+
 export type Series = {
   id: number;
   libraryId: number;
   title: string;
   directoryPath: string;
   collectionType: "directory" | "game_platform";
+  primaryType: "book" | "comic" | "game";
   bookCount: number;
 };
 
@@ -19,6 +31,8 @@ export type Book = {
   seriesId: number;
   collectionTitle?: string;
   title: string;
+  creator?: string;
+  description?: string;
   bookType: "single_volume";
   format: string;
   pageCount: number;
@@ -116,6 +130,7 @@ export type Page = {
 export type EpubManifest = {
   title: string;
   creator: string;
+  description: string;
   coverHref: string;
   spine: EpubSpineItem[];
   toc: EpubTocItem[];
@@ -150,6 +165,8 @@ export type ScanJob = {
   indexedFiles: number;
   skippedFiles: number;
   errorCount: number;
+  metadataUpdatedFiles: number;
+  reclassifiedFiles: number;
   startedAt: string;
   finishedAt?: string;
 };
@@ -241,6 +258,7 @@ export const api = {
       body: JSON.stringify({ name, rootPath, assetType }),
     }),
   deleteLibrary: (libraryId: number) => request<{ ok: boolean }>(`/api/libraries/${libraryId}`, { method: "DELETE" }),
+  directories: (path = "/") => request<DirectoryListing>(`/api/fs/directories?path=${encodeURIComponent(path)}`),
   scan: (libraryId: number) => request<ScanJob>(`/api/libraries/${libraryId}/scan`, { method: "POST" }),
   series: () => request<Series[]>("/api/collections"),
   books: (seriesId: number) => request<Book[]>(`/api/collections/${seriesId}/volumes`),
@@ -274,6 +292,9 @@ export const api = {
   epubManifest: (bookId: number) => request<EpubManifest>(`/api/books/${bookId}/epub/manifest`),
   jobs: () => request<ScanJob[]>("/api/jobs"),
   jobEvents: (jobId: number) => request<JobEvent[]>(`/api/jobs/${jobId}/events`),
+  pauseJob: (jobId: number) => request<ScanJob>(`/api/jobs/${jobId}/pause`, { method: "POST" }),
+  cancelJob: (jobId: number) => request<ScanJob>(`/api/jobs/${jobId}/cancel`, { method: "POST" }),
+  resumeJob: (jobId: number) => request<ScanJob>(`/api/jobs/${jobId}/resume`, { method: "POST" }),
   errors: () => request<FileError[]>("/api/errors"),
   jobErrors: (jobId: number) => request<FileError[]>(`/api/errors?jobId=${jobId}`),
   readProgress: (bookId: number) => request<ReadProgress>(`/api/books/${bookId}/progress`),

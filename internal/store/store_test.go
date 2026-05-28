@@ -132,6 +132,40 @@ func TestStorePersistsClientPreferences(t *testing.T) {
 	}
 }
 
+func TestStoreRequestsScanJobControl(t *testing.T) {
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	s := New(conn)
+	lib, err := s.CreateLibrary("Comics", "/library")
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := s.StartScanJob(lib.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	paused, err := s.RequestScanJobPause(job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if paused.Status != "pause_requested" {
+		t.Fatalf("pause status = %q, want pause_requested", paused.Status)
+	}
+
+	cancelled, err := s.RequestScanJobCancel(job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cancelled.Status != "cancel_requested" {
+		t.Fatalf("cancel status = %q, want cancel_requested", cancelled.Status)
+	}
+}
+
 func TestStorePersistsAndListsGameAssets(t *testing.T) {
 	conn, err := db.Open(t.TempDir())
 	if err != nil {

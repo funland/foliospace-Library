@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, MouseEvent, TouchEvent } from "react";
-import { api, Book, BookPrivateState, clearAuthToken, ClientPreferences, EpubManifest, FileError, GameAsset, getAuthToken, JobEvent, Library, Page, ScanJob, Series, setAuthToken } from "./api";
+import { api, Book, BookPrivateState, clearAuthToken, ClientPreferences, DirectoryListing, EpubManifest, FileError, GameAsset, getAuthToken, JobEvent, Library, Page, ScanJob, Series, setAuthToken } from "./api";
 
 type View = "library" | "reader" | "jobs" | "errors";
 type ReaderPageMode = "single" | "double";
@@ -41,6 +41,7 @@ export function App() {
   const [query, setQuery] = useState("");
   const [bookSort, setBookSort] = useState<BookSort>("title");
   const [status, setStatus] = useState("Ready");
+  const [nowTick, setNowTick] = useState(Date.now());
   const [authChecked, setAuthChecked] = useState(false);
   const [authEnabled, setAuthEnabled] = useState(false);
   const [authRequired, setAuthRequired] = useState(false);
@@ -60,13 +61,20 @@ export function App() {
   const [newLibraryName, setNewLibraryName] = useState("");
   const [newLibraryPath, setNewLibraryPath] = useState("");
   const [newLibraryAssetType, setNewLibraryAssetType] = useState<LibraryAssetType>("mixed");
+  const [directoryPickerOpen, setDirectoryPickerOpen] = useState(false);
+  const [directoryListing, setDirectoryListing] = useState<DirectoryListing | null>(null);
+  const [directoryPickerLoading, setDirectoryPickerLoading] = useState(false);
+  const [directoryPickerError, setDirectoryPickerError] = useState("");
   const [privateDraft, setPrivateDraft] = useState<BookPrivateState>(emptyPrivateState());
   const [privateSaving, setPrivateSaving] = useState(false);
+  const [bookDetailsOpen, setBookDetailsOpen] = useState(false);
   const [locale, setLocale] = useState<Locale>(initialPreferences.locale);
   const t = translations[locale];
   const imageCache = useRef<Set<string>>(new Set());
   const readerRef = useRef<HTMLElement | null>(null);
   const bookLoadMoreRef = useRef<HTMLDivElement | null>(null);
+  const collectionSectionsRef = useRef<HTMLDivElement | null>(null);
+  const collectionScrollTop = useRef(0);
   const bookListRequest = useRef(0);
   const swipeStart = useRef<{ x: number; y: number } | null>(null);
   const epubRestorePosition = useRef<number | null>(null);
@@ -211,6 +219,7 @@ export function App() {
       return;
     }
     setPrivateDraft(privateStateFromBook(selectedBook));
+    setBookDetailsOpen(false);
   }, [selectedBook]);
 
   async function submitAuth(event: FormEvent<HTMLFormElement>) {
@@ -251,7 +260,18 @@ export function App() {
     setStatus(error instanceof Error ? error.message : "Request failed");
   }
 
-  const activeScan = jobs.find((job) => job.status === "running") ?? null;
+  const activeScan = jobs.find((job) => isActiveScanStatus(job.status)) ?? null;
+
+  useEffect(() => {
+    if (!activeScan) return;
+
+    setNowTick(Date.now());
+    const timer = window.setInterval(() => {
+      setNowTick(Date.now());
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, [activeScan?.id]);
 
   useEffect(() => {
     if (!activeScan) return;
@@ -310,6 +330,26 @@ export function App() {
     }
   }
 
+  async function controlJob(job: ScanJob, action: "pause" | "cancel" | "resume") {
+    setActiveTask(`${action} job #${job.id}`);
+    try {
+      const updated =
+        action === "pause"
+          ? await api.pauseJob(job.id)
+          : action === "cancel"
+            ? await api.cancelJob(job.id)
+            : await api.resumeJob(job.id);
+      setSelectedJob(updated);
+      setStatus(`Job #${job.id}: ${action}`);
+      await refreshAll();
+      await openJob(updated);
+    } catch (error) {
+      handleAPIError(error);
+    } finally {
+      setActiveTask(null);
+    }
+  }
+
   async function deleteLibrary(library: Library) {
     const confirmed = window.confirm(`Remove "${library.name}" from FolioSpace Library? Files on disk will not be deleted.`);
     if (!confirmed) return;
@@ -345,6 +385,32 @@ export function App() {
     } finally {
       setActiveTask(null);
     }
+  }
+
+  async function openDirectoryPicker(path = newLibraryPath || "/") {
+    setDirectoryPickerOpen(true);
+    await loadDirectory(path);
+  }
+
+  async function loadDirectory(path: string) {
+    setDirectoryPickerLoading(true);
+    setDirectoryPickerError("");
+    try {
+      setDirectoryListing(await api.directories(path));
+    } catch (error) {
+      setDirectoryPickerError(error instanceof Error ? error.message : "Failed to load directory");
+    } finally {
+      setDirectoryPickerLoading(false);
+    }
+  }
+
+  function selectDirectory(path: string) {
+    setNewLibraryPath(path);
+    if (!newLibraryName.trim()) {
+      const name = path.split("/").filter(Boolean).pop();
+      if (name) setNewLibraryName(name);
+    }
+    setDirectoryPickerOpen(false);
   }
 
   async function openJob(job: ScanJob) {
@@ -726,10 +792,32 @@ export function App() {
     if (!value) return series;
     return series.filter((item) => item.title.toLowerCase().includes(value));
   }, [query, series]);
+  const collectionSections = useMemo(() => {
+    const sections = [
+      { key: "comic", title: t.comicCollections, items: [] as Series[] },
+      { key: "book", title: t.bookCollections, items: [] as Series[] },
+      { key: "game", title: t.gameCollections, items: [] as Series[] },
+    ];
+    for (const item of filteredSeries) {
+      const kind = collectionKind(item, libraries);
+      const section = sections.find((candidate) => candidate.key === kind);
+      section?.items.push(item);
+    }
+    return sections.filter((section) => section.items.length > 0);
+  }, [filteredSeries, libraries, t]);
+
+  useEffect(() => {
+    const node = collectionSectionsRef.current;
+    if (!node) return;
+    if (node.scrollTop !== collectionScrollTop.current) {
+      node.scrollTop = collectionScrollTop.current;
+    }
+  }, [collectionSections]);
 
   const scanProgressLabel = activeScan
     ? `${activeScan.indexedFiles} indexed · ${activeScan.skippedFiles} skipped · ${activeScan.errorCount} errors`
     : null;
+  const activeScanElapsed = activeScan ? formatElapsed(activeScan, nowTick) : null;
   const selectedJobLatest = selectedJob ? jobs.find((job) => job.id === selectedJob.id) ?? selectedJob : null;
 
   return (
@@ -763,6 +851,52 @@ export function App() {
           </div>
         )}
 
+        {directoryPickerOpen && (
+          <section className="modalOverlay" role="dialog" aria-modal="true" aria-label={t.directoryPickerTitle}>
+            <div className="directoryPicker">
+              <div className="directoryPickerHeader">
+                <div>
+                  <h1>{t.directoryPickerTitle}</h1>
+                  <small>{t.directoryPickerHint}</small>
+                </div>
+                <button type="button" onClick={() => setDirectoryPickerOpen(false)}>{t.close}</button>
+              </div>
+              <code>{directoryListing?.path || "/"}</code>
+              <div className="directoryPickerActions">
+                <button
+                  type="button"
+                  disabled={!directoryListing?.parent || directoryPickerLoading}
+                  onClick={() => directoryListing?.parent && loadDirectory(directoryListing.parent)}
+                >
+                  {t.parentDirectory}
+                </button>
+                <button
+                  type="button"
+                  disabled={!directoryListing || directoryPickerLoading}
+                  onClick={() => directoryListing && selectDirectory(directoryListing.path)}
+                >
+                  {t.selectThisDirectory}
+                </button>
+              </div>
+              {directoryPickerError && <p className="directoryPickerError">{directoryPickerError}</p>}
+              <div className="directoryList">
+                {directoryPickerLoading ? (
+                  <span>{t.loadingDirectories}</span>
+                ) : directoryListing && directoryListing.entries.length > 0 ? (
+                  directoryListing.entries.map((entry) => (
+                    <button type="button" key={entry.path} onClick={() => loadDirectory(entry.path)}>
+                      <span>{entry.name}</span>
+                      <small>{entry.path}</small>
+                    </button>
+                  ))
+                ) : (
+                  <span>{t.noDirectories}</span>
+                )}
+              </div>
+            </div>
+          </section>
+        )}
+
         <header className="topbar">
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t.searchLibrary} />
           <select className="localeSelect" value={locale} onChange={(event) => setLocale(event.target.value as Locale)} aria-label={t.language}>
@@ -772,14 +906,16 @@ export function App() {
             <option value="ja">日本語</option>
             <option value="ko">한국어</option>
           </select>
-          <span>{activeScan ? `Scanning: ${scanProgressLabel}` : status}</span>
+          <span>{activeScan ? `Scanning: ${scanProgressLabel} · ${t.elapsed} ${activeScanElapsed}` : status}</span>
         </header>
 
         {activeScan && (
           <section className="scanProgress" role="status" aria-live="polite">
             <div>
               <strong>Scan job #{activeScan.id}</strong>
-              <small>{scanProgressLabel}</small>
+              <small>
+                {scanProgressLabel} · {t.elapsed} {activeScanElapsed}
+              </small>
             </div>
             <div className="scanMeter">
               <div />
@@ -788,7 +924,7 @@ export function App() {
         )}
 
         {view === "library" && (
-          <div className="grid">
+          <div className="libraryDashboard">
             {query.trim().length >= 2 && (
               <section className="globalSearch panel wide" aria-label="Global search results">
                 <div className="globalSearchHeader">
@@ -822,57 +958,7 @@ export function App() {
               </section>
             )}
 
-            {(continueBooks.length > 0 || favoriteBooks.length > 0 || wantBooks.length > 0 || gameShelf.length > 0 || recentBooks.length > 0) && (
-              <section className="homeRows panel wide" aria-label="Reading shortcuts">
-                {continueBooks.length > 0 && (
-                  <BookShelf
-                    title={t.continueReading}
-                    subtitle={t.continueSubtitle}
-                    books={continueBooks}
-                    onOpen={openBook}
-                    meta={(book) => continueMeta(book, t)}
-                    progress
-                  />
-                )}
-                {favoriteBooks.length > 0 && (
-                  <BookShelf
-                    title={t.favorites}
-                    subtitle={t.favoriteSubtitle}
-                    books={favoriteBooks}
-                    onOpen={openBook}
-                    meta={(book) => privateShelfMeta(book, t)}
-                  />
-                )}
-                {wantBooks.length > 0 && (
-                  <BookShelf
-                    title={t.wantToRead}
-                    subtitle={t.wantSubtitle}
-                    books={wantBooks}
-                    onOpen={openBook}
-                    meta={(book) => privateShelfMeta(book, t)}
-                  />
-                )}
-                {gameShelf.length > 0 && (
-                  <GameShelf
-                    title={t.gameShelf}
-                    subtitle={t.gameShelfSubtitle}
-                    games={gameShelf}
-                    meta={(game) => gameMeta(game, t)}
-                  />
-                )}
-                {recentBooks.length > 0 && (
-                  <BookShelf
-                    title={t.recentlyAddedTitle}
-                    subtitle={t.recentSubtitle}
-                    books={recentBooks}
-                    onOpen={openBook}
-                    meta={(book) => recentMeta(book, t)}
-                  />
-                )}
-              </section>
-            )}
-
-            <section className="panel">
+            <section className="libraryDirectory panel">
               <h1>{t.libraries}</h1>
               <form className="libraryForm" onSubmit={addLibrary}>
                 <input
@@ -881,10 +967,13 @@ export function App() {
                   placeholder={t.name}
                 />
                 <input
+                  className="libraryPathInput"
                   value={newLibraryPath}
-                  onChange={(event) => setNewLibraryPath(event.target.value)}
+                  readOnly
                   placeholder="/volume2/ComicCenter"
+                  onClick={() => openDirectoryPicker()}
                 />
+                <button type="button" onClick={() => openDirectoryPicker()}>{t.chooseDirectory}</button>
                 <select value={newLibraryAssetType} onChange={(event) => setNewLibraryAssetType(event.target.value as LibraryAssetType)} aria-label={t.libraryAssetType}>
                   <option value="mixed">{t.assetTypeMixed}</option>
                   <option value="comic">{t.assetTypeComic}</option>
@@ -893,35 +982,116 @@ export function App() {
                 </select>
                 <button disabled={!newLibraryPath.trim()}>{t.add}</button>
               </form>
-              {libraries.map((library) => (
-                <div className="row" key={library.id}>
-                  <div>
-                    <strong>{library.name}</strong>
-                    <small>{library.rootPath} · {libraryAssetTypeLabel(library.assetType, t)}</small>
+              <div className="libraryRows">
+                {libraries.map((library) => (
+                  <div className="row" key={library.id}>
+                    <div>
+                      <strong>{library.name}</strong>
+                      <small>{library.rootPath} · {libraryAssetTypeLabel(library.assetType, t)}</small>
+                    </div>
+                    <div className="rowActions">
+                      <button onClick={() => scan(library)}>{t.scan}</button>
+                      <button className="danger" onClick={() => deleteLibrary(library)}>{t.delete}</button>
+                    </div>
                   </div>
-                  <div className="rowActions">
-                    <button onClick={() => scan(library)}>{t.scan}</button>
-                    <button className="danger" onClick={() => deleteLibrary(library)}>{t.delete}</button>
-                  </div>
-                </div>
-              ))}
-            </section>
-
-            <section className="panel">
-              <h1>{t.collections}</h1>
-              <div className="list">
-                {filteredSeries.map((item) => (
-                  <button className="listItem" key={item.id} onClick={() => openSeries(item)}>
-                    <span>{item.title}</span>
-                    <small>
-                      {item.directoryPath || "."} · {collectionCountLabel(item)}
-                    </small>
-                  </button>
                 ))}
               </div>
             </section>
 
-            <section className="coverWall panel wide">
+            {(continueBooks.length > 0 || favoriteBooks.length > 0 || wantBooks.length > 0 || gameShelf.length > 0 || recentBooks.length > 0) && (
+              <section className="homeRows quickShelfPanel panel wide" aria-label="Reading shortcuts">
+                <div className="quickShelfColumn">
+                  {continueBooks.length > 0 && (
+                    <BookShelf
+                      title={t.continueReading}
+                      subtitle={t.continueSubtitle}
+                      books={continueBooks.slice(0, 4)}
+                      onOpen={openBook}
+                      meta={(book) => continueMeta(book, t)}
+                      progress
+                    />
+                  )}
+                  {favoriteBooks.length > 0 && (
+                    <BookShelf
+                      title={t.favorites}
+                      subtitle={t.favoriteSubtitle}
+                      books={favoriteBooks.slice(0, 4)}
+                      onOpen={openBook}
+                      meta={(book) => privateShelfMeta(book, t)}
+                    />
+                  )}
+                  {wantBooks.length > 0 && (
+                    <BookShelf
+                      title={t.wantToRead}
+                      subtitle={t.wantSubtitle}
+                      books={wantBooks.slice(0, 4)}
+                      onOpen={openBook}
+                      meta={(book) => privateShelfMeta(book, t)}
+                    />
+                  )}
+                </div>
+                <span className="quickShelfDivider" aria-hidden="true" />
+                <div className="quickShelfColumn">
+                  {gameShelf.length > 0 && (
+                    <GameShelf
+                      title={t.gameShelf}
+                      subtitle={t.gameShelfSubtitle}
+                      games={gameShelf.slice(0, 4)}
+                      meta={(game) => gameMeta(game, t)}
+                    />
+                  )}
+                  {recentBooks.length > 0 && (
+                    <BookShelf
+                      title={t.recentlyAddedTitle}
+                      subtitle={t.recentSubtitle}
+                      books={recentBooks.slice(0, 4)}
+                      onOpen={openBook}
+                      meta={(book) => recentMeta(book, t)}
+                    />
+                  )}
+                </div>
+              </section>
+            )}
+
+            <section className="collectionPanel panel">
+              <h1>{t.collections}</h1>
+              <div
+                className="collectionSections"
+                ref={collectionSectionsRef}
+                onScroll={(event) => {
+                  collectionScrollTop.current = event.currentTarget.scrollTop;
+                }}
+              >
+                {collectionSections.map((section) => (
+                  <section className="collectionSection" key={section.key} aria-label={section.title}>
+                    <h2>{section.title}</h2>
+                    <div className="collectionGrid">
+                      {section.items.map((item) => (
+                        <button
+                          className={selectedSeries?.id === item.id ? "collectionCard selected" : "collectionCard"}
+                          key={item.id}
+                          onClick={() => openSeries(item)}
+                          onMouseDown={(event) => event.preventDefault()}
+                          title={item.title}
+                        >
+                          <span className={item.collectionType === "game_platform" ? "collectionThumb game" : "collectionThumb"}>
+                            {item.collectionType !== "game_platform" && (
+                              <CollectionCover seriesID={item.id} />
+                            )}
+                            <span className="collectionInitials">{collectionInitials(item.title)}</span>
+                          </span>
+                          <strong>{item.title}</strong>
+                          <small>{item.directoryPath || "."}</small>
+                          <em>{collectionCountLabel(item)}</em>
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                ))}
+              </div>
+            </section>
+
+            <section className="coverWall panel collectionContent">
               <div className="coverWallHeader">
                 <div>
                   <h1>{selectedSeries ? selectedSeries.title : t.volumeWall}</h1>
@@ -957,9 +1127,11 @@ export function App() {
                         <span className="coverBadge">{book.format.toUpperCase()}</span>
                       </span>
                       <strong>{book.title}</strong>
+                      {book.creator && <small className="bookCreator">{book.creator}</small>}
                       <small>
                         {t.singleVolume} · {book.pageCount ? t.pageCount(book.pageCount) : t.notAnalyzed}
                       </small>
+                      {book.description && <small className="bookDescription">{book.description}</small>}
                       {privateMeta(book, t) && <small className="privateMeta">{privateMeta(book, t)}</small>}
                     </button>
                   ))}
@@ -990,6 +1162,7 @@ export function App() {
                 <div className="readerHeader">
                   <div className="readerTitle">
                     <strong>{selectedBook.title}</strong>
+                    {selectedBook.creator && <em>{selectedBook.creator}</em>}
                     <span>
                       {selectedBook.format === "epub" ? "Chapter " : ""}
                       {pageIndex + 1}
@@ -1110,6 +1283,17 @@ export function App() {
                     {privateSaving ? t.saving : t.save}
                   </button>
                 </div>
+                {(selectedBook.creator || selectedBook.description) && (
+                  <section className={bookDetailsOpen ? "bookDetails open" : "bookDetails"}>
+                    <button onClick={() => setBookDetailsOpen((value) => !value)}>
+                      {bookDetailsOpen ? t.hideBookDetails : t.showBookDetails}
+                    </button>
+                    <div>
+                      {selectedBook.creator && <strong>{selectedBook.creator}</strong>}
+                      {selectedBook.description && <p>{selectedBook.description}</p>}
+                    </div>
+                  </section>
+                )}
                 <div
                   className={`pageStage ${selectedBook.format === "epub" ? "epub" : readerPageMode}`}
                   onMouseDownCapture={handleReaderMouseDown}
@@ -1220,7 +1404,7 @@ export function App() {
                   <strong>Job #{job.id}</strong>
                   <small>
                     {job.status} · {job.discoveredFiles} discovered · {job.indexedFiles} indexed · {job.skippedFiles} skipped ·{" "}
-                    {job.errorCount} errors
+                    {job.errorCount} errors · {job.metadataUpdatedFiles} metadata · {job.reclassifiedFiles} moved · {t.elapsed} {formatElapsed(job, nowTick)}
                   </small>
                   {job.currentPath && <span>{job.currentPath}</span>}
                 </button>
@@ -1237,7 +1421,14 @@ export function App() {
                     <span>Indexed<strong>{selectedJobLatest.indexedFiles}</strong></span>
                     <span>Skipped<strong>{selectedJobLatest.skippedFiles}</strong></span>
                     <span>Errors<strong>{selectedJobLatest.errorCount}</strong></span>
-                    <span>Elapsed<strong>{formatElapsed(selectedJobLatest)}</strong></span>
+                    <span>Metadata<strong>{selectedJobLatest.metadataUpdatedFiles}</strong></span>
+                    <span>Moved<strong>{selectedJobLatest.reclassifiedFiles}</strong></span>
+                    <span>{t.elapsed}<strong>{formatElapsed(selectedJobLatest, nowTick)}</strong></span>
+                  </div>
+                  <div className="jobActions">
+                    {canPauseJob(selectedJobLatest) && <button onClick={() => controlJob(selectedJobLatest, "pause")}>{t.pause}</button>}
+                    {canResumeJob(selectedJobLatest) && <button onClick={() => controlJob(selectedJobLatest, "resume")}>{t.resume}</button>}
+                    {canCancelJob(selectedJobLatest) && <button className="danger" onClick={() => controlJob(selectedJobLatest, "cancel")}>{t.cancel}</button>}
                   </div>
                   {selectedJobLatest.currentPath && <code className="currentPath">{selectedJobLatest.currentPath}</code>}
                   <h2>Events</h2>
@@ -1306,6 +1497,65 @@ export function App() {
         </div>
       )}
     </main>
+  );
+}
+
+function CollectionCover({ seriesID }: { seriesID: number }) {
+  const rootRef = useRef<HTMLSpanElement | null>(null);
+  const [coverBookID, setCoverBookID] = useState<number | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    const node = rootRef.current;
+    if (!node || coverBookID || failed) return;
+
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const page = await api.booksPage(seriesID, { limit: 1, offset: 0, sort: "title" });
+        if (!cancelled) {
+          setCoverBookID(page.items[0]?.id ?? null);
+          setFailed(page.items.length === 0);
+        }
+      } catch {
+        if (!cancelled) setFailed(true);
+      }
+    };
+
+    if (!("IntersectionObserver" in window)) {
+      void load();
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          observer.disconnect();
+          void load();
+        }
+      },
+      { rootMargin: "240px" },
+    );
+    observer.observe(node);
+    return () => {
+      cancelled = true;
+      observer.disconnect();
+    };
+  }, [coverBookID, failed, seriesID]);
+
+  return (
+    <span ref={rootRef} className="collectionCoverSlot" aria-hidden="true">
+      {coverBookID && !failed && (
+        <img
+          src={`/api/books/${coverBookID}/cover`}
+          alt=""
+          loading="lazy"
+          onError={() => setFailed(true)}
+        />
+      )}
+    </span>
   );
 }
 
@@ -1462,6 +1712,16 @@ function collectionCountLabel(item: Series) {
   return item.collectionType === "game_platform" ? `${item.bookCount} games` : `${item.bookCount} volumes`;
 }
 
+function collectionKind(item: Series, libraries: Library[]) {
+  if (item.primaryType === "book" || item.primaryType === "comic" || item.primaryType === "game") {
+    return item.primaryType;
+  }
+  if (item.collectionType === "game_platform") return "game";
+  const library = libraries.find((candidate) => candidate.id === item.libraryId);
+  if (library?.assetType === "book") return "book";
+  return "comic";
+}
+
 function loadedCollectionCountLabel(item: Series, bookCount: number, gameCount: number) {
   if (item.collectionType === "game_platform") {
     return `${gameCount} games`;
@@ -1470,6 +1730,16 @@ function loadedCollectionCountLabel(item: Series, bookCount: number, gameCount: 
     return `${bookCount} volumes · ${gameCount} games`;
   }
   return `${bookCount} of ${item.bookCount} volumes`;
+}
+
+function collectionInitials(title: string) {
+  const compact = title.trim().replace(/\s+/g, " ");
+  if (!compact) return "FS";
+  const parts = compact.split(" ").filter(Boolean);
+  if (parts.length >= 2 && /^[\x00-\x7F]+$/.test(compact)) {
+    return `${parts[0][0] ?? ""}${parts[1][0] ?? ""}`.toUpperCase();
+  }
+  return Array.from(compact).slice(0, 2).join("").toUpperCase();
 }
 
 function EpubFrame({
@@ -1711,6 +1981,7 @@ const translations = {
     reader: "阅读器",
     jobs: "任务",
     errors: "错误",
+    elapsed: "耗时",
     lock: "锁定",
     searchLibrary: "搜索书库",
     searchResults: "搜索结果",
@@ -1734,11 +2005,25 @@ const translations = {
     assetTypeBook: "书籍",
     assetTypeComic: "漫画",
     assetTypeGame: "游戏",
-    libraries: "书库目录",
+    comicCollections: "漫画",
+    bookCollections: "书籍",
+    gameCollections: "游戏",
+    libraries: "资源目录",
     name: "名称",
     add: "添加",
     scan: "扫描",
+    pause: "暂停",
+    resume: "恢复",
+    cancel: "取消",
     delete: "删除",
+    chooseDirectory: "选择目录",
+    directoryPickerTitle: "选择资源目录",
+    directoryPickerHint: "这里显示的是服务所在设备或容器能访问的路径。",
+    parentDirectory: "上一级",
+    selectThisDirectory: "使用当前目录",
+    loadingDirectories: "正在读取目录",
+    noDirectories: "没有可进入的子目录",
+    close: "关闭",
     collections: "作品集",
     volumeWall: "封面墙",
     selectCollection: "选择一个作品集浏览单行本",
@@ -1782,6 +2067,8 @@ const translations = {
     privateNote: "私人备注",
     saving: "保存中",
     save: "保存",
+    showBookDetails: "展开详情",
+    hideBookDetails: "收起详情",
     loadingPage: (page: number) => `正在加载第 ${page} 页`,
     pageFailed: (page: number) => `第 ${page} 页加载失败`,
     retry: "重试",
@@ -1812,6 +2099,7 @@ const translations = {
     reader: "閱讀器",
     jobs: "任務",
     errors: "錯誤",
+    elapsed: "耗時",
     lock: "鎖定",
     searchLibrary: "搜尋書庫",
     searchResults: "搜尋結果",
@@ -1835,11 +2123,25 @@ const translations = {
     assetTypeBook: "書籍",
     assetTypeComic: "漫畫",
     assetTypeGame: "遊戲",
-    libraries: "書庫目錄",
+    comicCollections: "漫畫",
+    bookCollections: "書籍",
+    gameCollections: "遊戲",
+    libraries: "資源目錄",
     name: "名稱",
     add: "新增",
     scan: "掃描",
+    pause: "暫停",
+    resume: "恢復",
+    cancel: "取消",
     delete: "刪除",
+    chooseDirectory: "選擇目錄",
+    directoryPickerTitle: "選擇資源目錄",
+    directoryPickerHint: "這裡顯示的是服務所在設備或容器能存取的路徑。",
+    parentDirectory: "上一級",
+    selectThisDirectory: "使用目前目錄",
+    loadingDirectories: "正在讀取目錄",
+    noDirectories: "沒有可進入的子目錄",
+    close: "關閉",
     collections: "作品集",
     volumeWall: "封面牆",
     selectCollection: "選擇一個作品集瀏覽單行本",
@@ -1883,6 +2185,8 @@ const translations = {
     privateNote: "私人備註",
     saving: "儲存中",
     save: "儲存",
+    showBookDetails: "展開詳情",
+    hideBookDetails: "收起詳情",
     loadingPage: (page: number) => `正在載入第 ${page} 頁`,
     pageFailed: (page: number) => `第 ${page} 頁載入失敗`,
     retry: "重試",
@@ -1913,6 +2217,7 @@ const translations = {
     reader: "Reader",
     jobs: "Jobs",
     errors: "Errors",
+    elapsed: "Elapsed",
     lock: "Lock",
     searchLibrary: "Search library",
     searchResults: "Search Results",
@@ -1936,11 +2241,25 @@ const translations = {
     assetTypeBook: "Books",
     assetTypeComic: "Comics",
     assetTypeGame: "Games",
-    libraries: "Libraries",
+    comicCollections: "Comics",
+    bookCollections: "Books",
+    gameCollections: "Games",
+    libraries: "Resource Directories",
     name: "Name",
     add: "Add",
     scan: "Scan",
+    pause: "Pause",
+    resume: "Resume",
+    cancel: "Cancel",
     delete: "Delete",
+    chooseDirectory: "Choose",
+    directoryPickerTitle: "Choose Resource Directory",
+    directoryPickerHint: "These are paths visible to the server device or container.",
+    parentDirectory: "Parent",
+    selectThisDirectory: "Use current directory",
+    loadingDirectories: "Loading directories",
+    noDirectories: "No child directories",
+    close: "Close",
     collections: "Collections",
     volumeWall: "Volume Wall",
     selectCollection: "Select a collection to browse its single volumes",
@@ -1984,6 +2303,8 @@ const translations = {
     privateNote: "Private note",
     saving: "Saving",
     save: "Save",
+    showBookDetails: "Show details",
+    hideBookDetails: "Hide details",
     loadingPage: (page: number) => `Loading page ${page}`,
     pageFailed: (page: number) => `Page ${page} failed to load`,
     retry: "Retry",
@@ -2014,6 +2335,7 @@ const translations = {
     reader: "リーダー",
     jobs: "ジョブ",
     errors: "エラー",
+    elapsed: "経過",
     lock: "ロック",
     searchLibrary: "ライブラリを検索",
     searchResults: "検索結果",
@@ -2037,11 +2359,25 @@ const translations = {
     assetTypeBook: "書籍",
     assetTypeComic: "漫画",
     assetTypeGame: "ゲーム",
-    libraries: "ライブラリ",
+    comicCollections: "漫画",
+    bookCollections: "書籍",
+    gameCollections: "ゲーム",
+    libraries: "リソース",
     name: "名前",
     add: "追加",
     scan: "スキャン",
+    pause: "一時停止",
+    resume: "再開",
+    cancel: "キャンセル",
     delete: "削除",
+    chooseDirectory: "選択",
+    directoryPickerTitle: "リソースディレクトリを選択",
+    directoryPickerHint: "ここにはサービス側のデバイスまたはコンテナから見えるパスが表示されます。",
+    parentDirectory: "上へ",
+    selectThisDirectory: "このディレクトリを使用",
+    loadingDirectories: "ディレクトリを読み込み中",
+    noDirectories: "子ディレクトリがありません",
+    close: "閉じる",
     collections: "コレクション",
     volumeWall: "カバー一覧",
     selectCollection: "コレクションを選んで単巻を表示",
@@ -2085,6 +2421,8 @@ const translations = {
     privateNote: "個人メモ",
     saving: "保存中",
     save: "保存",
+    showBookDetails: "詳細を表示",
+    hideBookDetails: "詳細を隠す",
     loadingPage: (page: number) => `${page} ページを読み込み中`,
     pageFailed: (page: number) => `${page} ページの読み込み失敗`,
     retry: "再試行",
@@ -2115,6 +2453,7 @@ const translations = {
     reader: "리더",
     jobs: "작업",
     errors: "오류",
+    elapsed: "경과",
     lock: "잠금",
     searchLibrary: "라이브러리 검색",
     searchResults: "검색 결과",
@@ -2138,11 +2477,25 @@ const translations = {
     assetTypeBook: "도서",
     assetTypeComic: "만화",
     assetTypeGame: "게임",
-    libraries: "라이브러리",
+    comicCollections: "만화",
+    bookCollections: "도서",
+    gameCollections: "게임",
+    libraries: "리소스",
     name: "이름",
     add: "추가",
     scan: "스캔",
+    pause: "일시정지",
+    resume: "재개",
+    cancel: "취소",
     delete: "삭제",
+    chooseDirectory: "선택",
+    directoryPickerTitle: "리소스 디렉터리 선택",
+    directoryPickerHint: "서비스가 실행 중인 장치나 컨테이너에서 보이는 경로입니다.",
+    parentDirectory: "상위",
+    selectThisDirectory: "현재 디렉터리 사용",
+    loadingDirectories: "디렉터리 읽는 중",
+    noDirectories: "하위 디렉터리가 없습니다",
+    close: "닫기",
     collections: "컬렉션",
     volumeWall: "커버 월",
     selectCollection: "컬렉션을 선택해 단행본을 봅니다",
@@ -2186,6 +2539,8 @@ const translations = {
     privateNote: "개인 메모",
     saving: "저장 중",
     save: "저장",
+    showBookDetails: "상세 보기",
+    hideBookDetails: "상세 숨기기",
     loadingPage: (page: number) => `${page}페이지 불러오는 중`,
     pageFailed: (page: number) => `${page}페이지 불러오기 실패`,
     retry: "다시 시도",
@@ -2340,13 +2695,29 @@ function continueMeta(book: Book, t: Translation) {
   return `${t.percentRead(readingProgress(book))} · ${location} · ${lastRead}${book.collectionTitle ? ` · ${book.collectionTitle}` : ""}`;
 }
 
+function isActiveScanStatus(status: string) {
+  return status === "running" || status === "pause_requested" || status === "cancel_requested";
+}
+
+function canPauseJob(job: ScanJob) {
+  return job.status === "running";
+}
+
+function canCancelJob(job: ScanJob) {
+  return job.status === "running" || job.status === "pause_requested" || job.status === "paused";
+}
+
+function canResumeJob(job: ScanJob) {
+  return job.status === "paused";
+}
+
 function readingProgress(book: Book) {
   return Math.max(0, Math.min(100, Math.round((book.progressFraction || 0) * 100)));
 }
 
 function privateShelfMeta(book: Book, t: Translation) {
   const meta = privateMeta(book, t);
-  const location = book.collectionTitle ? book.collectionTitle : t.library;
+  const location = book.creator || book.collectionTitle || t.library;
   return meta ? `${meta} · ${location}` : location;
 }
 
@@ -2371,7 +2742,7 @@ function libraryAssetTypeLabel(value: string | undefined, t: Translation) {
 
 function recentMeta(book: Book, t: Translation) {
   const added = formatRelativeDate(book.addedAt, t);
-  return `${added}${book.collectionTitle ? ` · ${book.collectionTitle}` : ""}`;
+  return `${added}${book.creator ? ` · ${book.creator}` : book.collectionTitle ? ` · ${book.collectionTitle}` : ""}`;
 }
 
 function formatRelativeDate(value: string, t: Translation) {
@@ -2388,9 +2759,21 @@ function isUnauthorized(error: unknown) {
   return error instanceof Error && error.message === "Unauthorized";
 }
 
-function formatElapsed(job: ScanJob) {
+function formatElapsed(job: ScanJob, now = Date.now()) {
   const started = new Date(job.startedAt).getTime();
-  const finished = job.finishedAt ? new Date(job.finishedAt).getTime() : Date.now();
-  if (!Number.isFinite(started) || !Number.isFinite(finished)) return "-";
-  return `${Math.max(0, Math.round((finished - started) / 1000))}s`;
+  const finished = validFinishedAt(job.finishedAt) ?? now;
+  if (!Number.isFinite(started) || !Number.isFinite(finished) || finished < started) return "-";
+
+  const seconds = Math.max(0, Math.floor((finished - started) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${minutes % 60}m`;
+}
+
+function validFinishedAt(value?: string) {
+  if (!value || value.startsWith("0001-")) return null;
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : null;
 }

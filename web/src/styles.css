@@ -241,6 +241,14 @@ button:hover {
   padding: 16px;
 }
 
+.libraryDashboard {
+  display: grid;
+  grid-template-columns: minmax(380px, 0.9fr) minmax(620px, 1.45fr);
+  align-items: start;
+  gap: 16px;
+  padding: 16px;
+}
+
 .panel {
   background: #ffffff;
   border: 1px solid #d9e0e3;
@@ -253,9 +261,270 @@ button:hover {
   grid-column: 1 / -1;
 }
 
+.libraryDirectory {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 12px;
+}
+
+.libraryDirectory h1,
+.collectionPanel h1 {
+  margin-bottom: 0;
+}
+
+.libraryRows {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 0 18px;
+  max-height: min(460px, 42vh);
+  overflow: auto;
+  border-top: 1px solid #eef2f3;
+}
+
+.libraryRows .row {
+  min-height: 46px;
+}
+
+.collectionPanel {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 12px;
+  max-height: min(760px, calc(100vh - 120px));
+}
+
+.collectionSections {
+  display: grid;
+  gap: 18px;
+  min-height: 0;
+  overflow: auto;
+  overflow-anchor: none;
+  padding-right: 2px;
+}
+
+.collectionSection {
+  display: grid;
+  gap: 10px;
+}
+
+.collectionSection + .collectionSection {
+  border-top: 1px solid #eef2f3;
+  padding-top: 16px;
+}
+
+.collectionSection h2 {
+  margin: 0;
+  color: #526269;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.collectionGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.collectionCard {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+  border-color: transparent;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+}
+
+.collectionCard > * {
+  pointer-events: none;
+}
+
+.collectionCard:hover,
+.collectionCard:focus-visible,
+.collectionCard.selected {
+  border-color: transparent;
+}
+
+.collectionCard:hover .collectionThumb,
+.collectionCard:focus-visible .collectionThumb,
+.collectionCard.selected .collectionThumb {
+  border-color: #337f92;
+  box-shadow: 0 12px 24px rgba(31, 42, 46, 0.15);
+  transform: translateY(-2px);
+}
+
+.collectionCard strong {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #1f2a2e;
+  font-size: 12px;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.collectionCard small {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #647177;
+  font-size: 11px;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.bookCreator,
+.bookDescription {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #647177;
+  font-size: 12px;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+}
+
+.bookCreator {
+  color: #337f92;
+  font-weight: 700;
+  -webkit-line-clamp: 1;
+}
+
+.bookDescription {
+  -webkit-line-clamp: 2;
+}
+
+.collectionCard em {
+  color: #337f92;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.collectionThumb {
+  position: relative;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  aspect-ratio: 16 / 10;
+  border: 1px solid #cfd9dd;
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(246, 250, 251, 0.12), rgba(222, 234, 237, 0.2)),
+    url("/bookshelf-bg-v2.jpg") center / auto 155%,
+    #dfe7ea;
+  box-shadow: 0 8px 18px rgba(31, 42, 46, 0.09);
+  color: #2d5661;
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease,
+    transform 140ms ease;
+}
+
+.collectionThumb::before,
+.collectionThumb::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+}
+
+.collectionThumb::before {
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(31, 42, 46, 0.1)),
+    repeating-linear-gradient(90deg, rgba(31, 42, 46, 0.08) 0 1px, transparent 1px 34px);
+}
+
+.collectionThumb::after {
+  inset: auto 12px 12px;
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(51, 127, 146, 0.24);
+}
+
+.collectionCoverSlot {
+  position: absolute;
+  inset: 0;
+  max-width: none;
+}
+
+.collectionCoverSlot img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.collectionThumb:has(img:not([hidden]))::before {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(31, 42, 46, 0.18));
+}
+
+.collectionThumb:has(img:not([hidden]))::after {
+  background: rgba(31, 42, 46, 0.28);
+}
+
+.collectionThumb.game {
+  background:
+    linear-gradient(135deg, rgba(51, 127, 146, 0.28), rgba(31, 42, 46, 0.54)),
+    url("/bookshelf-bg-v2.jpg") center / auto 155%,
+    #337f92;
+  color: #ffffff;
+}
+
+.collectionInitials {
+  z-index: 1;
+  max-width: 74%;
+  overflow: hidden;
+  font-size: clamp(13px, 1.25vw, 17px);
+  font-weight: 750;
+  line-height: 1;
+  text-align: center;
+  text-overflow: ellipsis;
+}
+
+.collectionThumb:has(.collectionCoverSlot img) .collectionInitials {
+  align-self: end;
+  max-width: calc(100% - 24px);
+  margin-bottom: 14px;
+  border-radius: 999px;
+  background: rgba(31, 42, 46, 0.72);
+  color: #ffffff;
+  font-size: 12px;
+  padding: 5px 9px;
+}
+
 .homeRows {
   display: grid;
   gap: 18px;
+}
+
+.quickShelfPanel {
+  grid-template-columns: minmax(0, 1fr) 1px minmax(0, 1fr);
+  align-content: start;
+  gap: 18px;
+  overflow: visible;
+}
+
+.quickShelfColumn {
+  display: grid;
+  align-content: start;
+  gap: 18px;
+  min-width: 0;
+}
+
+.quickShelfDivider {
+  display: block;
+  width: 1px;
+  min-height: 100%;
+  background: #eef2f3;
+}
+
+.quickShelfPanel .shelfScroller {
+  grid-auto-flow: unset;
+  grid-auto-columns: unset;
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  overflow: visible;
+  padding-bottom: 0;
 }
 
 .globalSearch {
@@ -453,7 +722,7 @@ h1 {
 
 .libraryForm {
   display: grid;
-  grid-template-columns: minmax(90px, 0.45fr) minmax(160px, 1fr) minmax(92px, 0.4fr) auto;
+  grid-template-columns: minmax(90px, 0.45fr) minmax(160px, 1fr) auto minmax(92px, 0.4fr) auto;
   gap: 8px;
   border-bottom: 1px solid #eef2f3;
   padding-bottom: 12px;
@@ -466,6 +735,85 @@ h1 {
   border: 1px solid #ccd4d8;
   border-radius: 6px;
   padding: 8px 9px;
+}
+
+.libraryPathInput {
+  cursor: pointer;
+  background: #fbfcfc;
+}
+
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(18, 24, 27, 0.48);
+  backdrop-filter: blur(8px);
+}
+
+.directoryPicker {
+  display: grid;
+  gap: 12px;
+  width: min(720px, calc(100vw - 32px));
+  max-height: min(760px, calc(100vh - 32px));
+  border: 1px solid #cfd9dd;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 22px 70px rgba(18, 24, 27, 0.28);
+  padding: 18px;
+}
+
+.directoryPickerHeader,
+.directoryPickerActions {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.directoryPickerHeader h1 {
+  margin-bottom: 4px;
+}
+
+.directoryPickerHeader small {
+  color: #647177;
+}
+
+.directoryPicker code {
+  overflow-wrap: anywhere;
+  border: 1px solid #d9e0e3;
+  border-radius: 6px;
+  background: #f7fafb;
+  padding: 8px 10px;
+}
+
+.directoryPickerError {
+  margin: 0;
+  color: #9b3030;
+  font-size: 13px;
+}
+
+.directoryList {
+  display: grid;
+  gap: 6px;
+  min-height: 120px;
+  overflow: auto;
+  border-top: 1px solid #eef2f3;
+  padding-top: 10px;
+}
+
+.directoryList button {
+  display: grid;
+  gap: 2px;
+  min-height: 44px;
+  text-align: left;
+}
+
+.directoryList small {
+  overflow-wrap: anywhere;
+  color: #647177;
 }
 
 .gameCover {
@@ -576,6 +924,12 @@ button.danger:hover {
   overflow: hidden;
 }
 
+.collectionContent {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: min(760px, calc(100vh - 120px));
+}
+
 .coverWallHeader {
   display: flex;
   align-items: center;
@@ -625,6 +979,9 @@ button.danger:hover {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(172px, 1fr));
   gap: 18px;
+  align-content: start;
+  min-height: 0;
+  overflow: auto;
   padding: 18px;
 }
 
@@ -788,8 +1145,22 @@ button.danger:hover {
   font-size: 12px;
 }
 
+.readerTitle em {
+  overflow: hidden;
+  color: #337f92;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .reader:fullscreen .readerTitle span {
   color: #a7b6bc;
+}
+
+.reader:fullscreen .readerTitle em {
+  color: #9bc4cf;
 }
 
 .readerToolbar {
@@ -806,6 +1177,40 @@ button.danger:hover {
   background: #ffffff;
   color: #1e2528;
   padding: 0 8px;
+}
+
+.bookDetails {
+  display: grid;
+  gap: 8px;
+  border-bottom: 1px solid #d9e0e3;
+  background: #f7fafb;
+  padding: 10px 16px;
+}
+
+.bookDetails button {
+  justify-self: start;
+}
+
+.bookDetails div {
+  display: none;
+  max-width: 920px;
+  color: #526269;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.bookDetails.open div {
+  display: grid;
+  gap: 6px;
+}
+
+.bookDetails strong {
+  color: #337f92;
+}
+
+.bookDetails p {
+  margin: 0;
+  white-space: pre-wrap;
 }
 
 .readerStateBar {
@@ -1139,6 +1544,12 @@ button.danger:hover {
   gap: 14px;
 }
 
+.jobActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .statGrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
@@ -1234,8 +1645,27 @@ button.danger:hover {
     white-space: nowrap;
   }
 
-  .grid {
+  .grid,
+  .libraryDashboard {
     grid-template-columns: 1fr;
+  }
+
+  .collectionPanel {
+    position: static;
+    max-height: none;
+  }
+
+  .quickShelfPanel {
+    grid-template-columns: 1fr;
+  }
+
+  .quickShelfDivider {
+    width: 100%;
+    min-height: 1px;
+  }
+
+  .collectionContent {
+    min-height: 520px;
   }
 
   .libraryForm {

@@ -138,11 +138,12 @@ func readEPUBManifest(files []*zip.File) (domain.EPUBManifest, error) {
 	}
 
 	return domain.EPUBManifest{
-		Title:     strings.TrimSpace(pkg.Metadata.Title),
-		Creator:   strings.TrimSpace(pkg.Metadata.Creator),
-		CoverHref: coverHref,
-		Spine:     spine,
-		TOC:       epubTOC(files, opfDir, pkg, spine, itemsByID),
+		Title:       strings.TrimSpace(pkg.Metadata.Title),
+		Creator:     strings.TrimSpace(pkg.Metadata.Creator),
+		Description: strings.TrimSpace(pkg.Metadata.Description),
+		CoverHref:   coverHref,
+		Spine:       spine,
+		TOC:         epubTOC(files, opfDir, pkg, spine, itemsByID),
 	}, nil
 }
 
@@ -348,9 +349,10 @@ type epubPackage struct {
 }
 
 type epubMetadata struct {
-	Title   string     `xml:"title"`
-	Creator string     `xml:"creator"`
-	Meta    []epubMeta `xml:"meta"`
+	Title       string     `xml:"title"`
+	Creator     string     `xml:"creator"`
+	Description string     `xml:"description"`
+	Meta        []epubMeta `xml:"meta"`
 }
 
 type epubMeta struct {

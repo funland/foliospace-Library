@@ -58,7 +58,7 @@ func TestReadEPUBManifestAndResources(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if manifest.Title != "Sample EPUB" || manifest.Creator != "FolioSpace" {
+	if manifest.Title != "Sample EPUB" || manifest.Creator != "FolioSpace" || manifest.Description != "A compact EPUB metadata sample." {
 		t.Fatalf("manifest metadata = %#v", manifest)
 	}
 	if manifest.CoverHref != "OPS/images/cover.jpg" {
@@ -131,6 +131,7 @@ func makeEPUB(t *testing.T) string {
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
     <dc:title>Sample EPUB</dc:title>
     <dc:creator>FolioSpace</dc:creator>
+    <dc:description>A compact EPUB metadata sample.</dc:description>
   </metadata>
   <manifest>
     <item id="chapter1" href="text/chapter1.xhtml" media-type="application/xhtml+xml"/>
