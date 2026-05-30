@@ -90,6 +90,19 @@ export type VideoAsset = {
   thumbnailStatus: string;
   thumbnailUrl: string;
   manifestUrl: string;
+  directPlayable: boolean;
+  playbackMode: "direct" | "hls";
+  playbackReason?: string;
+  fileUrl?: string;
+  hlsUrl?: string;
+  transcodeStatusUrl?: string;
+};
+
+export type VideoTranscodeStatus = {
+  videoId: number;
+  status: "idle" | "starting" | "running" | "queued" | "ready" | "failed";
+  message?: string;
+  segmentCount: number;
 };
 
 export type SearchResponse = {
@@ -357,6 +370,7 @@ export const api = {
     if (options.sort) params.set("sort", options.sort);
     return request<VideoListPage>(`/api/client/videos?${params.toString()}`);
   },
+  videoTranscodeStatus: (videoId: number) => request<VideoTranscodeStatus>(`/api/client/videos/${videoId}/transcode/status`),
   favoriteBooks: () => request<Book[]>("/api/books/favorites?limit=12"),
   privateStatusBooks: (status: string) => request<Book[]>(`/api/books/private-status/${encodeURIComponent(status)}?limit=12`),
   search: (q: string, limit = 12) =>

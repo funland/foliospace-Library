@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.2.1",
+    "hls.js": "^1.5.20",
     "pdfjs-dist": "^4.10.38",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",

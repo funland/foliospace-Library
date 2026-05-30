@@ -1,14 +1,17 @@
 package scanner
 
 import (
+	"context"
 	"crypto/sha1"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"hash/crc32"
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -687,6 +690,7 @@ func (s *Scanner) indexVideoFile(library domain.Library, path string, info fs.Fi
 	if err != nil {
 		return fmt.Errorf("relative path: %w", err)
 	}
+	metadata := probeVideoMetadata(path)
 	_, err = s.store.UpsertVideo(domain.VideoAsset{
 		LibraryID:       library.ID,
 		Title:           mediaTitle(path),
@@ -695,9 +699,76 @@ func (s *Scanner) indexVideoFile(library domain.Library, path string, info fs.Fi
 		RelPath:         filepath.ToSlash(relPath),
 		Size:            info.Size(),
 		MTime:           info.ModTime(),
+		DurationSeconds: metadata.durationSeconds,
+		Width:           metadata.width,
+		Height:          metadata.height,
+		VideoCodec:      metadata.videoCodec,
+		AudioCodec:      metadata.audioCodec,
 		ThumbnailStatus: "placeholder",
 	})
 	return err
+}
+
+type videoProbeMetadata struct {
+	durationSeconds float64
+	width           int
+	height          int
+	videoCodec      string
+	audioCodec      string
+}
+
+func probeVideoMetadata(path string) videoProbeMetadata {
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		return videoProbeMetadata{}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "ffprobe", "-v", "error", "-print_format", "json", "-show_format", "-show_streams", path).Output()
+	if err != nil {
+		return videoProbeMetadata{}
+	}
+	var payload struct {
+		Format struct {
+			Duration string `json:"duration"`
+		} `json:"format"`
+		Streams []struct {
+			CodecType string `json:"codec_type"`
+			CodecName string `json:"codec_name"`
+			Width     int    `json:"width"`
+			Height    int    `json:"height"`
+			Duration  string `json:"duration"`
+		} `json:"streams"`
+	}
+	if err := json.Unmarshal(out, &payload); err != nil {
+		return videoProbeMetadata{}
+	}
+	metadata := videoProbeMetadata{durationSeconds: parseProbeDuration(payload.Format.Duration)}
+	for _, stream := range payload.Streams {
+		switch stream.CodecType {
+		case "video":
+			if metadata.videoCodec == "" {
+				metadata.videoCodec = strings.ToLower(strings.TrimSpace(stream.CodecName))
+				metadata.width = stream.Width
+				metadata.height = stream.Height
+				if metadata.durationSeconds == 0 {
+					metadata.durationSeconds = parseProbeDuration(stream.Duration)
+				}
+			}
+		case "audio":
+			if metadata.audioCodec == "" {
+				metadata.audioCodec = strings.ToLower(strings.TrimSpace(stream.CodecName))
+			}
+		}
+	}
+	return metadata
+}
+
+func parseProbeDuration(value string) float64 {
+	duration, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+	if err != nil || duration < 0 {
+		return 0
+	}
+	return duration
 }
 
 func listBookPages(path string, ext string) ([]domain.Page, error) {

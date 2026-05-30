@@ -243,6 +243,7 @@ func (s *Server) handleClientInfo(w http.ResponseWriter, r *http.Request) {
 			GameShelf:         true,
 			GameCatalog:       true,
 			VideoCatalog:      true,
+			VideoHLS:          true,
 			PrivateState:      true,
 			Search:            true,
 			Preferences:       true,
@@ -452,11 +453,39 @@ func (s *Server) handleClientVideoAction(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, clientVideoManifest(video))
 		return
 	}
+	if tail == "transcode/status" && r.Method == http.MethodGet {
+		status, err := s.service.VideoTranscodeStatus(id)
+		writeJSONOrError(w, status, err)
+		return
+	}
 	if tail == "file" && r.Method == http.MethodGet {
 		path, err := s.service.VideoFilePath(id)
 		if err != nil {
 			writeJSONOrError(w, nil, err)
 			return
+		}
+		http.ServeFile(w, r, path)
+		return
+	}
+	if strings.HasPrefix(tail, "hls/") && r.Method == http.MethodGet {
+		name := strings.TrimPrefix(tail, "hls/")
+		var path string
+		var err error
+		if name == "index.m3u8" {
+			path, err = s.service.EnsureVideoHLS(id)
+		} else {
+			path, err = s.service.VideoHLSFilePath(id, name)
+		}
+		if err != nil {
+			if service.IsVideoTranscodeBusy(err) {
+				writeError(w, http.StatusConflict, err)
+				return
+			}
+			writeJSONOrError(w, nil, err)
+			return
+		}
+		if strings.HasSuffix(name, ".m3u8") {
+			w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 		}
 		http.ServeFile(w, r, path)
 		return
@@ -1270,6 +1299,7 @@ type clientCapabilities struct {
 	GameShelf         bool `json:"gameShelf"`
 	GameCatalog       bool `json:"gameCatalog"`
 	VideoCatalog      bool `json:"videoCatalog"`
+	VideoHLS          bool `json:"videoHls"`
 	PrivateState      bool `json:"privateState"`
 	Search            bool `json:"search"`
 	Preferences       bool `json:"preferences"`
@@ -1369,24 +1399,32 @@ type clientGameListResponse struct {
 }
 
 type clientVideo struct {
-	ID              int64   `json:"id"`
-	AssetType       string  `json:"assetType"`
-	Title           string  `json:"title"`
-	Format          string  `json:"format"`
-	Size            int64   `json:"size"`
-	DurationSeconds float64 `json:"durationSeconds"`
-	Width           int     `json:"width"`
-	Height          int     `json:"height"`
-	VideoCodec      string  `json:"videoCodec,omitempty"`
-	AudioCodec      string  `json:"audioCodec,omitempty"`
-	ThumbnailStatus string  `json:"thumbnailStatus"`
-	ThumbnailURL    string  `json:"thumbnailUrl"`
-	ManifestURL     string  `json:"manifestUrl"`
+	ID                 int64   `json:"id"`
+	AssetType          string  `json:"assetType"`
+	Title              string  `json:"title"`
+	Format             string  `json:"format"`
+	Size               int64   `json:"size"`
+	DurationSeconds    float64 `json:"durationSeconds"`
+	Width              int     `json:"width"`
+	Height             int     `json:"height"`
+	VideoCodec         string  `json:"videoCodec,omitempty"`
+	AudioCodec         string  `json:"audioCodec,omitempty"`
+	ThumbnailStatus    string  `json:"thumbnailStatus"`
+	ThumbnailURL       string  `json:"thumbnailUrl"`
+	ManifestURL        string  `json:"manifestUrl"`
+	DirectPlayable     bool    `json:"directPlayable"`
+	PlaybackMode       string  `json:"playbackMode"`
+	PlaybackReason     string  `json:"playbackReason,omitempty"`
+	FileURL            string  `json:"fileUrl,omitempty"`
+	HLSURL             string  `json:"hlsUrl,omitempty"`
+	TranscodeStatusURL string  `json:"transcodeStatusUrl,omitempty"`
 }
 
 type clientVideoManifestResponse struct {
-	Video   clientVideo `json:"video"`
-	FileURL string      `json:"fileUrl"`
+	Video              clientVideo `json:"video"`
+	FileURL            string      `json:"fileUrl"`
+	HLSURL             string      `json:"hlsUrl,omitempty"`
+	TranscodeStatusURL string      `json:"transcodeStatusUrl,omitempty"`
 }
 
 type clientVideoListResponse struct {
@@ -1510,27 +1548,39 @@ func clientVideos(items []domain.VideoAsset) []clientVideo {
 }
 
 func clientVideoItem(video domain.VideoAsset) clientVideo {
+	fileURL := fmt.Sprintf("/api/client/videos/%d/file", video.ID)
+	hlsURL := fmt.Sprintf("/api/client/videos/%d/hls/index.m3u8", video.ID)
 	return clientVideo{
-		ID:              video.ID,
-		AssetType:       "video",
-		Title:           video.Title,
-		Format:          video.Format,
-		Size:            video.Size,
-		DurationSeconds: video.DurationSeconds,
-		Width:           video.Width,
-		Height:          video.Height,
-		VideoCodec:      video.VideoCodec,
-		AudioCodec:      video.AudioCodec,
-		ThumbnailStatus: video.ThumbnailStatus,
-		ThumbnailURL:    fmt.Sprintf("/api/videos/%d/thumbnail", video.ID),
-		ManifestURL:     fmt.Sprintf("/api/client/videos/%d/manifest", video.ID),
+		ID:                 video.ID,
+		AssetType:          "video",
+		Title:              video.Title,
+		Format:             video.Format,
+		Size:               video.Size,
+		DurationSeconds:    video.DurationSeconds,
+		Width:              video.Width,
+		Height:             video.Height,
+		VideoCodec:         video.VideoCodec,
+		AudioCodec:         video.AudioCodec,
+		ThumbnailStatus:    video.ThumbnailStatus,
+		ThumbnailURL:       fmt.Sprintf("/api/videos/%d/thumbnail", video.ID),
+		ManifestURL:        fmt.Sprintf("/api/client/videos/%d/manifest", video.ID),
+		DirectPlayable:     video.DirectPlayable,
+		PlaybackMode:       video.PlaybackMode,
+		PlaybackReason:     video.PlaybackReason,
+		FileURL:            fileURL,
+		HLSURL:             hlsURL,
+		TranscodeStatusURL: fmt.Sprintf("/api/client/videos/%d/transcode/status", video.ID),
 	}
 }
 
 func clientVideoManifest(video domain.VideoAsset) clientVideoManifestResponse {
+	fileURL := fmt.Sprintf("/api/client/videos/%d/file", video.ID)
+	hlsURL := fmt.Sprintf("/api/client/videos/%d/hls/index.m3u8", video.ID)
 	return clientVideoManifestResponse{
-		Video:   clientVideoItem(video),
-		FileURL: fmt.Sprintf("/api/client/videos/%d/file", video.ID),
+		Video:              clientVideoItem(video),
+		FileURL:            fileURL,
+		HLSURL:             hlsURL,
+		TranscodeStatusURL: fmt.Sprintf("/api/client/videos/%d/transcode/status", video.ID),
 	}
 }
 

@@ -374,6 +374,27 @@ func TestStorePersistsAndListsVideoAssets(t *testing.T) {
 	if len(page.Items) != 1 || page.Total != 1 || page.HasMore {
 		t.Fatalf("video page = %#v, want one matching video", page)
 	}
+
+	hevcMP4, err := s.UpsertVideo(domain.VideoAsset{
+		LibraryID:       lib.ID,
+		Title:           "Escape from the 21st Century 2024 2160p WEB-DL H265 HQ AAC",
+		Format:          "mp4",
+		FilePath:        "/library/Movies/Escape from the 21st Century 2024 2160p WEB-DL H265 HQ AAC.mp4",
+		RelPath:         "Movies/Escape from the 21st Century 2024 2160p WEB-DL H265 HQ AAC.mp4",
+		Size:            8192,
+		MTime:           time.Unix(41, 0),
+		ThumbnailStatus: "placeholder",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hevcMP4, err = s.VideoByID(hevcMP4.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hevcMP4.DirectPlayable || hevcMP4.PlaybackMode != "hls" {
+		t.Fatalf("hevc-named mp4 playback = directPlayable %v mode %q, want hls", hevcMP4.DirectPlayable, hevcMP4.PlaybackMode)
+	}
 }
 
 func TestStoreListsBooksPageWithSearchAndSort(t *testing.T) {

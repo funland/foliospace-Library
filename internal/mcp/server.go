@@ -118,6 +118,7 @@ func tools() []Tool {
 		{Name: "foliospace.open_game_manifest", Description: "Open a game ROM manifest with metadata, cover URL, and opaque file URL.", InputSchema: objectSchema(map[string]any{"gameId": integerSchema("Game asset id.")}, []string{"gameId"})},
 		{Name: "foliospace.list_videos", Description: "List paginated client-safe video assets.", InputSchema: objectSchema(map[string]any{"limit": integerSchema("Maximum number of items."), "offset": integerSchema("Zero-based item offset."), "q": stringSchema("Optional search query."), "format": stringSchema("Optional exact format filter."), "sort": stringSchema("recent or title.")}, nil)},
 		{Name: "foliospace.open_video_manifest", Description: "Open a video manifest with metadata, thumbnail URL, and opaque range-stream file URL.", InputSchema: objectSchema(map[string]any{"videoId": integerSchema("Video asset id.")}, []string{"videoId"})},
+		{Name: "foliospace.get_video_transcode_status", Description: "Read HLS transcode state for a video asset, including queued, running, ready, or failed.", InputSchema: objectSchema(map[string]any{"videoId": integerSchema("Video asset id.")}, []string{"videoId"})},
 		{Name: "foliospace.get_preferences", Description: "Read client preferences such as interface language, reader settings, and feature defaults.", InputSchema: objectSchema(nil, nil)},
 		{Name: "foliospace.save_preferences", Description: "Save client preferences. Pass the same JSON shape as the HTTP Client API.", InputSchema: objectSchema(map[string]any{"interfaceLanguage": stringSchema("Interface language code, for example zh-Hans, zh-Hant, en, or ja.")}, nil)},
 		{Name: "foliospace.get_scan_settings", Description: "Read scan runtime settings such as worker count.", InputSchema: objectSchema(nil, nil)},
@@ -234,6 +235,8 @@ func (s *Server) callTool(ctx context.Context, raw json.RawMessage) (any, error)
 		data, err = s.get(ctx, "/api/client/videos?"+videoListQuery(params.Arguments))
 	case "foliospace.open_video_manifest":
 		data, err = s.get(ctx, fmt.Sprintf("/api/client/videos/%d/manifest", intArg(params.Arguments, "videoId")))
+	case "foliospace.get_video_transcode_status":
+		data, err = s.get(ctx, fmt.Sprintf("/api/client/videos/%d/transcode/status", intArg(params.Arguments, "videoId")))
 	case "foliospace.get_preferences":
 		data, err = s.get(ctx, "/api/client/preferences")
 	case "foliospace.save_preferences":

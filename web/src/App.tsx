@@ -1,19 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { FormEvent, MouseEvent, TouchEvent } from "react";
+import type { FormEvent, MouseEvent, ReactNode, TouchEvent } from "react";
 import { GlobalWorkerOptions, getDocument } from "pdfjs-dist";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import pdfWorkerURL from "pdfjs-dist/build/pdf.worker.mjs?url";
-import { api, Book, BookPrivateState, clearAuthToken, ClientPreferences, DirectoryEntry, DirectoryListing, EpubManifest, FileError, GameAsset, getAuthToken, JobEvent, Library, Page, ScanJob, Series, setAuthToken, SetupStatus, ScanSettings, VideoAsset } from "./api";
+import { api, Book, BookPrivateState, clearAuthToken, ClientPreferences, DirectoryEntry, DirectoryListing, EpubManifest, FileError, GameAsset, getAuthToken, JobEvent, Library, Page, ScanJob, Series, setAuthToken, SetupStatus, ScanSettings, VideoAsset, VideoTranscodeStatus } from "./api";
 
 GlobalWorkerOptions.workerSrc = pdfWorkerURL;
 
-type View = "library" | "reader" | "jobs" | "errors";
+type View = "library" | "reader" | "games" | "videos" | "jobs" | "errors";
 type ReaderPageMode = "single" | "double";
 type EpubTheme = "light" | "sepia" | "dark";
 type BookSort = "title" | "recently_added" | "last_read" | "progress" | "unread";
 type Locale = "zh" | "zht" | "en" | "ja" | "ko";
 type LibraryAssetType = "mixed" | "book" | "comic" | "game" | "video";
 const bookPageSize = 60;
+const catalogPageSize = 200;
 
 export function App() {
   const initialPreferences = useRef(readLocalPreferences()).current;
@@ -27,9 +28,17 @@ export function App() {
   const [wantBooks, setWantBooks] = useState<Book[]>([]);
   const [gameShelf, setGameShelf] = useState<GameAsset[]>([]);
   const [videoShelf, setVideoShelf] = useState<VideoAsset[]>([]);
-  const [collectionGames, setCollectionGames] = useState<GameAsset[]>([]);
-  const [collectionVideos, setCollectionVideos] = useState<VideoAsset[]>([]);
+  const [gameCatalog, setGameCatalog] = useState<GameAsset[]>([]);
+  const [videoCatalog, setVideoCatalog] = useState<VideoAsset[]>([]);
+  const [gameCatalogTotal, setGameCatalogTotal] = useState(0);
+  const [videoCatalogTotal, setVideoCatalogTotal] = useState(0);
+  const [gameCatalogHasMore, setGameCatalogHasMore] = useState(false);
+  const [videoCatalogHasMore, setVideoCatalogHasMore] = useState(false);
+  const [gameCatalogLoading, setGameCatalogLoading] = useState(false);
+  const [videoCatalogLoading, setVideoCatalogLoading] = useState(false);
   const [selectedVideo, setSelectedVideo] = useState<VideoAsset | null>(null);
+  const [videoTranscodeStatus, setVideoTranscodeStatus] = useState<VideoTranscodeStatus | null>(null);
+  const [videoPlaybackReloadKey, setVideoPlaybackReloadKey] = useState(0);
   const [jobs, setJobs] = useState<ScanJob[]>([]);
   const [errors, setErrors] = useState<FileError[]>([]);
   const [jobEvents, setJobEvents] = useState<JobEvent[]>([]);
@@ -94,6 +103,8 @@ export function App() {
   const readerRef = useRef<HTMLElement | null>(null);
   const bookLoadMoreRef = useRef<HTMLDivElement | null>(null);
   const collectionSectionsRef = useRef<HTMLDivElement | null>(null);
+  const videoPlayerRef = useRef<HTMLVideoElement | null>(null);
+  const previousVideoTranscodeStatus = useRef<string>("");
   const collectionScrollTop = useRef(0);
   const bookListRequest = useRef(0);
   const swipeStart = useRef<{ x: number; y: number } | null>(null);
@@ -144,6 +155,50 @@ export function App() {
     setVideoShelf(arrayOrEmpty(nextVideoShelf));
     if (showProgress) {
       setActiveTask(null);
+    }
+  }
+
+  async function openGameCatalog() {
+    setView("games");
+    if (gameCatalog.length > 0 || gameCatalogLoading) return;
+    await loadGameCatalogPage(0, true);
+  }
+
+  async function loadGameCatalogPage(offset: number, reset = false) {
+    if (gameCatalogLoading) return;
+    setGameCatalogLoading(true);
+    try {
+      const page = await api.clientGames({ limit: catalogPageSize, offset, sort: "platform" });
+      const items = arrayOrEmpty(page.items);
+      setGameCatalog((current) => reset ? items : mergeByID(current, items));
+      setGameCatalogTotal(page.total);
+      setGameCatalogHasMore(page.hasMore);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Failed to load games");
+    } finally {
+      setGameCatalogLoading(false);
+    }
+  }
+
+  async function openVideoCatalog() {
+    setView("videos");
+    if (videoCatalog.length > 0 || videoCatalogLoading) return;
+    await loadVideoCatalogPage(0, true);
+  }
+
+  async function loadVideoCatalogPage(offset: number, reset = false) {
+    if (videoCatalogLoading) return;
+    setVideoCatalogLoading(true);
+    try {
+      const page = await api.clientVideos({ limit: catalogPageSize, offset, sort: "title" });
+      const items = arrayOrEmpty(page.items);
+      setVideoCatalog((current) => reset ? items : mergeByID(current, items));
+      setVideoCatalogTotal(page.total);
+      setVideoCatalogHasMore(page.hasMore);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Failed to load videos");
+    } finally {
+      setVideoCatalogLoading(false);
     }
   }
 
@@ -533,7 +588,6 @@ export function App() {
     setSelectedSeries(item);
     setQuery("");
     setBooks([]);
-    setCollectionGames([]);
     setBookTotal(0);
     setBookHasMore(false);
   }
@@ -578,31 +632,10 @@ export function App() {
   useEffect(() => {
     if (!selectedSeries) return;
     setBooks([]);
-    setCollectionGames([]);
-    setCollectionVideos([]);
     setBookTotal(0);
     setBookHasMore(false);
     void loadBooksPage(selectedSeries, 0, true);
   }, [loadBooksPage, selectedSeries]);
-
-  useEffect(() => {
-    if (!selectedSeries) return;
-    let cancelled = false;
-    api.collectionAssets(selectedSeries.id)
-      .then((assets) => {
-        if (cancelled) return;
-        setCollectionGames(arrayOrEmpty(assets.games));
-        setCollectionVideos(arrayOrEmpty(assets.videos));
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          setStatus(error instanceof Error ? error.message : "Failed to load games");
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedSeries]);
 
   useEffect(() => {
     if (!selectedVideo) return;
@@ -614,6 +647,82 @@ export function App() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [selectedVideo]);
+
+  useEffect(() => {
+    previousVideoTranscodeStatus.current = "";
+    setVideoTranscodeStatus(null);
+    if (view !== "videos" || !selectedVideo || selectedVideo.playbackMode !== "hls") {
+      return;
+    }
+    let cancelled = false;
+    let timer: number | undefined;
+
+    const poll = async () => {
+      try {
+        const nextStatus = await api.videoTranscodeStatus(selectedVideo.id);
+        if (cancelled) return;
+        const previousStatus = previousVideoTranscodeStatus.current;
+        previousVideoTranscodeStatus.current = nextStatus.status;
+        setVideoTranscodeStatus(nextStatus);
+        if (nextStatus.status === "ready" && previousStatus && previousStatus !== "ready") {
+          setVideoPlaybackReloadKey((key) => key + 1);
+        }
+        if (nextStatus.status !== "ready" && nextStatus.status !== "failed") {
+          timer = window.setTimeout(poll, 2000);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setVideoTranscodeStatus({
+            videoId: selectedVideo.id,
+            status: "failed",
+            message: error instanceof Error ? error.message : t.videoTranscodeStatusFailed,
+            segmentCount: 0,
+          });
+        }
+      }
+    };
+
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [selectedVideo, t.videoTranscodeStatusFailed, view]);
+
+  useEffect(() => {
+    if (view !== "videos" || !selectedVideo || !videoPlayerRef.current) return;
+    const player = videoPlayerRef.current;
+    const source = videoPlaybackSource(selectedVideo);
+    if (!source) return;
+    let disposed = false;
+    let hls: { destroy: () => void; loadSource: (source: string) => void; attachMedia: (media: HTMLMediaElement) => void } | null = null;
+    player.removeAttribute("src");
+    if (selectedVideo.playbackMode === "hls") {
+      if (player.canPlayType("application/vnd.apple.mpegurl")) {
+        player.src = source;
+        player.load();
+      } else {
+        void import("hls.js").then(({ default: Hls }) => {
+          if (disposed) return;
+          if (Hls.isSupported()) {
+            hls = new Hls({ enableWorker: true });
+            hls.loadSource(source);
+            hls.attachMedia(player);
+          } else {
+            player.src = source;
+            player.load();
+          }
+        });
+      }
+    } else {
+      player.src = source;
+      player.load();
+    }
+    return () => {
+      disposed = true;
+      hls?.destroy();
+    };
+  }, [selectedVideo, videoPlaybackReloadKey, view]);
 
   useEffect(() => {
     const node = bookLoadMoreRef.current;
@@ -915,8 +1024,6 @@ export function App() {
     const sections = [
       { key: "comic", title: t.comicCollections, items: [] as Series[] },
       { key: "book", title: t.bookCollections, items: [] as Series[] },
-      { key: "game", title: t.gameCollections, items: [] as Series[] },
-      { key: "video", title: t.videoCollections, items: [] as Series[] },
     ];
     for (const item of filteredSeries) {
       const kind = collectionKind(item, libraries);
@@ -949,6 +1056,12 @@ export function App() {
         </button>
         <button className={view === "reader" ? "active" : ""} onClick={() => setView("reader")}>
           {t.reader}
+        </button>
+        <button className={view === "games" ? "active" : ""} onClick={openGameCatalog}>
+          {t.gameShelf}
+        </button>
+        <button className={view === "videos" ? "active" : ""} onClick={openVideoCatalog}>
+          {t.videoShelf}
         </button>
         <button className={view === "jobs" ? "active" : ""} onClick={() => setView("jobs")}>
           {t.jobs}
@@ -1159,6 +1272,8 @@ export function App() {
                       subtitle={t.gameShelfSubtitle}
                       games={gameShelf.slice(0, 4)}
                       meta={(game) => gameMeta(game, t)}
+                      moreLabel={t.more}
+                      onMore={openGameCatalog}
                     />
                   )}
                   {videoShelf.length > 0 && (
@@ -1167,7 +1282,12 @@ export function App() {
                       subtitle={t.videoShelfSubtitle}
                       videos={videoShelf.slice(0, 4)}
                       meta={(video) => videoMeta(video, t)}
-                      onOpen={setSelectedVideo}
+                      onOpen={(video) => {
+                        setSelectedVideo(video);
+                        void openVideoCatalog();
+                      }}
+                      moreLabel={t.more}
+                      onMore={openVideoCatalog}
                     />
                   )}
                   {recentBooks.length > 0 && (
@@ -1226,7 +1346,7 @@ export function App() {
                 <div>
                   <h1>{selectedSeries ? selectedSeries.title : t.volumeWall}</h1>
                   <small>
-                    {selectedSeries ? loadedCollectionCountLabel(selectedSeries, books.length, collectionGames.length, collectionVideos.length) : t.selectCollection}
+                    {selectedSeries ? loadedCollectionCountLabel(selectedSeries, books.length, 0, 0) : t.selectCollection}
                   </small>
                 </div>
                 <div className="coverWallTools">
@@ -1245,14 +1365,8 @@ export function App() {
                   )}
                 </div>
               </div>
-              {selectedSeries && (books.length > 0 || collectionGames.length > 0 || collectionVideos.length > 0) ? (
+              {selectedSeries && books.length > 0 ? (
                 <div className="books">
-                  {[...collectionGames].sort(compareGamesByPlatform).map((game) => (
-                    <GameTile key={`collection-game-${game.id}`} game={game} meta={gameMeta(game, t)} />
-                  ))}
-                  {[...collectionVideos].sort(compareVideosByTitle).map((video) => (
-                    <VideoTile key={`collection-video-${video.id}`} video={video} meta={videoMeta(video, t)} onOpen={setSelectedVideo} />
-                  ))}
                   {books.map((book) => (
                     <button className="book" key={book.id} onClick={() => openBook(book)} title={book.title}>
                       <span className="coverFrame">
@@ -1286,6 +1400,81 @@ export function App() {
               )}
             </section>
           </div>
+        )}
+
+        {view === "games" && (
+          <CatalogPage
+            title={t.gameShelf}
+            subtitle={t.gameCatalogSubtitle}
+            countLabel={gameCatalogLoading && gameCatalog.length === 0 ? t.loadingGames : t.catalogLoadedCount(gameCatalog.length, gameCatalogTotal)}
+          >
+            <div className="catalogGrid games">
+              {[...gameCatalog].sort(compareGamesByPlatform).map((game) => (
+                <GameTile key={`catalog-game-${game.id}`} game={game} meta={gameMeta(game, t)} />
+              ))}
+              {gameCatalogHasMore && (
+                <button className="catalogLoadMore" type="button" disabled={gameCatalogLoading} onClick={() => loadGameCatalogPage(gameCatalog.length)}>
+                  {gameCatalogLoading ? t.loadingGames : t.loadMore}
+                </button>
+              )}
+            </div>
+          </CatalogPage>
+        )}
+
+        {view === "videos" && (
+          <section className="catalogPage videoCatalogPage">
+            <div className="catalogHeader">
+              <div>
+                <h1>{t.videoShelf}</h1>
+                <small>{videoCatalogLoading && videoCatalog.length === 0 ? t.loadingVideos : t.catalogLoadedCount(videoCatalog.length, videoCatalogTotal)}</small>
+              </div>
+            </div>
+            {selectedVideo && (
+              <div className="inlineVideoPlayer">
+                <div>
+                  <strong>{selectedVideo.title}</strong>
+                  <small>{videoMeta(selectedVideo, t)}</small>
+                </div>
+                <video
+                  ref={videoPlayerRef}
+                  key={`${selectedVideo.id}-${videoPlaybackReloadKey}`}
+                  className="videoPlayer"
+                  controls
+                  preload="metadata"
+                  poster={selectedVideo.thumbnailUrl}
+                />
+                {!selectedVideo.directPlayable && (
+                  <div className="videoTranscodePanel">
+                    <span className={`videoTranscodeStatus ${videoTranscodeStatus?.status || "idle"}`}>
+                      {videoTranscodeLabel(videoTranscodeStatus, t)}
+                    </span>
+                    <small className="videoTranscodeHint">
+                      {selectedVideo.playbackReason || t.videoTranscodeHint}
+                    </small>
+                    <button type="button" onClick={() => setVideoPlaybackReloadKey((key) => key + 1)}>
+                      {t.videoReloadPlayback}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+            <div className="catalogGrid videos">
+              {[...videoCatalog].sort(compareVideosByTitle).map((video) => (
+                <VideoTile
+                  className={selectedVideo?.id === video.id ? "book selected" : "book"}
+                  key={`catalog-video-${video.id}`}
+                  video={video}
+                  meta={videoMeta(video, t)}
+                  onOpen={setSelectedVideo}
+                />
+              ))}
+              {videoCatalogHasMore && (
+                <button className="catalogLoadMore" type="button" disabled={videoCatalogLoading} onClick={() => loadVideoCatalogPage(videoCatalog.length)}>
+                  {videoCatalogLoading ? t.loadingVideos : t.loadMore}
+                </button>
+              )}
+            </div>
+          </section>
         )}
 
         {view === "reader" && (
@@ -1630,27 +1819,6 @@ export function App() {
           </section>
         )}
       </section>
-      {selectedVideo && (
-        <div className="videoOverlay" role="dialog" aria-modal="true" aria-label={selectedVideo.title} onClick={() => setSelectedVideo(null)}>
-          <div className="videoPlayerPanel" onClick={(event) => event.stopPropagation()}>
-            <div className="videoPlayerHeader">
-              <div>
-                <strong>{selectedVideo.title}</strong>
-                <small>{videoMeta(selectedVideo, t)}</small>
-              </div>
-              <button type="button" onClick={() => setSelectedVideo(null)}>{t.close}</button>
-            </div>
-            <video
-              className="videoPlayer"
-              controls
-              autoPlay
-              preload="metadata"
-              poster={selectedVideo.thumbnailUrl}
-              src={`/api/client/videos/${selectedVideo.id}/file`}
-            />
-          </div>
-        </div>
-      )}
       {setupRequired && (
         <div className="authOverlay setupOverlay" role="dialog" aria-modal="true" aria-labelledby="setup-title">
           <form className="authPanel setupPanel" onSubmit={submitSetup}>
@@ -1994,16 +2162,45 @@ function pdfVisiblePages(index: number, total: number, mode: ReaderPageMode) {
   return [first, first + 1].filter((page) => page >= 1 && page <= total);
 }
 
+function CatalogPage({
+  title,
+  subtitle,
+  countLabel,
+  children,
+}: {
+  title: string;
+  subtitle: string;
+  countLabel: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="catalogPage">
+      <div className="catalogHeader">
+        <div>
+          <h1>{title}</h1>
+          <small>{subtitle}</small>
+        </div>
+        <span>{countLabel}</span>
+      </div>
+      {children}
+    </section>
+  );
+}
+
 function GameShelf({
   title,
   subtitle,
   games,
   meta,
+  moreLabel,
+  onMore,
 }: {
   title: string;
   subtitle: string;
   games: GameAsset[];
   meta: (game: GameAsset) => string;
+  moreLabel: string;
+  onMore: () => void;
 }) {
   const sortedGames = [...games].sort(compareGamesByPlatform);
 
@@ -2014,6 +2211,7 @@ function GameShelf({
           <h1>{title}</h1>
           <small>{subtitle}</small>
         </div>
+        <button type="button" className="textButton" onClick={onMore}>{moreLabel}</button>
       </div>
       <div className="shelfScroller">
         {sortedGames.map((game) => (
@@ -2048,12 +2246,16 @@ function VideoShelf({
   videos,
   meta,
   onOpen,
+  moreLabel,
+  onMore,
 }: {
   title: string;
   subtitle: string;
   videos: VideoAsset[];
   meta: (video: VideoAsset) => string;
   onOpen: (video: VideoAsset) => void;
+  moreLabel: string;
+  onMore: () => void;
 }) {
   return (
     <div className="bookShelf videoShelf">
@@ -2062,6 +2264,7 @@ function VideoShelf({
           <h1>{title}</h1>
           <small>{subtitle}</small>
         </div>
+        <button type="button" className="textButton" onClick={onMore}>{moreLabel}</button>
       </div>
       <div className="shelfScroller">
         {videos.map((video) => (
@@ -2448,8 +2651,28 @@ const translations = {
     wantSubtitle: "稍后再读",
     gameShelf: "游戏库",
     gameShelfSubtitle: "本地 ROM 与 ROM set",
+    gameCatalogSubtitle: "按机种排序的完整游戏列表",
     videoShelf: "视频库",
     videoShelfSubtitle: "本地视频文件与空间媒体入口",
+    videoTranscodeHint: "该视频会按需转码为 HLS 播放，首次打开可能需要等待几秒。",
+    videoTranscodeStatusFailed: "转码状态读取失败",
+    videoTranscodeSegments: (count: number) => `${count} 个片段`,
+    videoReloadPlayback: "重新加载播放",
+    videoTranscodeStatusLabels: {
+      idle: "等待转码",
+      starting: "转码启动中",
+      running: "转码中",
+      queued: "等待当前转码完成",
+      ready: "已缓存",
+      failed: "转码失败",
+    },
+    more: "更多",
+    loadingGames: "正在加载游戏",
+    loadingVideos: "正在加载视频",
+    loadMore: "加载更多",
+    catalogLoadedCount: (loaded: number, total: number) => total > 0 ? `${loaded} / ${total} 个条目` : `${loaded} 个条目`,
+    gameCount: (count: number) => `${count} 个游戏`,
+    videoCount: (count: number) => `${count} 个视频`,
     recentSubtitle: "最近入库",
     libraryAssetType: "目录类型",
     assetTypeMixed: "自动",
@@ -2573,8 +2796,28 @@ const translations = {
     wantSubtitle: "稍後再讀",
     gameShelf: "遊戲庫",
     gameShelfSubtitle: "本地 ROM 與 ROM set",
+    gameCatalogSubtitle: "依機種排序的完整遊戲列表",
     videoShelf: "影片庫",
     videoShelfSubtitle: "本地影片檔與空間媒體入口",
+    videoTranscodeHint: "此影片會按需轉碼為 HLS 播放，首次開啟可能需要等待幾秒。",
+    videoTranscodeStatusFailed: "轉碼狀態讀取失敗",
+    videoTranscodeSegments: (count: number) => `${count} 個片段`,
+    videoReloadPlayback: "重新載入播放",
+    videoTranscodeStatusLabels: {
+      idle: "等待轉碼",
+      starting: "轉碼啟動中",
+      running: "轉碼中",
+      queued: "等待目前轉碼完成",
+      ready: "已快取",
+      failed: "轉碼失敗",
+    },
+    more: "更多",
+    loadingGames: "正在載入遊戲",
+    loadingVideos: "正在載入影片",
+    loadMore: "載入更多",
+    catalogLoadedCount: (loaded: number, total: number) => total > 0 ? `${loaded} / ${total} 個項目` : `${loaded} 個項目`,
+    gameCount: (count: number) => `${count} 個遊戲`,
+    videoCount: (count: number) => `${count} 個影片`,
     recentSubtitle: "最近入庫",
     libraryAssetType: "目錄類型",
     assetTypeMixed: "自動",
@@ -2698,8 +2941,28 @@ const translations = {
     wantSubtitle: "Queued for later",
     gameShelf: "Game Shelf",
     gameShelfSubtitle: "Local ROMs and ROM sets",
+    gameCatalogSubtitle: "Full game catalog grouped by platform",
     videoShelf: "Video Shelf",
     videoShelfSubtitle: "Local video files and spatial media entry points",
+    videoTranscodeHint: "This video will be transcoded to HLS on demand. First playback may take a few seconds.",
+    videoTranscodeStatusFailed: "Failed to read transcode status",
+    videoTranscodeSegments: (count: number) => `${count} segments`,
+    videoReloadPlayback: "Reload playback",
+    videoTranscodeStatusLabels: {
+      idle: "Waiting to transcode",
+      starting: "Starting transcode",
+      running: "Transcoding",
+      queued: "Waiting for current transcode",
+      ready: "Cached",
+      failed: "Transcode failed",
+    },
+    more: "More",
+    loadingGames: "Loading games",
+    loadingVideos: "Loading videos",
+    loadMore: "Load more",
+    catalogLoadedCount: (loaded: number, total: number) => total > 0 ? `${loaded} / ${total} items` : `${loaded} items`,
+    gameCount: (count: number) => `${count} games`,
+    videoCount: (count: number) => `${count} videos`,
     recentSubtitle: "Newest indexed volumes",
     libraryAssetType: "Library type",
     assetTypeMixed: "Auto",
@@ -2823,8 +3086,28 @@ const translations = {
     wantSubtitle: "あとで読む",
     gameShelf: "ゲーム棚",
     gameShelfSubtitle: "ローカル ROM と ROM set",
+    gameCatalogSubtitle: "プラットフォーム順のゲーム一覧",
     videoShelf: "ビデオ棚",
     videoShelfSubtitle: "ローカル動画と空間メディアの入口",
+    videoTranscodeHint: "このビデオは必要に応じて HLS に変換されます。初回再生には数秒かかる場合があります。",
+    videoTranscodeStatusFailed: "変換状態の取得に失敗しました",
+    videoTranscodeSegments: (count: number) => `${count} セグメント`,
+    videoReloadPlayback: "再読み込み",
+    videoTranscodeStatusLabels: {
+      idle: "変換待ち",
+      starting: "変換を開始中",
+      running: "変換中",
+      queued: "現在の変換を待機中",
+      ready: "キャッシュ済み",
+      failed: "変換失敗",
+    },
+    more: "もっと見る",
+    loadingGames: "ゲームを読み込み中",
+    loadingVideos: "ビデオを読み込み中",
+    loadMore: "さらに読み込む",
+    catalogLoadedCount: (loaded: number, total: number) => total > 0 ? `${loaded} / ${total} 件` : `${loaded} 件`,
+    gameCount: (count: number) => `${count} 件のゲーム`,
+    videoCount: (count: number) => `${count} 件のビデオ`,
     recentSubtitle: "最近追加",
     libraryAssetType: "ライブラリ種別",
     assetTypeMixed: "自動",
@@ -2948,8 +3231,28 @@ const translations = {
     wantSubtitle: "나중에 읽기",
     gameShelf: "게임 선반",
     gameShelfSubtitle: "로컬 ROM 및 ROM set",
+    gameCatalogSubtitle: "플랫폼별 전체 게임 목록",
     videoShelf: "비디오 선반",
     videoShelfSubtitle: "로컬 비디오 파일과 공간 미디어 진입점",
+    videoTranscodeHint: "이 비디오는 필요할 때 HLS로 변환됩니다. 처음 재생할 때 몇 초 걸릴 수 있습니다.",
+    videoTranscodeStatusFailed: "변환 상태를 읽지 못했습니다",
+    videoTranscodeSegments: (count: number) => `${count}개 세그먼트`,
+    videoReloadPlayback: "재생 다시 불러오기",
+    videoTranscodeStatusLabels: {
+      idle: "변환 대기",
+      starting: "변환 시작 중",
+      running: "변환 중",
+      queued: "현재 변환 완료 대기",
+      ready: "캐시됨",
+      failed: "변환 실패",
+    },
+    more: "더 보기",
+    loadingGames: "게임 불러오는 중",
+    loadingVideos: "비디오 불러오는 중",
+    loadMore: "더 불러오기",
+    catalogLoadedCount: (loaded: number, total: number) => total > 0 ? `${loaded} / ${total}개 항목` : `${loaded}개 항목`,
+    gameCount: (count: number) => `${count}개 게임`,
+    videoCount: (count: number) => `${count}개 비디오`,
     recentSubtitle: "최근 인덱싱된 항목",
     libraryAssetType: "라이브러리 유형",
     assetTypeMixed: "자동",
@@ -3130,6 +3433,15 @@ function arrayOrEmpty<T>(value: T[] | null | undefined): T[] {
   return Array.isArray(value) ? value : [];
 }
 
+function mergeByID<T extends { id: number }>(current: T[], incoming: T[]) {
+  const seen = new Set<number>();
+  return [...current, ...incoming].filter((item) => {
+    if (seen.has(item.id)) return false;
+    seen.add(item.id);
+    return true;
+  });
+}
+
 function emptyPrivateState(): BookPrivateState {
   return { status: "", favorite: false, rating: 0, tags: [], summary: "" };
 }
@@ -3230,6 +3542,22 @@ function videoMeta(video: VideoAsset, t: Translation) {
     parts.push(formatDuration(video.durationSeconds));
   }
   return parts.join(" · ") || t.assetTypeVideo;
+}
+
+function videoTranscodeLabel(status: VideoTranscodeStatus | null, t: Translation) {
+  const current = status?.status || "idle";
+  const label = t.videoTranscodeStatusLabels[current];
+  if (!status || status.segmentCount <= 0) {
+    return label;
+  }
+  return `${label} · ${t.videoTranscodeSegments(status.segmentCount)}`;
+}
+
+function videoPlaybackSource(video: VideoAsset) {
+  if (video.playbackMode === "hls") {
+    return video.hlsUrl || `/api/client/videos/${video.id}/hls/index.m3u8`;
+  }
+  return video.fileUrl || `/api/client/videos/${video.id}/file`;
 }
 
 function formatDuration(seconds: number) {

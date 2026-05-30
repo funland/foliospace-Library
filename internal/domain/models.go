@@ -127,6 +127,9 @@ type VideoAsset struct {
 	AudioCodec      string    `json:"audioCodec"`
 	ThumbnailStatus string    `json:"thumbnailStatus"`
 	ThumbnailURL    string    `json:"thumbnailUrl,omitempty"`
+	DirectPlayable  bool      `json:"directPlayable"`
+	PlaybackMode    string    `json:"playbackMode"`
+	PlaybackReason  string    `json:"playbackReason,omitempty"`
 	LastPlayedAt    time.Time `json:"lastPlayedAt,omitempty"`
 	CreatedAt       time.Time `json:"createdAt"`
 	UpdatedAt       time.Time `json:"updatedAt"`

@@ -681,6 +681,15 @@ button:hover {
   font-size: 13px;
 }
 
+.textButton {
+  min-height: 30px;
+  border-color: #d4dee2;
+  background: #ffffff;
+  color: #305862;
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .shelfScroller {
   display: grid;
   grid-auto-columns: minmax(132px, 148px);
@@ -1002,38 +1011,72 @@ h1 {
   text-transform: uppercase;
 }
 
-.videoOverlay {
-  position: fixed;
-  inset: 0;
-  z-index: 40;
+.catalogPage {
   display: grid;
-  place-items: center;
-  padding: 24px;
-  background: rgba(12, 18, 20, 0.74);
-  backdrop-filter: blur(10px);
-}
-
-.videoPlayerPanel {
-  display: grid;
-  gap: 12px;
-  width: min(1180px, calc(100vw - 48px));
-  max-height: calc(100vh - 48px);
-  border: 1px solid rgba(255, 255, 255, 0.16);
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 0;
+  min-height: min(820px, calc(100vh - 96px));
+  overflow: hidden;
+  border: 1px solid #d9e0e3;
   border-radius: 8px;
-  background: #11191c;
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.42);
-  padding: 14px;
+  background: #ffffff;
 }
 
-.videoPlayerHeader {
+.catalogHeader {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
-  color: #ffffff;
+  gap: 12px;
+  border-bottom: 1px solid #d9e0e3;
+  background: linear-gradient(180deg, #ffffff 0%, #f3f8f9 100%);
+  padding: 16px 18px;
 }
 
-.videoPlayerHeader strong {
+.catalogHeader h1 {
+  margin-bottom: 4px;
+}
+
+.catalogHeader small,
+.catalogHeader span {
+  color: #647177;
+  font-size: 13px;
+}
+
+.catalogGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(172px, 1fr));
+  gap: 18px;
+  align-content: start;
+  min-height: 0;
+  overflow: auto;
+  padding: 18px;
+}
+
+.catalogGrid.videos {
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+}
+
+.catalogLoadMore {
+  grid-column: 1 / -1;
+  justify-self: center;
+  min-width: 160px;
+  margin: 8px 0 2px;
+}
+
+.videoCatalogPage {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.inlineVideoPlayer {
+  display: grid;
+  gap: 12px;
+  border-bottom: 1px solid #d9e0e3;
+  background: #11191c;
+  color: #ffffff;
+  padding: 14px 18px 18px;
+}
+
+.inlineVideoPlayer strong {
   display: -webkit-box;
   overflow: hidden;
   font-size: 15px;
@@ -1042,22 +1085,70 @@ h1 {
   -webkit-line-clamp: 2;
 }
 
-.videoPlayerHeader small {
+.inlineVideoPlayer small {
   color: #a8bdc2;
-}
-
-.videoPlayerHeader button {
-  border-color: rgba(255, 255, 255, 0.22);
-  background: rgba(255, 255, 255, 0.08);
-  color: #ffffff;
 }
 
 .videoPlayer {
   display: block;
   width: 100%;
-  max-height: calc(100vh - 150px);
+  max-height: min(52vh, 620px);
   border-radius: 6px;
   background: #050708;
+}
+
+.videoTranscodeHint {
+  display: block;
+  color: #a8bdc2;
+  font-size: 12px;
+}
+
+.videoTranscodePanel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+}
+
+.videoTranscodePanel button {
+  border-color: rgba(168, 189, 194, 0.35);
+  color: #d8e5e8;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.videoTranscodeStatus {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  border: 1px solid rgba(168, 189, 194, 0.32);
+  border-radius: 999px;
+  padding: 3px 10px;
+  color: #d8e5e8;
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.videoTranscodeStatus.running,
+.videoTranscodeStatus.starting,
+.videoTranscodeStatus.queued {
+  border-color: rgba(73, 161, 180, 0.55);
+  background: rgba(73, 161, 180, 0.14);
+}
+
+.videoTranscodeStatus.ready {
+  border-color: rgba(79, 165, 111, 0.55);
+  background: rgba(79, 165, 111, 0.16);
+}
+
+.videoTranscodeStatus.failed {
+  border-color: rgba(199, 74, 74, 0.55);
+  background: rgba(199, 74, 74, 0.16);
+}
+
+.videoCard.selected .shelfCover {
+  border-color: #337f92;
+  box-shadow: 0 0 0 3px rgba(51, 127, 146, 0.18);
 }
 
 .row,

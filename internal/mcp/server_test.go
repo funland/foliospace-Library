@@ -29,6 +29,7 @@ func TestServerListsTools(t *testing.T) {
 		!strings.Contains(body, "foliospace.open_game_manifest") ||
 		!strings.Contains(body, "foliospace.list_videos") ||
 		!strings.Contains(body, "foliospace.open_video_manifest") ||
+		!strings.Contains(body, "foliospace.get_video_transcode_status") ||
 		!strings.Contains(body, "foliospace.list_favorites") ||
 		!strings.Contains(body, "foliospace.get_scan_settings") ||
 		!strings.Contains(body, "foliospace.save_scan_settings") ||
@@ -119,6 +120,9 @@ func TestServerCallsClientVideosTools(t *testing.T) {
 		if strings.Contains(r.URL.Path, "/manifest") {
 			return jsonResponse(`{"video":{"id":21},"fileUrl":"/api/client/videos/21/file"}`), nil
 		}
+		if strings.Contains(r.URL.Path, "/transcode/status") {
+			return jsonResponse(`{"videoId":21,"status":"idle","segmentCount":0}`), nil
+		}
 		return jsonResponse(`{"items":[],"total":0,"limit":50,"offset":0,"hasMore":false}`), nil
 	})}
 
@@ -136,8 +140,12 @@ func TestServerCallsClientVideosTools(t *testing.T) {
 	if manifestResponse.Error != nil {
 		t.Fatalf("open video manifest error = %#v", manifestResponse.Error)
 	}
+	statusResponse := server.Handle(context.Background(), toolCall(t, "foliospace.get_video_transcode_status", map[string]any{"videoId": 21}))
+	if statusResponse.Error != nil {
+		t.Fatalf("video transcode status error = %#v", statusResponse.Error)
+	}
 
-	want := "/api/client/videos?format=mp4&limit=50&offset=100&q=movie&sort=title\n/api/client/videos/21/manifest"
+	want := "/api/client/videos?format=mp4&limit=50&offset=100&q=movie&sort=title\n/api/client/videos/21/manifest\n/api/client/videos/21/transcode/status"
 	if got := strings.Join(paths, "\n"); got != want {
 		t.Fatalf("paths = %q, want %q", got, want)
 	}

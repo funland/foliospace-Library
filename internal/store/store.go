@@ -1665,7 +1665,52 @@ func scanVideo(row scanner) (domain.VideoAsset, error) {
 	video.LastPlayedAt = parseTime(lastPlayedAt)
 	video.CreatedAt = parseTime(createdAt)
 	video.UpdatedAt = parseTime(updatedAt)
+	video.DirectPlayable, video.PlaybackMode, video.PlaybackReason = videoPlaybackCompatibility(video)
 	return video, nil
+}
+
+func videoPlaybackCompatibility(video domain.VideoAsset) (bool, string, string) {
+	format := strings.ToLower(strings.TrimSpace(video.Format))
+	videoCodec := strings.ToLower(strings.TrimSpace(video.VideoCodec))
+	audioCodec := strings.ToLower(strings.TrimSpace(video.AudioCodec))
+	switch format {
+	case "mp4", "m4v":
+		if videoCodec == "" && looksLikeHEVCVideo(video) {
+			return false, "hls", "filename indicates HEVC/H.265 video"
+		}
+		if videoCodec == "" {
+			return true, "direct", ""
+		}
+		if isH264Codec(videoCodec) && (audioCodec == "" || audioCodec == "aac" || audioCodec == "mp3") {
+			return true, "direct", ""
+		}
+		return false, "hls", "mp4 codecs may need browser transcode"
+	case "webm":
+		if videoCodec == "" {
+			return true, "direct", ""
+		}
+		if (videoCodec == "vp8" || videoCodec == "vp9" || videoCodec == "av1") && (audioCodec == "" || audioCodec == "opus" || audioCodec == "vorbis") {
+			return true, "direct", ""
+		}
+		return false, "hls", "webm codecs may need browser transcode"
+	default:
+		return false, "hls", "container or codecs need browser transcode"
+	}
+}
+
+func isH264Codec(codec string) bool {
+	return codec == "h264" || codec == "avc1" || codec == "avc"
+}
+
+func looksLikeHEVCVideo(video domain.VideoAsset) bool {
+	haystack := strings.ToLower(strings.Join([]string{video.Title, video.RelPath, video.FilePath}, " "))
+	hevcMarkers := []string{"h265", "h.265", "hevc", "x265", "10bit", "10-bit", "hdr", "dolby vision", "dv"}
+	for _, marker := range hevcMarkers {
+		if strings.Contains(haystack, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func scanJob(row scanner) (domain.ScanJob, error) {

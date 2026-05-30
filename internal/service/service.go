@@ -1,17 +1,21 @@
 package service
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"foliospace-reader/internal/archive"
@@ -28,6 +32,25 @@ type Service struct {
 
 const adminTokenHashSetting = "admin_token_sha256"
 const scanWorkersSetting = "scan_workers"
+
+var errVideoTranscodeBusy = errors.New("another video transcode is running")
+
+var videoTranscodeState = struct {
+	sync.Mutex
+	videoID int64
+	dir     string
+}{}
+
+type VideoTranscodeStatus struct {
+	VideoID      int64  `json:"videoId"`
+	Status       string `json:"status"`
+	Message      string `json:"message,omitempty"`
+	SegmentCount int    `json:"segmentCount"`
+}
+
+func IsVideoTranscodeBusy(err error) bool {
+	return errors.Is(err, errVideoTranscodeBusy)
+}
 
 type SetupStatus struct {
 	Initialized     bool                    `json:"initialized"`
@@ -543,6 +566,219 @@ func (s *Service) VideoFilePath(id int64) (string, error) {
 		return "", fmt.Errorf("video has no indexed file")
 	}
 	return video.FilePath, nil
+}
+
+func (s *Service) EnsureVideoHLS(id int64) (string, error) {
+	video, err := s.store.VideoByID(id)
+	if err != nil {
+		return "", err
+	}
+	if video.FilePath == "" {
+		return "", fmt.Errorf("video has no indexed file")
+	}
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		return "", fmt.Errorf("ffmpeg is not installed")
+	}
+	dir, err := s.videoTranscodeCacheDir(video)
+	if err != nil {
+		return "", err
+	}
+	playlist := filepath.Join(dir, "index.m3u8")
+	if fileExists(playlist) {
+		return playlist, nil
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	alreadyRunning := currentVideoTranscode(id, dir)
+	if !claimVideoTranscode(id, dir) {
+		return "", errVideoTranscodeBusy
+	}
+	startedPath := filepath.Join(dir, ".started")
+	if !alreadyRunning {
+		if err := os.WriteFile(startedPath, []byte(time.Now().Format(time.RFC3339)), 0o644); err != nil {
+			releaseVideoTranscode(id, dir)
+			return "", err
+		}
+		if err := startVideoHLSTranscode(id, video.FilePath, dir); err != nil {
+			releaseVideoTranscode(id, dir)
+			return "", err
+		}
+	}
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if fileExists(playlist) {
+			return playlist, nil
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	return "", fmt.Errorf("video transcode is starting")
+}
+
+func (s *Service) VideoTranscodeStatus(id int64) (VideoTranscodeStatus, error) {
+	video, err := s.store.VideoByID(id)
+	if err != nil {
+		return VideoTranscodeStatus{}, err
+	}
+	dir, err := s.videoTranscodeCacheDir(video)
+	if err != nil {
+		return VideoTranscodeStatus{}, err
+	}
+	status := VideoTranscodeStatus{VideoID: id}
+	playlist := filepath.Join(dir, "index.m3u8")
+	status.SegmentCount = countHLSSegments(dir)
+	switch {
+	case fileExists(playlist):
+		status.Status = "ready"
+		status.Message = "HLS cache is ready"
+	case currentVideoTranscode(id, dir):
+		status.Status = "running"
+		status.Message = "Transcoding to browser-compatible HLS"
+	case otherVideoTranscodeActive():
+		status.Status = "queued"
+		status.Message = "Waiting for the current video transcode to finish"
+	case transcodeLogLooksFailed(filepath.Join(dir, "ffmpeg.log")):
+		status.Status = "failed"
+		status.Message = "Transcode failed; see ffmpeg.log"
+	case fileExists(filepath.Join(dir, ".started")):
+		status.Status = "starting"
+		status.Message = "Transcode is starting"
+	default:
+		status.Status = "idle"
+		status.Message = "Transcode has not started"
+	}
+	return status, nil
+}
+
+func (s *Service) VideoHLSFilePath(id int64, name string) (string, error) {
+	video, err := s.store.VideoByID(id)
+	if err != nil {
+		return "", err
+	}
+	dir, err := s.videoTranscodeCacheDir(video)
+	if err != nil {
+		return "", err
+	}
+	cleanName := filepath.Base(strings.TrimSpace(name))
+	if cleanName != name || cleanName == "." || cleanName == string(filepath.Separator) {
+		return "", fmt.Errorf("invalid hls segment path")
+	}
+	switch filepath.Ext(cleanName) {
+	case ".m3u8", ".ts":
+	default:
+		return "", fmt.Errorf("invalid hls segment extension")
+	}
+	path := filepath.Join(dir, cleanName)
+	if !strings.HasPrefix(path, dir+string(filepath.Separator)) {
+		return "", fmt.Errorf("invalid hls segment path")
+	}
+	return path, nil
+}
+
+func (s *Service) videoTranscodeCacheDir(video domain.VideoAsset) (string, error) {
+	base := s.configDir
+	if base == "" {
+		base = os.TempDir()
+	}
+	keySource := fmt.Sprintf("%d|%s|%d|%s", video.ID, video.FilePath, video.Size, video.MTime.Format(time.RFC3339Nano))
+	sum := sha256.Sum256([]byte(keySource))
+	return filepath.Join(base, "cache", "video-transcodes", fmt.Sprintf("%d-%s", video.ID, hex.EncodeToString(sum[:])[:12])), nil
+}
+
+func startVideoHLSTranscode(videoID int64, inputPath string, outputDir string) error {
+	logPath := filepath.Join(outputDir, "ffmpeg.log")
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return err
+	}
+	args := []string{
+		"-hide_banner", "-nostdin", "-y",
+		"-i", inputPath,
+		"-map", "0:v:0", "-map", "0:a:0?",
+		"-vf", "scale=w=min(1920\\,iw):h=-2",
+		"-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+		"-c:a", "aac", "-ac", "2",
+		"-f", "hls",
+		"-hls_time", "6",
+		"-hls_list_size", "0",
+		"-hls_segment_filename", filepath.Join(outputDir, "segment_%05d.ts"),
+		filepath.Join(outputDir, "index.m3u8"),
+	}
+	cmd := exec.CommandContext(context.Background(), "ffmpeg", args...)
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	if err := cmd.Start(); err != nil {
+		_ = logFile.Close()
+		return err
+	}
+	go func() {
+		_ = cmd.Wait()
+		_ = logFile.Close()
+		releaseVideoTranscode(videoID, outputDir)
+	}()
+	return nil
+}
+
+func claimVideoTranscode(videoID int64, dir string) bool {
+	videoTranscodeState.Lock()
+	defer videoTranscodeState.Unlock()
+	if videoTranscodeState.dir != "" && videoTranscodeState.dir != dir {
+		return false
+	}
+	videoTranscodeState.videoID = videoID
+	videoTranscodeState.dir = dir
+	return true
+}
+
+func releaseVideoTranscode(videoID int64, dir string) {
+	videoTranscodeState.Lock()
+	defer videoTranscodeState.Unlock()
+	if videoTranscodeState.videoID == videoID && videoTranscodeState.dir == dir {
+		videoTranscodeState.videoID = 0
+		videoTranscodeState.dir = ""
+	}
+}
+
+func currentVideoTranscode(videoID int64, dir string) bool {
+	videoTranscodeState.Lock()
+	defer videoTranscodeState.Unlock()
+	return videoTranscodeState.videoID == videoID && videoTranscodeState.dir == dir
+}
+
+func otherVideoTranscodeActive() bool {
+	videoTranscodeState.Lock()
+	defer videoTranscodeState.Unlock()
+	return videoTranscodeState.dir != ""
+}
+
+func countHLSSegments(dir string) int {
+	matches, err := filepath.Glob(filepath.Join(dir, "segment_*.ts"))
+	if err != nil {
+		return 0
+	}
+	return len(matches)
+}
+
+func transcodeLogLooksFailed(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	text := strings.ToLower(string(data))
+	return strings.Contains(text, "conversion failed") || strings.Contains(text, "error while") || strings.Contains(text, "invalid data")
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func recentMarker(path string, ttl time.Duration) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return time.Since(info.ModTime()) < ttl
 }
 
 func (s *Service) FavoriteBooks(limit int) ([]domain.Book, error) {

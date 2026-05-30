@@ -362,7 +362,7 @@ Empty results return `items: []` with `total: 0`; the endpoint does not return 4
 
 ### `GET /api/client/videos`
 
-Returns a paginated client-safe video catalog. This is intentionally lightweight in the first version: FolioSpace indexes file metadata and serves a placeholder thumbnail without requiring ffmpeg/ffprobe.
+Returns a paginated client-safe video catalog. FolioSpace keeps NAS paths hidden, probes codecs with `ffprobe` when available, and marks each video as direct-playable or HLS-transcode playback.
 
 Query:
 
@@ -388,7 +388,12 @@ Response:
       "height": 0,
       "thumbnailStatus": "placeholder",
       "thumbnailUrl": "/api/videos/21/thumbnail",
-      "manifestUrl": "/api/client/videos/21/manifest"
+      "manifestUrl": "/api/client/videos/21/manifest",
+      "directPlayable": true,
+      "playbackMode": "direct",
+      "fileUrl": "/api/client/videos/21/file",
+      "hlsUrl": "/api/client/videos/21/hls/index.m3u8",
+      "transcodeStatusUrl": "/api/client/videos/21/transcode/status"
     }
   ],
   "total": 1,
@@ -415,13 +420,38 @@ Returns client-safe video playback metadata. It does not expose the real NAS pat
     "height": 0,
     "thumbnailStatus": "placeholder",
     "thumbnailUrl": "/api/videos/21/thumbnail",
-    "manifestUrl": "/api/client/videos/21/manifest"
+    "manifestUrl": "/api/client/videos/21/manifest",
+    "directPlayable": false,
+    "playbackMode": "hls",
+    "playbackReason": "container or codecs need browser transcode",
+    "fileUrl": "/api/client/videos/21/file",
+    "hlsUrl": "/api/client/videos/21/hls/index.m3u8",
+    "transcodeStatusUrl": "/api/client/videos/21/transcode/status"
   },
-  "fileUrl": "/api/client/videos/21/file"
+  "fileUrl": "/api/client/videos/21/file",
+  "hlsUrl": "/api/client/videos/21/hls/index.m3u8",
+  "transcodeStatusUrl": "/api/client/videos/21/transcode/status"
 }
 ```
 
 `fileUrl` streams the local file through FolioSpace Library using `http.ServeFile`, so clients can use HTTP Range requests while keeping NAS paths hidden.
+
+If `playbackMode` is `hls`, clients should open `hlsUrl`. The first request to `hlsUrl` starts an on-demand `ffmpeg` transcode into `/config/cache/video-transcodes`; subsequent playback reuses the cached HLS playlist and segments until the source file changes. The built-in transcoder keeps one active video transcode at a time and downscales wide 4K sources to 1080p H.264/AAC HLS for NAS-friendly playback.
+
+### `GET /api/client/videos/{videoId}/transcode/status`
+
+Returns the current HLS cache/transcode state for a video.
+
+```json
+{
+  "videoId": 21,
+  "status": "running",
+  "message": "Transcoding to browser-compatible HLS",
+  "segmentCount": 8
+}
+```
+
+`status` is one of `idle`, `starting`, `running`, `queued`, `ready`, or `failed`. Clients can poll this endpoint while opening HLS playback to show `转码中`, `已缓存`, or a failure state. If another video is already being transcoded, the manifest request can return `409` and this endpoint reports `queued`.
 
 ### `GET /api/videos/{videoId}/thumbnail`
 

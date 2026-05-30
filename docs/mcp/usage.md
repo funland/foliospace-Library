@@ -111,7 +111,8 @@ Open the manifest for book 12 and tell me whether it is EPUB or CBZ.
 - `foliospace.list_games`: list paginated client-safe ROM assets with `limit`, `offset`, `q`, `platform`, `format`, and `sort`.
 - `foliospace.open_game_manifest`: open a ROM client manifest by `gameId`.
 - `foliospace.list_videos`: list paginated client-safe video assets with `limit`, `offset`, `q`, `format`, and `sort`.
-- `foliospace.open_video_manifest`: open a video client manifest by `videoId`; the returned `fileUrl` is an opaque Range-capable service URL.
+- `foliospace.open_video_manifest`: open a video client manifest by `videoId`; the returned `fileUrl` is an opaque Range-capable service URL, while `hlsUrl` is used when `playbackMode` is `hls`.
+- `foliospace.get_video_transcode_status`: read HLS transcode/cache status for a video; returns `idle`, `starting`, `running`, `queued`, `ready`, or `failed`.
 - `foliospace.get_preferences`: read client preferences such as interface language.
 - `foliospace.save_preferences`: save client preferences.
 - `foliospace.get_scan_settings`: read scan runtime settings such as worker count.
@@ -172,10 +173,24 @@ List local videos:
 {"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"foliospace.list_videos","arguments":{"q":"movie","format":"mp4","limit":20}}}
 ```
 
+Open a video manifest and choose playback:
+
+```json
+{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"foliospace.open_video_manifest","arguments":{"videoId":21}}}
+```
+
+Use `fileUrl` when `directPlayable` is `true`; use `hlsUrl` when `playbackMode` is `hls`.
+
+Check HLS transcode status:
+
+```json
+{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"foliospace.get_video_transcode_status","arguments":{"videoId":21}}}
+```
+
 List want-to-read books:
 
 ```json
-{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"foliospace.list_private_status","arguments":{"status":"want","limit":12}}}
+{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"foliospace.list_private_status","arguments":{"status":"want","limit":12}}}
 ```
 
 Pause a running scan job:

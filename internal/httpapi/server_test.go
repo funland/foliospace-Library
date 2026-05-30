@@ -439,8 +439,8 @@ func TestAPIClientVideosPage(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, video := range []domain.VideoAsset{
-		{LibraryID: lib.ID, Title: "Alpha Movie", Format: "mp4", FilePath: "/library/Alpha Movie.mp4", RelPath: "Alpha Movie.mp4", Size: 1024, MTime: time.Unix(31, 0), ThumbnailStatus: "placeholder"},
-		{LibraryID: lib.ID, Title: "Beta Clip", Format: "mkv", FilePath: "/library/Beta Clip.mkv", RelPath: "Beta Clip.mkv", Size: 2048, MTime: time.Unix(32, 0), ThumbnailStatus: "placeholder"},
+		{LibraryID: lib.ID, Title: "Alpha Movie", Format: "mp4", FilePath: "/library/Alpha Movie.mp4", RelPath: "Alpha Movie.mp4", Size: 1024, MTime: time.Unix(31, 0), VideoCodec: "h264", AudioCodec: "aac", ThumbnailStatus: "placeholder"},
+		{LibraryID: lib.ID, Title: "Beta Clip", Format: "mkv", FilePath: "/library/Beta Clip.mkv", RelPath: "Beta Clip.mkv", Size: 2048, MTime: time.Unix(32, 0), VideoCodec: "hevc", AudioCodec: "dts", ThumbnailStatus: "placeholder"},
 	} {
 		if _, err := st.UpsertVideo(video); err != nil {
 			t.Fatal(err)
@@ -465,13 +465,33 @@ func TestAPIClientVideosPage(t *testing.T) {
 	if !strings.Contains(body, `"total":2`) || !strings.Contains(body, `"limit":1`) || !strings.Contains(body, `"hasMore":true`) || !strings.Contains(body, `"title":"Alpha Movie"`) {
 		t.Fatalf("client videos page %q missing pagination metadata or title sort", body)
 	}
-	if !strings.Contains(body, `"/api/client/videos/`) || !strings.Contains(body, `/manifest"`) || !strings.Contains(body, `"/api/videos/`) {
-		t.Fatalf("client videos page %q missing manifestUrl or thumbnailUrl", body)
+	if !strings.Contains(body, `"/api/client/videos/`) || !strings.Contains(body, `/manifest"`) || !strings.Contains(body, `/transcode/status"`) || !strings.Contains(body, `"/api/videos/`) {
+		t.Fatalf("client videos page %q missing manifestUrl, transcodeStatusUrl, or thumbnailUrl", body)
 	}
 
 	filtered := authGet(t, ts.URL+"/api/client/videos?q=beta&format=mkv", "secret")
 	if !strings.Contains(filtered, `"title":"Beta Clip"`) || !strings.Contains(filtered, `"total":1`) || !strings.Contains(filtered, `"hasMore":false`) {
 		t.Fatalf("filtered client videos page = %q, want one-item response", filtered)
+	}
+	if !strings.Contains(filtered, `"directPlayable":false`) || !strings.Contains(filtered, `"playbackMode":"hls"`) {
+		t.Fatalf("filtered client videos page = %q, want hls playback hint for mkv", filtered)
+	}
+
+	videos, err := st.ListVideosPage(domain.VideoListOptions{Limit: 10, Sort: "title"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	alphaManifest := authGet(t, ts.URL+"/api/client/videos/"+itoa(videos.Items[0].ID)+"/manifest", "secret")
+	if !strings.Contains(alphaManifest, `"directPlayable":true`) || !strings.Contains(alphaManifest, `"playbackMode":"direct"`) || !strings.Contains(alphaManifest, `"fileUrl":"/api/client/videos/`) {
+		t.Fatalf("alpha video manifest = %q, want direct playback metadata", alphaManifest)
+	}
+	betaManifest := authGet(t, ts.URL+"/api/client/videos/"+itoa(videos.Items[1].ID)+"/manifest", "secret")
+	if !strings.Contains(betaManifest, `"directPlayable":false`) || !strings.Contains(betaManifest, `"playbackMode":"hls"`) || !strings.Contains(betaManifest, `"hlsUrl":"/api/client/videos/`) || !strings.Contains(betaManifest, `"transcodeStatusUrl":"/api/client/videos/`) {
+		t.Fatalf("beta video manifest = %q, want hls playback metadata", betaManifest)
+	}
+	betaStatus := authGet(t, ts.URL+"/api/client/videos/"+itoa(videos.Items[1].ID)+"/transcode/status", "secret")
+	if !strings.Contains(betaStatus, `"status":"idle"`) || !strings.Contains(betaStatus, `"segmentCount":0`) {
+		t.Fatalf("beta video transcode status = %q, want idle status", betaStatus)
 	}
 }
 
