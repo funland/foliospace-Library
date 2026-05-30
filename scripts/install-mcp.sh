@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-VERSION="${FOLIOSPACE_MCP_VERSION:-0.82}"
+VERSION="${FOLIOSPACE_MCP_VERSION:-0.88}"
 BASE_URL="${FOLIOSPACE_MCP_RELEASE_BASE_URL:-https://foliospace.app/releases}"
 INSTALL_DIR="${FOLIOSPACE_MCP_INSTALL_DIR:-$HOME/.local/bin}"
 BIN_NAME="foliospace-mcp"
@@ -11,7 +11,7 @@ usage() {
 Install FolioSpace Library MCP.
 
 Environment overrides:
-  FOLIOSPACE_MCP_VERSION=0.82
+  FOLIOSPACE_MCP_VERSION=0.88
   FOLIOSPACE_MCP_RELEASE_BASE_URL=https://foliospace.app/releases
   FOLIOSPACE_MCP_INSTALL_DIR=\$HOME/.local/bin
 

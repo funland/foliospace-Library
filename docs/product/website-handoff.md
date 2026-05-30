@@ -25,7 +25,7 @@ FolioSpaceReader
 Docker image:
 
 ```text
-funland/foliospace-library:0.82
+funland/foliospace-library:0.88
 ```
 
 Suggested CLI / binary name for future release work:
@@ -37,7 +37,7 @@ foliospace-library
 Current release:
 
 ```text
-0.82
+0.88
 ```
 
 ## One-Line Description
@@ -225,7 +225,7 @@ Suggested home-page sections:
 Primary Docker command:
 
 ```bash
-docker pull funland/foliospace-library:0.82
+docker pull funland/foliospace-library:0.88
 ```
 
 Simple NAS run example:
@@ -240,7 +240,7 @@ docker run -d \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  funland/foliospace-library:0.82
+  funland/foliospace-library:0.88
 ```
 
 Open:
@@ -262,7 +262,7 @@ Reference compose:
 ```yaml
 services:
   foliospace-library:
-    image: funland/foliospace-library:0.82
+    image: funland/foliospace-library:0.88
     ports:
       - "8080:8080"
     volumes:
@@ -423,10 +423,10 @@ Release package placeholders to publish on the website:
 
 ```text
 /install-mcp.sh
-/releases/foliospace-mcp_0.82_darwin_arm64.tar.gz
-/releases/foliospace-mcp_0.82_darwin_amd64.tar.gz
-/releases/foliospace-mcp_0.82_linux_arm64.tar.gz
-/releases/foliospace-mcp_0.82_linux_amd64.tar.gz
+/releases/foliospace-mcp_0.88_darwin_arm64.tar.gz
+/releases/foliospace-mcp_0.88_darwin_amd64.tar.gz
+/releases/foliospace-mcp_0.88_linux_arm64.tar.gz
+/releases/foliospace-mcp_0.88_linux_amd64.tar.gz
 /releases/checksums.txt
 ```
 
@@ -435,16 +435,16 @@ Current local release artifact source for the website build:
 ```text
 /Users/deadseafu/Documents/FolioSpaceReader/dist/install-mcp.sh
 /Users/deadseafu/Documents/FolioSpaceReader/dist/releases/checksums.txt
-/Users/deadseafu/Documents/FolioSpaceReader/dist/releases/foliospace-mcp_0.82_darwin_arm64.tar.gz
-/Users/deadseafu/Documents/FolioSpaceReader/dist/releases/foliospace-mcp_0.82_darwin_amd64.tar.gz
-/Users/deadseafu/Documents/FolioSpaceReader/dist/releases/foliospace-mcp_0.82_linux_arm64.tar.gz
-/Users/deadseafu/Documents/FolioSpaceReader/dist/releases/foliospace-mcp_0.82_linux_amd64.tar.gz
+/Users/deadseafu/Documents/FolioSpaceReader/dist/releases/foliospace-mcp_0.88_darwin_arm64.tar.gz
+/Users/deadseafu/Documents/FolioSpaceReader/dist/releases/foliospace-mcp_0.88_darwin_amd64.tar.gz
+/Users/deadseafu/Documents/FolioSpaceReader/dist/releases/foliospace-mcp_0.88_linux_arm64.tar.gz
+/Users/deadseafu/Documents/FolioSpaceReader/dist/releases/foliospace-mcp_0.88_linux_amd64.tar.gz
 ```
 
 Maintainer build command:
 
 ```bash
-VERSION=0.82 ./scripts/build-mcp-release.sh
+VERSION=0.88 ./scripts/build-mcp-release.sh
 ```
 
 Environment:
@@ -624,16 +624,16 @@ FolioSpace Library is designed for self-hosted local libraries. Client APIs retu
 Docker Hub image:
 
 ```text
-funland/foliospace-library:0.82
-funland/foliospace-library:latest should be promoted after the 0.82 Docker Hub upload succeeds.
+funland/foliospace-library:0.88
+funland/foliospace-library:latest should be promoted after the 0.88 Docker Hub upload succeeds.
 ```
 
 Current Docker Hub digest:
 
 ```text
-0.82 manifest: sha256:4ed3da899eaa795674f2775148eb7359d712a0bee3558f404c787a59a77bc173
-amd64:         sha256:833e08b8cba7d1e1a791fc099033854bc67cdfcb932e59756c28b515b99b1c26
-arm64:         sha256:17e7779db5bdf4cd1898b59838d376be59bc9d56d89b05d9f7b4f2c18ace5883
+0.88 manifest: sha256:5103cb56177ea481f000c72e0c180d135e0956295295a6d384379dbcc2be5e24
+amd64:         sha256:80a9d88c397711f3296f0dd307aadb668eacb1efa2944daf14dcf557e098ca62
+arm64:         sha256:b18cae5dde2e35e36014639000defb69711b4f5ba6dd6ae5773112da65ade658
 ```
 
 Architectures:
@@ -648,7 +648,7 @@ Service version returned by API:
 ```json
 {
   "serviceName": "FolioSpace Library",
-  "serviceVersion": "0.82",
+  "serviceVersion": "0.88",
   "apiVersion": "v1"
 }
 ```
@@ -662,4 +662,4 @@ These should be confirmed before publishing:
 - Final feedback channel.
 - Whether API docs are rendered from Markdown directly or rewritten as website pages.
 - Whether screenshots are real captures or designed placeholders for the first launch.
-- Whether Docker Hub is the only public distribution channel for 0.82.
+- Whether Docker Hub is the only public distribution channel for 0.88.

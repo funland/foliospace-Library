@@ -6,7 +6,7 @@ It is not trying to become a complete Plex, Jellyfin, or Immich replacement. The
 
 The current implementation still starts from the FolioSpace Reader codebase and keeps the existing reading MVP operational while the model evolves toward `Asset` / `LibraryItem`.
 
-Current release branch: `0.82`.
+Current release branch: `0.88`.
 
 ## Runtime Layout
 
@@ -43,7 +43,7 @@ FOLIOSPACE_API_TOKEN=
 FOLIOSPACE_SCAN_WORKERS=2
 ```
 
-Set `FOLIOSPACE_API_TOKEN` to require API authentication from environment variables. If it is empty, release `0.82` can create the first access token from the web setup page and stores only a SHA-256 token hash in SQLite. Native clients can send `Authorization: Bearer <token>`. The web UI stays publicly loadable, then prompts for the access token and receives an HttpOnly cookie so covers, pages, and EPUB iframe resources can load through normal browser requests.
+Set `FOLIOSPACE_API_TOKEN` to require API authentication from environment variables. If it is empty, release `0.88` can create the first access token from the web setup page and stores only a SHA-256 token hash in SQLite. Native clients can send `Authorization: Bearer <token>`. The web UI stays publicly loadable, then prompts for the access token and receives an HttpOnly cookie so covers, pages, and EPUB iframe resources can load through normal browser requests.
 
 Authentication helpers:
 
@@ -85,7 +85,7 @@ curl -fsSL https://foliospace.app/install-mcp.sh | sh
 Release maintainers can build macOS/Linux MCP packages with:
 
 ```bash
-VERSION=0.82 ./scripts/build-mcp-release.sh
+VERSION=0.88 ./scripts/build-mcp-release.sh
 ```
 
 ## Product Direction
@@ -105,10 +105,10 @@ ROM support is for indexing and launching user-owned local content. FolioSpace L
 
 ## Docker
 
-Release `0.82` image tag:
+Release `0.88` image tag:
 
 ```bash
-docker pull funland/foliospace-library:0.82
+docker pull funland/foliospace-library:0.88
 ```
 
 For local verification:
@@ -127,7 +127,7 @@ docker run -p 8080:8080 \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  funland/foliospace-library:0.82
+  funland/foliospace-library:0.88
 ```
 
 Open `http://localhost:8080`. On a fresh `/config`, the setup page asks for an access key and lets you choose a container path such as `/library`, `/books`, or `/games`. If a directory is missing from the setup page, add a Docker volume mapping first; FolioSpace Library can only browse paths visible inside the container.
