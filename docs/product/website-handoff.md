@@ -706,13 +706,16 @@ funland/foliospace-library:latest
 Current Docker Hub digest:
 
 ```text
-0.881 amd64 manifest: sha256:e7c13ce3525caa8a57dbd9c463144242130263df3496a6b63047f4234fe521e8
+0.881 manifest list: sha256:e8d8cd2797628876baadeb52a0cdb34a8aa796e56e9fa3c2b8fe63e3c495f920
+amd64:              sha256:e7c13ce3525caa8a57dbd9c463144242130263df3496a6b63047f4234fe521e8
+arm64:              sha256:24f7afeeec877940d2b0c2280f4609be009dce38a454a3bb75a5926aa283c2bd
 ```
 
 Architectures:
 
 ```text
 linux/amd64
+linux/arm64
 ```
 
 Service version returned by API:
