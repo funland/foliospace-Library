@@ -1680,6 +1680,51 @@ button.danger:hover {
   height: 100vh;
 }
 
+.reader.webtoonMode {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+.reader.immersiveMode {
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.reader.immersiveMode .readerHeader,
+.reader.immersiveMode .readerControls {
+  display: none;
+}
+
+.reader.immersiveMode .pageStage {
+  grid-row: 1 / -1;
+}
+
+.readerFullscreenExit {
+  position: fixed;
+  top: calc(10px + env(safe-area-inset-top));
+  right: 10px;
+  z-index: 40;
+  min-height: 30px;
+  border-radius: 999px;
+  border-color: rgba(255, 255, 255, 0.16);
+  background: rgba(18, 24, 27, 0.38);
+  color: #ffffff;
+  font-size: 12px;
+  line-height: 1;
+  opacity: 0.42;
+  padding: 7px 10px;
+  backdrop-filter: blur(12px);
+  transition: opacity 140ms ease, background 140ms ease, transform 140ms ease;
+}
+
+.readerFullscreenExit:hover,
+.readerFullscreenExit:focus-visible,
+.readerFullscreenExit:active {
+  background: rgba(18, 24, 27, 0.84);
+  opacity: 1;
+  transform: scale(1.02);
+}
+
 .readerHeader,
 .readerControls {
   display: flex;
@@ -1936,6 +1981,10 @@ button.danger:hover {
 .pageStage.webtoon {
   overflow: hidden;
   background: #0d1214;
+}
+
+.reader.webtoonMode .pageStage.webtoon {
+  grid-row-end: -1;
 }
 
 .pageSpread img {
@@ -2330,48 +2379,125 @@ button.danger:hover {
 
 @media (max-width: 760px) {
   .app {
-    grid-template-columns: 1fr;
+    display: block;
+    min-height: 100dvh;
+    padding-bottom: 68px;
   }
 
   .sidebar {
+    position: fixed;
+    inset: auto 0 0;
+    z-index: 18;
+    display: grid;
+    grid-auto-columns: minmax(64px, 1fr);
+    grid-auto-flow: column;
     flex-direction: row;
     align-items: center;
+    gap: 6px;
+    height: 64px;
     overflow-x: auto;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 7px 8px calc(7px + env(safe-area-inset-bottom));
+    overscroll-behavior-x: contain;
   }
 
   .brand {
-    margin: 0 10px 0 0;
+    display: none;
+  }
+
+  .sidebar button {
+    display: grid;
+    place-items: center;
+    min-width: 64px;
+    min-height: 48px;
+    padding: 0 8px;
+    text-align: center;
+    font-size: 12px;
+    line-height: 1.2;
     white-space: nowrap;
   }
 
+  .sidebar .lockButton {
+    margin-top: 0;
+  }
+
+  .workspace {
+    min-height: calc(100dvh - 68px);
+  }
+
   .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 14;
     align-items: stretch;
-    gap: 10px;
+    gap: 8px;
+    min-height: 0;
+    padding: 8px 10px;
   }
 
   .topbar input {
+    order: 1;
     max-width: none;
     flex-basis: 100%;
+    min-height: 38px;
   }
 
   .profileControls {
+    order: 2;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 38px 38px;
     flex: 1 1 100%;
     margin-left: 0;
   }
 
   .profileMenuButton {
+    min-width: 0;
     max-width: none;
-    flex: 1 1 auto;
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .profileIconButton,
+  .profileRenameButton {
+    width: 38px;
+    min-width: 38px;
+    padding: 0;
   }
 
   .statusText {
-    flex-basis: 100%;
-    text-align: left;
+    order: 3;
+    flex: 1 1 auto;
+    align-self: center;
+    max-width: none;
+    overflow: hidden;
+    text-align: right;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .localeSelect {
+    order: 3;
+    flex: 0 0 132px;
+    max-width: 132px;
+  }
+
+  .profilePanel {
+    position: fixed;
+    inset: 58px 10px auto;
+    width: auto;
+    max-height: calc(100dvh - 138px);
+    overflow: auto;
+  }
+
+  .scanProgress {
+    margin: 8px 10px 0;
   }
 
   .grid,
   .libraryDashboard {
     grid-template-columns: 1fr;
+    gap: 10px;
+    padding: 10px;
   }
 
   .aboutPage {
@@ -2387,6 +2513,72 @@ button.danger:hover {
     align-items: flex-start;
   }
 
+  .libraryDirectory {
+    order: 4;
+  }
+
+  .libraryDirectory h1,
+  .collectionPanel h1,
+  .bookShelfHeader h1,
+  .coverWallHeader h1,
+  .catalogHeader h1 {
+    font-size: 16px;
+  }
+
+  .libraryRows {
+    grid-template-columns: 1fr;
+    max-height: 230px;
+  }
+
+  .libraryRows .row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    min-height: 62px;
+    padding: 10px 0;
+  }
+
+  .libraryRows .row strong,
+  .libraryRows .row small {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .libraryRows .rowActions {
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+    gap: 6px;
+  }
+
+  .libraryRows .rowActions button {
+    min-height: 32px;
+    padding-inline: 9px;
+    font-size: 12px;
+  }
+
+  .row,
+  .listItem,
+  .errorRow {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .rowActions {
+    flex-wrap: wrap;
+  }
+
+  .quickShelfPanel {
+    order: 1;
+  }
+
+  .collectionPanel {
+    order: 2;
+  }
+
+  .collectionContent {
+    order: 3;
+  }
+
   .collectionPanel {
     position: static;
     max-height: none;
@@ -2394,19 +2586,144 @@ button.danger:hover {
 
   .quickShelfPanel {
     grid-template-columns: 1fr;
+    gap: 14px;
   }
 
   .quickShelfDivider {
-    width: 100%;
-    min-height: 1px;
+    display: none;
+  }
+
+  .quickShelfPanel .shelfScroller {
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(104px, 118px);
+    grid-template-columns: none;
+    overflow-x: auto;
+    padding-bottom: 6px;
+  }
+
+  .shelfBook {
+    gap: 6px;
+  }
+
+  .shelfBook strong {
+    min-height: 32px;
+    font-size: 12px;
+  }
+
+  .shelfBook small {
+    font-size: 11px;
   }
 
   .collectionContent {
-    min-height: 520px;
+    min-height: 0;
   }
 
   .libraryForm {
     grid-template-columns: 1fr;
+  }
+
+  .collectionSections {
+    overflow: visible;
+    max-height: none;
+  }
+
+  .collectionGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .collectionThumb {
+    border-radius: 6px;
+  }
+
+  .collectionCard strong {
+    font-size: 11px;
+  }
+
+  .collectionCard small {
+    -webkit-line-clamp: 1;
+  }
+
+  .coverWallHeader,
+  .catalogHeader,
+  .globalSearchHeader {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px;
+  }
+
+  .coverWallTools {
+    justify-content: flex-start;
+  }
+
+  .books,
+  .catalogGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    overflow: visible;
+    padding: 10px;
+  }
+
+  .catalogGrid.videos {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .book {
+    gap: 6px;
+  }
+
+  .book strong {
+    min-height: 31px;
+    font-size: 11px;
+    line-height: 1.35;
+  }
+
+  .book small,
+  .bookDescription {
+    display: none;
+  }
+
+  .bookCreator {
+    display: -webkit-box;
+    font-size: 10px;
+  }
+
+  .searchResults {
+    grid-template-columns: 1fr;
+  }
+
+  .modalOverlay {
+    align-items: stretch;
+    justify-items: stretch;
+    padding: 0;
+  }
+
+  .directoryPicker {
+    width: 100vw;
+    max-height: none;
+    min-height: 100dvh;
+    border: 0;
+    border-radius: 0;
+    padding: 12px;
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
+  }
+
+  .directoryPickerHeader,
+  .directoryPickerActions {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .directoryPicker code {
+    max-height: 58px;
+    overflow: auto;
+  }
+
+  .directoryList {
+    flex: 1 1 auto;
+    max-height: none;
   }
 
   .jobLayout {
@@ -2417,26 +2734,140 @@ button.danger:hover {
     grid-template-columns: 1fr;
   }
 
+  .readerMode {
+    padding-bottom: 0;
+  }
+
+  .readerMode .sidebar,
+  .readerMode .topbar,
+  .readerMode .scanProgress {
+    display: none;
+  }
+
+  .readerMode .workspace {
+    min-height: 100dvh;
+  }
+
   .reader {
-    height: calc(100vh - 132px);
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    display: flex;
+    flex-direction: column;
+    width: 100vw;
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  .reader.webtoonMode {
+    display: flex;
+  }
+
+  .reader.immersiveMode .pageStage {
+    flex: 1 1 auto;
   }
 
   .readerHeader,
   .readerControls {
+    flex: 0 0 auto;
+    width: 100%;
+    box-sizing: border-box;
     align-items: stretch;
     flex-direction: column;
+    gap: 8px;
+    padding: 8px 10px;
   }
 
   .readerToolbar {
+    flex-wrap: nowrap;
     justify-content: flex-start;
+    overflow-x: auto;
+    padding-bottom: 2px;
+    overscroll-behavior-x: contain;
+  }
+
+  .readerToolbar > * {
+    flex: 0 0 auto;
+  }
+
+  .epubReader .readerHeader {
+    gap: 7px;
+    padding: 7px 10px;
+  }
+
+  .epubReader .readerToolbar {
+    display: grid;
+    grid-template-columns: auto auto minmax(98px, 1fr) auto;
+    align-items: center;
+    gap: 7px;
+    overflow: visible;
+    padding-bottom: 0;
+  }
+
+  .epubReader .readerToolbar button,
+  .epubReader .readerToolbar select,
+  .epubReader .fontControl {
+    min-height: 34px;
+    padding-inline: 9px;
+  }
+
+  .epubReader .readerToolbar select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .epubReader .fontControl {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    min-width: 0;
+  }
+
+  .epubReader .readerFullscreenButton {
+    grid-column: 4;
+    grid-row: 1;
+  }
+
+  .epubReader .fontControl span {
+    white-space: nowrap;
+  }
+
+  .epubReader .fontControl input {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .epubReader .epubPageModeControl {
+    display: none;
+  }
+
+  .readerTitle strong {
+    font-size: 13px;
+  }
+
+  .readerTitle span,
+  .readerTitle em {
+    font-size: 11px;
   }
 
   .readerStateBar {
-    grid-template-columns: 1fr;
+    display: none;
+  }
+
+  .bookDetails {
+    display: none;
   }
 
   .readerControls input {
     width: 100%;
+  }
+
+  .readerControls {
+    padding-bottom: calc(8px + env(safe-area-inset-bottom));
+  }
+
+  .readerControls button,
+  .readerControls .epubProgress {
+    flex: 0 0 auto;
   }
 
   .pageStage.double .pageSpread {
@@ -2449,11 +2880,90 @@ button.danger:hover {
   }
 
   .pageStage.epub {
-    padding: 8px;
+    padding: 6px;
+  }
+
+  .pageStage.webtoon {
+    touch-action: pan-y;
+  }
+
+  .pageStage {
+    flex: 1 1 auto;
+    width: 100%;
+    min-height: 0;
+  }
+
+  .webtoonReader {
+    padding-inline: 10px;
+  }
+
+  .webtoonPage img {
+    width: min(100%, 640px);
+  }
+
+  .pdfReader.double {
+    flex-direction: column;
+  }
+
+  .pdfReader.double canvas {
+    max-width: 100%;
+    max-height: calc((100% - 18px) / 2);
   }
 
   .epubFrame {
     border-radius: 6px;
+  }
+
+  .epubReader .epubFrame {
+    width: 100%;
+    border-radius: 6px;
+  }
+
+  .epubReader .epubToc {
+    inset: 8px;
+    width: auto;
+    max-height: none;
+    border-radius: 8px;
+  }
+}
+
+@media (max-width: 430px) {
+  .books,
+  .catalogGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    padding: 8px;
+  }
+
+  .catalogGrid.videos,
+  .collectionGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .coverFrame,
+  .shelfCover,
+  .collectionThumb {
+    border-radius: 6px;
+  }
+
+  .readerHeader {
+    max-height: 112px;
+    overflow: hidden;
+  }
+
+  .epubReader .readerHeader {
+    max-height: none;
+  }
+
+  .readerToolbar button,
+  .readerToolbar select,
+  .fontControl {
+    min-height: 32px;
+    padding-inline: 8px;
+  }
+
+  .epubReader .readerToolbar {
+    grid-template-columns: auto auto minmax(92px, 1fr) auto;
   }
 }
 

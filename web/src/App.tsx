@@ -3,7 +3,7 @@ import type { FormEvent, MouseEvent, ReactNode, TouchEvent } from "react";
 import { GlobalWorkerOptions, getDocument } from "pdfjs-dist";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import pdfWorkerURL from "pdfjs-dist/build/pdf.worker.mjs?url";
-import { api, Book, BookPrivateState, clearAuthToken, ClientInfo, ClientPreferences, DirectoryEntry, DirectoryListing, EpubManifest, FileError, GameAsset, getActiveProfileId, getAuthToken, JobEvent, Library, Page, Profile, ScanJob, Series, setActiveProfileId as persistActiveProfileId, setAuthToken, SetupStatus, ScanSettings, VideoAsset, VideoTranscodeQueueStatus, VideoTranscodeStatus } from "./api";
+import { api, Book, BookPrivateState, clearAuthToken, ClientInfo, ClientPreferences, DirectoryEntry, DirectoryListing, EpubManifest, EpubTocItem, FileError, GameAsset, getActiveProfileId, getAuthToken, JobEvent, Library, Page, Profile, ScanJob, Series, setActiveProfileId as persistActiveProfileId, setAuthToken, SetupStatus, ScanSettings, VideoAsset, VideoTranscodeQueueStatus, VideoTranscodeStatus } from "./api";
 
 GlobalWorkerOptions.workerSrc = pdfWorkerURL;
 
@@ -118,6 +118,7 @@ export function App() {
   const webtoonRef = useRef<HTMLDivElement | null>(null);
   const bookLoadMoreRef = useRef<HTMLDivElement | null>(null);
   const collectionSectionsRef = useRef<HTMLDivElement | null>(null);
+  const collectionContentRef = useRef<HTMLElement | null>(null);
   const videoPlayerRef = useRef<HTMLVideoElement | null>(null);
   const previousVideoTranscodeStatus = useRef<string>("");
   const collectionScrollTop = useRef(0);
@@ -622,22 +623,35 @@ export function App() {
 
   function openSeries(item: Series) {
     setStatus(`Loading ${item.title}`);
+    const isSameSeries = selectedSeries?.id === item.id;
     setSelectedSeries(item);
     setQuery("");
     setBooks([]);
     setBookTotal(0);
     setBookHasMore(false);
+    if (isSameSeries) {
+      void loadBooksPage(item, 0, true, "");
+    }
+  }
+
+  function scrollCollectionContentIntoView() {
+    window.requestAnimationFrame(() => {
+      collectionContentRef.current?.scrollIntoView({
+        block: "start",
+        behavior: "smooth",
+      });
+    });
   }
 
   const loadBooksPage = useCallback(
-    async (seriesItem: Series, offset: number, reset: boolean) => {
+    async (seriesItem: Series, offset: number, reset: boolean, queryOverride?: string) => {
       const requestID = ++bookListRequest.current;
       setBookListLoading(true);
       try {
         const page = await api.booksPage(seriesItem.id, {
           limit: bookPageSize,
           offset,
-          q: query.trim(),
+          q: queryOverride ?? query.trim(),
           sort: bookSort,
         });
         if (requestID !== bookListRequest.current) return;
@@ -654,6 +668,9 @@ export function App() {
         setBookTotal(page.total);
         setBookHasMore(page.hasMore);
         setStatus("Ready");
+        if (reset && offset === 0) {
+          scrollCollectionContentIntoView();
+        }
       } catch (error) {
         if (requestID !== bookListRequest.current) return;
         setStatus(error instanceof Error ? error.message : "Failed to load volumes");
@@ -915,12 +932,19 @@ export function App() {
       const nextPages = await api.pages(book.id);
       setPages(nextPages);
       if (book.format === "epub") {
-        const [manifest, progress] = await Promise.all([api.epubManifest(book.id), api.readProgress(book.id)]);
-        const restoredPosition = readEpubLocator(progress.locator);
+        setSelectedBook(book);
+        setView("reader");
+        const [manifestResult, progressResult] = await Promise.allSettled([api.epubManifest(book.id), api.readProgress(book.id)]);
+        const manifest = manifestResult.status === "fulfilled" ? manifestResult.value : fallbackEpubManifest(book, nextPages);
+        const progress = progressResult.status === "fulfilled" ? progressResult.value : null;
+        const restoredPosition = readEpubLocator(progress?.locator ?? "");
         epubRestorePosition.current = restoredPosition;
         setEpubManifest(manifest);
-        setPageIndex(Math.max(0, Math.min(progress.pageIndex, Math.max(0, nextPages.length - 1))));
+        setPageIndex(Math.max(0, Math.min(progress?.pageIndex ?? 0, Math.max(0, nextPages.length - 1))));
         setEpubPagePosition(restoredPosition);
+        if (manifestResult.status === "rejected") {
+          setStatus(`EPUB metadata fallback: ${manifestResult.reason instanceof Error ? manifestResult.reason.message : "manifest unavailable"}`);
+        }
         setReaderLoadState("ready");
       } else {
         const progress = await api.readProgress(book.id);
@@ -936,6 +960,9 @@ export function App() {
       }
       setSelectedBook(book);
       setView("reader");
+    } catch (error) {
+      setReaderLoadState("error");
+      setStatus(error instanceof Error ? error.message : `Failed to open ${book.title}`);
     } finally {
       setActiveTask(null);
     }
@@ -1059,7 +1086,7 @@ export function App() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [view, selectedBook, pageIndex, pages.length, pdfPageCount, readerPageMode, epubPagePosition, epubPageCount]);
+  }, [view, selectedBook, pageIndex, pages.length, pdfPageCount, readerPageMode, readerFullscreen, epubPagePosition, epubPageCount]);
 
   useEffect(() => {
     if (view !== "reader" || !selectedBook) return;
@@ -1084,7 +1111,7 @@ export function App() {
   }, [view, selectedBook, pageIndex, pages.length, pdfPageCount, readerPageMode, epubPagePosition, epubPageCount]);
 
   function preloadPage(bookID: number, index: number) {
-    const src = `/api/books/${bookID}/pages/${index}`;
+    const src = authenticatedResourcePath(`/api/books/${bookID}/pages/${index}`);
     if (imageCache.current.has(src)) {
       return Promise.resolve();
     }
@@ -1209,10 +1236,22 @@ export function App() {
     }
   }
 
-  function jumpToEpubChapter(index: number) {
-    if (!selectedBook) return;
+  function jumpToEpubChapter(item: EpubTocItem) {
+    if (!selectedBook || !epubManifest) return;
+    jumpToEpubHref(item.href, item.label, item.index);
+  }
+
+  function jumpToEpubHref(href: string, label?: string, fallbackIndex?: number) {
+    if (!epubManifest) return;
+    const index = resolveEpubHrefIndex(epubManifest, href, fallbackIndex);
+    epubRestorePosition.current = null;
     setEpubTocOpen(false);
-    setReaderPage(selectedBook, index);
+    setEpubPagePosition(0);
+    setEpubPageCount(1);
+    setDisplayedPageIndex(index);
+    setReaderLoadState("loading");
+    setPageIndex(index);
+    setStatus(`Opening ${label || href}`);
   }
 
   async function returnToLibrary() {
@@ -1223,6 +1262,7 @@ export function App() {
     } catch (error) {
       setStatus(error instanceof Error ? `Fullscreen unavailable: ${error.message}` : "Fullscreen unavailable");
     } finally {
+      setReaderFullscreen(false);
       setView("library");
     }
   }
@@ -1232,11 +1272,22 @@ export function App() {
     try {
       if (document.fullscreenElement === readerRef.current) {
         await document.exitFullscreen();
+        setReaderFullscreen(false);
         return;
       }
-      await readerRef.current.requestFullscreen();
+      if (readerFullscreen) {
+        setReaderFullscreen(false);
+        return;
+      }
+      if (readerRef.current.requestFullscreen) {
+        await readerRef.current.requestFullscreen();
+        setReaderFullscreen(true);
+      } else {
+        setReaderFullscreen(true);
+      }
     } catch (error) {
-      setStatus(error instanceof Error ? `Fullscreen unavailable: ${error.message}` : "Fullscreen unavailable");
+      setReaderFullscreen((value) => !value);
+      setStatus(error instanceof Error ? `Using in-app fullscreen: ${error.message}` : "Using in-app fullscreen");
     }
   }
 
@@ -1302,9 +1353,13 @@ export function App() {
     : null;
   const activeScanElapsed = activeScan ? formatElapsed(activeScan, nowTick) : null;
   const selectedJobLatest = selectedJob ? jobs.find((job) => job.id === selectedJob.id) ?? selectedJob : null;
+  const useWebtoonReader = selectedBook ? readerPageMode === "webtoon" && selectedBook.format !== "epub" && selectedBook.format !== "pdf" : false;
+  const readerClassName = selectedBook
+    ? `reader ${selectedBook.format}Reader${useWebtoonReader ? " webtoonMode" : ""}${readerFullscreen ? " immersiveMode" : ""}`
+    : "reader";
 
   return (
-    <main className="app">
+    <main className={view === "reader" ? "app readerMode" : "app"}>
       <aside className="sidebar">
         <div className="brand">FolioSpace Library</div>
         <button className={view === "library" ? "active" : ""} onClick={returnToLibrary}>
@@ -1666,7 +1721,7 @@ export function App() {
               </div>
             </section>
 
-            <section className="coverWall panel collectionContent">
+            <section className="coverWall panel collectionContent" ref={collectionContentRef}>
               <div className="coverWallHeader">
                 <div>
                   <h1>{selectedSeries ? selectedSeries.title : t.volumeWall}</h1>
@@ -1854,7 +1909,7 @@ export function App() {
         )}
 
         {view === "reader" && (
-          <section className="reader" ref={readerRef}>
+          <section className={readerClassName} ref={readerRef}>
             {selectedBook ? (
               <>
                 <div className="readerHeader">
@@ -1874,8 +1929,8 @@ export function App() {
                     <button onClick={returnToLibrary}>{t.backToShelf}</button>
                     {selectedBook.format === "epub" ? (
                       <>
-                        <button onClick={() => setEpubTocOpen((value) => !value)}>{t.contents}</button>
-                        <div className="segmentedControl" role="group" aria-label="EPUB page mode">
+                        <button className="epubContentsButton" onClick={() => setEpubTocOpen((value) => !value)}>{t.contents}</button>
+                        <div className="segmentedControl epubPageModeControl" role="group" aria-label="EPUB page mode">
                           <button
                             className={epubPageMode === "single" ? "selected" : ""}
                             onClick={() => {
@@ -1938,9 +1993,14 @@ export function App() {
                         )}
                       </div>
                     )}
-                    <button onClick={toggleReaderFullscreen}>{readerFullscreen ? t.exitFullscreen : t.fullscreen}</button>
+                    <button className="readerFullscreenButton" onClick={toggleReaderFullscreen}>{readerFullscreen ? t.exitFullscreen : t.fullscreen}</button>
                   </div>
                 </div>
+                {readerFullscreen && (
+                  <button className="readerFullscreenExit" onClick={toggleReaderFullscreen}>
+                    {t.exitFullscreen}
+                  </button>
+                )}
                 <div className="readerStateBar">
                   <label>
                     <span>{t.privateStatus}</span>
@@ -2038,7 +2098,7 @@ export function App() {
                             <button
                               className={item.index === pageIndex ? "active" : ""}
                               key={`${item.index}-${item.href}`}
-                              onClick={() => jumpToEpubChapter(item.index)}
+                              onClick={() => jumpToEpubChapter(item)}
                             >
                               {item.label}
                             </button>
@@ -2053,6 +2113,7 @@ export function App() {
                         fontSize={epubFontSize}
                         theme={epubTheme}
                         pagePosition={epubPagePosition}
+                        onNavigate={jumpToEpubHref}
                         onMetrics={(count, position) => {
                           const restoredPosition = epubRestorePosition.current;
                           if (restoredPosition !== null) {
@@ -2061,10 +2122,12 @@ export function App() {
                             }
                             setEpubPageCount(Math.max(count, restoredPosition + 1));
                             setEpubPagePosition(Math.max(0, restoredPosition));
+                            setReaderLoadState("ready");
                             return;
                           }
                           setEpubPageCount(count);
                           setEpubPagePosition(position);
+                          setReaderLoadState("ready");
                         }}
                       />
                     </>
@@ -2075,15 +2138,15 @@ export function App() {
                       pageMode={readerPageMode === "webtoon" ? "single" : readerPageMode}
                       onPageCount={(count) => setPdfPageCount(count)}
                     />
-                  ) : readerPageMode === "webtoon" ? (
+                  ) : useWebtoonReader ? (
                     <div ref={webtoonRef} className="webtoonReader" onScroll={updateWebtoonPosition} aria-live="polite">
                       {pages.map((page) => (
                         <div className="webtoonPage" data-page-index={page.index} key={`${selectedBook.id}-${page.index}`}>
                           <img
-                            src={`/api/books/${selectedBook.id}/pages/${page.index}`}
+                            src={authenticatedResourcePath(`/api/books/${selectedBook.id}/pages/${page.index}`)}
                             alt={page.name}
                             draggable={false}
-                            loading="lazy"
+                            loading={Math.abs(page.index - pageIndex) <= 3 ? "eager" : "lazy"}
                             onLoad={updateWebtoonPosition}
                           />
                         </div>
@@ -2094,7 +2157,7 @@ export function App() {
                       {visiblePageIndexes(displayedPageIndex, pages.length, readerPageMode).map((visibleIndex) => (
                         <img
                           key={`${selectedBook.id}-${visibleIndex}`}
-                          src={`/api/books/${selectedBook.id}/pages/${visibleIndex}`}
+                          src={authenticatedResourcePath(`/api/books/${selectedBook.id}/pages/${visibleIndex}`)}
                           alt={pages[visibleIndex]?.name ?? ""}
                           draggable={false}
                         />
@@ -2102,23 +2165,25 @@ export function App() {
                     </div>
                   )}
                 </div>
-                <div className="readerControls">
-                  <button onClick={goReaderPrevious}>{t.previous}</button>
-                  {selectedBook.format === "epub" && (
-                    <span className="epubProgress">
-                      {t.epubChapterPageLabel(Math.min(epubPagePosition + 1, epubPageCount), epubPageCount)}
-                    </span>
-                  )}
-                  <input
-                    type="range"
-                    aria-label={selectedBook.format === "epub" ? t.epubChapterSlider : t.pageSlider}
-                    min="0"
-                    max={Math.max(0, readerTotalPages(selectedBook, pages.length, pdfPageCount) - 1)}
-                    value={pageIndex}
-                    onChange={(event) => setReaderPage(selectedBook, Number(event.target.value))}
-                  />
-                  <button onClick={goReaderNext}>{t.next}</button>
-                </div>
+                {!useWebtoonReader && (
+                  <div className="readerControls">
+                    <button onClick={goReaderPrevious}>{t.previous}</button>
+                    {selectedBook.format === "epub" && (
+                      <span className="epubProgress">
+                        {t.epubChapterPageLabel(Math.min(epubPagePosition + 1, epubPageCount), epubPageCount)}
+                      </span>
+                    )}
+                    <input
+                      type="range"
+                      aria-label={selectedBook.format === "epub" ? t.epubChapterSlider : t.pageSlider}
+                      min="0"
+                      max={Math.max(0, readerTotalPages(selectedBook, pages.length, pdfPageCount) - 1)}
+                      value={pageIndex}
+                      onChange={(event) => setReaderPage(selectedBook, Number(event.target.value))}
+                    />
+                    <button onClick={goReaderNext}>{t.next}</button>
+                  </div>
+                )}
               </>
             ) : (
               <div className="empty">{t.selectBook}</div>
@@ -2371,7 +2436,7 @@ function CollectionCover({ seriesID }: { seriesID: number }) {
     <span ref={rootRef} className="collectionCoverSlot" aria-hidden="true">
       {coverBookID && !failed && (
         <img
-          src={`/api/books/${coverBookID}/cover`}
+          src={authenticatedResourcePath(`/api/books/${coverBookID}/cover`)}
           alt=""
           loading="lazy"
           onError={() => setFailed(true)}
@@ -2433,12 +2498,12 @@ function BookCover({ book }: { book: Book }) {
       <iframe
         className="pdfCoverPreview"
         title={`${book.title} cover`}
-        src={`/api/books/${book.id}/pages/0#toolbar=0&navpanes=0&scrollbar=0&page=1&view=FitH`}
+        src={authenticatedResourcePath(`/api/books/${book.id}/pages/0#toolbar=0&navpanes=0&scrollbar=0&page=1&view=FitH`)}
         loading="lazy"
       />
     );
   }
-  return <img src={`/api/books/${book.id}/cover`} alt="" loading="lazy" />;
+  return <img src={authenticatedResourcePath(`/api/books/${book.id}/cover`)} alt="" loading="lazy" />;
 }
 
 function PdfReader({
@@ -2454,6 +2519,7 @@ function PdfReader({
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRefs = useRef<(HTMLCanvasElement | null)[]>([]);
+  const renderTasksRef = useRef<Array<{ cancel: () => void } | null>>([]);
   const [documentProxy, setDocumentProxy] = useState<PDFDocumentProxy | null>(null);
   const [renderError, setRenderError] = useState("");
   const [sizeTick, setSizeTick] = useState(0);
@@ -2472,7 +2538,7 @@ function PdfReader({
     setRenderError("");
     const token = getAuthToken();
     const task = getDocument({
-      url: `/api/books/${book.id}/pages/0`,
+      url: authenticatedResourcePath(`/api/books/${book.id}/pages/0`),
       httpHeaders: token ? { Authorization: `Bearer ${token}` } : undefined,
       withCredentials: true,
     });
@@ -2501,6 +2567,8 @@ function PdfReader({
     let cancelled = false;
     const pdf = documentProxy;
     const container = containerRef.current;
+    renderTasksRef.current.forEach((task) => task?.cancel());
+    renderTasksRef.current = [];
     const rect = container.getBoundingClientRect();
     const gap = pageMode === "double" ? 18 : 0;
     const pagesToRender = pdfVisiblePages(pageIndex, pdf.numPages, pageMode);
@@ -2509,34 +2577,42 @@ function PdfReader({
 
     async function render() {
       try {
-        await Promise.all(
-          pagesToRender.map(async (pageNumber, index) => {
-            const canvas = canvasRefs.current[index];
-            if (!canvas) return;
-            const page = await pdf.getPage(pageNumber);
-            if (cancelled) return;
-            const baseViewport = page.getViewport({ scale: 1 });
-            const dpr = Math.max(1, window.devicePixelRatio || 1);
-            const cssScale = Math.min(slotWidth / baseViewport.width, slotHeight / baseViewport.height);
-            const viewport = page.getViewport({ scale: cssScale * dpr });
-            canvas.width = Math.floor(viewport.width);
-            canvas.height = Math.floor(viewport.height);
-            canvas.style.width = `${Math.floor(viewport.width / dpr)}px`;
-            canvas.style.height = `${Math.floor(viewport.height / dpr)}px`;
-            const context = canvas.getContext("2d");
-            if (!context) return;
-            await page.render({ canvasContext: context, viewport }).promise;
-          }),
-        );
+        for (const [index, pageNumber] of pagesToRender.entries()) {
+          const canvas = canvasRefs.current[index];
+          if (!canvas) continue;
+          const page = await pdf.getPage(pageNumber);
+          if (cancelled) return;
+          const baseViewport = page.getViewport({ scale: 1 });
+          const dpr = Math.max(1, window.devicePixelRatio || 1);
+          const cssScale = Math.min(slotWidth / baseViewport.width, slotHeight / baseViewport.height);
+          const viewport = page.getViewport({ scale: cssScale * dpr });
+          const context = canvas.getContext("2d");
+          if (!context) continue;
+          renderTasksRef.current[index]?.cancel();
+          canvas.width = Math.floor(viewport.width);
+          canvas.height = Math.floor(viewport.height);
+          canvas.style.width = `${Math.floor(viewport.width / dpr)}px`;
+          canvas.style.height = `${Math.floor(viewport.height / dpr)}px`;
+          const task = page.render({ canvasContext: context, viewport });
+          renderTasksRef.current[index] = task;
+          await task.promise;
+          if (renderTasksRef.current[index] === task) {
+            renderTasksRef.current[index] = null;
+          }
+        }
         if (!cancelled) setRenderError("");
       } catch (error) {
-        if (!cancelled) setRenderError(error instanceof Error ? error.message : "PDF page failed to render");
+        if (!cancelled && !isPDFRenderCancelled(error)) {
+          setRenderError(error instanceof Error ? error.message : "PDF page failed to render");
+        }
       }
     }
 
     void render();
     return () => {
       cancelled = true;
+      renderTasksRef.current.forEach((task) => task?.cancel());
+      renderTasksRef.current = [];
     };
   }, [documentProxy, pageIndex, pageMode, sizeTick]);
 
@@ -2562,6 +2638,10 @@ function pdfVisiblePages(index: number, total: number, mode: ReaderPageMode) {
   const first = Math.max(1, Math.min(total, index + 1));
   if (mode === "single") return [first];
   return [first, first + 1].filter((page) => page >= 1 && page <= total);
+}
+
+function isPDFRenderCancelled(error: unknown) {
+  return error instanceof Error && error.name === "RenderingCancelledException";
 }
 
 function CatalogPage({
@@ -2631,7 +2711,7 @@ function GameTile({ game, meta, className = "book" }: { game: GameAsset; meta: s
   return (
     <button className={`${className} gameCard`} title={game.title}>
       <span className={`shelfCover gameCover${hasCover ? " hasCover" : ""}`}>
-        {hasCover ? <img src={game.coverUrl} alt="" loading="lazy" onError={() => setCoverFailed(true)} /> : null}
+        {hasCover ? <img src={authenticatedResourcePath(game.coverUrl)} alt="" loading="lazy" onError={() => setCoverFailed(true)} /> : null}
         <span className="gameCoverPlatform">{gamePlatformLabel(game)}</span>
         <span className="gameCoverTitle">Now Printing</span>
         <span className="gameCoverFormat">{game.format.toUpperCase()}</span>
@@ -2683,7 +2763,7 @@ function VideoTile({ video, meta, onOpen, className = "book" }: { video: VideoAs
   return (
     <button className={`${className} videoCard`} title={video.title} onClick={() => onOpen(video)}>
       <span className="shelfCover videoCover">
-        {!thumbnailFailed && <img src={video.thumbnailUrl} alt="" loading="lazy" onError={() => setThumbnailFailed(true)} />}
+        {!thumbnailFailed && <img src={authenticatedResourcePath(video.thumbnailUrl)} alt="" loading="lazy" onError={() => setThumbnailFailed(true)} />}
         <span className="videoCoverFallback">
           <em>Now Showing</em>
           <strong>{video.title}</strong>
@@ -2804,6 +2884,7 @@ function EpubFrame({
   fontSize,
   theme,
   pagePosition,
+  onNavigate,
   onMetrics,
 }: {
   book: Book;
@@ -2813,6 +2894,7 @@ function EpubFrame({
   fontSize: number;
   theme: EpubTheme;
   pagePosition: number;
+  onNavigate: (href: string, label?: string) => void;
   onMetrics: (pageCount: number, pagePosition: number) => void;
 }) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
@@ -2832,9 +2914,10 @@ function EpubFrame({
 
     const viewportWidth = Math.max(320, frame.clientWidth);
     const viewportHeight = Math.max(320, frame.clientHeight);
-    const isDoublePage = pageMode === "double";
-    const horizontalPadding = isDoublePage ? 34 : 52;
-    const verticalPadding = isDoublePage ? 34 : 42;
+    const isCompactViewport = viewportWidth <= 760;
+    const isDoublePage = pageMode === "double" && !isCompactViewport;
+    const horizontalPadding = isCompactViewport ? 24 : isDoublePage ? 34 : 52;
+    const verticalPadding = isCompactViewport ? 24 : isDoublePage ? 34 : 42;
     const gap = isDoublePage
       ? Math.min(34, Math.max(22, Math.round(viewportWidth * 0.022)))
       : horizontalPadding * 2;
@@ -2924,6 +3007,18 @@ function EpubFrame({
       doc.head.appendChild(style);
     }
 
+    for (const anchor of Array.from(doc.querySelectorAll<HTMLAnchorElement>("a[href]"))) {
+      if (anchor.dataset.foliospaceLinkBound === "true") continue;
+      anchor.dataset.foliospaceLinkBound = "true";
+      anchor.addEventListener("click", (event) => {
+        const href = anchor.getAttribute("href");
+        if (!href) return;
+        event.preventDefault();
+        event.stopPropagation();
+        onNavigate(normalizeEPUBLink(spineItem.href, href), anchor.textContent?.trim() || href);
+      });
+    }
+
     window.requestAnimationFrame(() => {
       const pageCount = Math.max(1, Math.ceil(Math.max(doc.body.scrollWidth, doc.documentElement.scrollWidth) / pageWidth));
       const nextPosition = Math.max(0, Math.min(pagePosition, pageCount - 1));
@@ -2948,7 +3043,7 @@ function EpubFrame({
       className="epubFrame"
       title={`${book.title} chapter ${pageIndex + 1}`}
       sandbox="allow-same-origin"
-      src={`/api/books/${book.id}/epub/resources/${encodeResourcePath(spineItem.href)}`}
+      src={authenticatedResourcePath(`/api/books/${book.id}/epub/resources/${encodeResourcePath(spineItem.href)}`)}
       onLoad={applyEpubLayout}
     />
   );
@@ -2988,6 +3083,67 @@ function readEpubLocator(locator: string) {
   return Math.max(0, value);
 }
 
+function fallbackEpubManifest(book: Book, pages: Page[]): EpubManifest {
+  return {
+    title: book.title,
+    creator: book.creator ?? "",
+    description: book.description ?? "",
+    coverHref: "",
+    spine: pages.map((page) => ({
+      index: page.index,
+      id: `page-${page.index}`,
+      href: page.name,
+      mediaType: "application/xhtml+xml",
+    })),
+    toc: pages.map((page) => ({
+      label: page.name || `Chapter ${page.index + 1}`,
+      href: page.name,
+      index: page.index,
+    })),
+  };
+}
+
+function resolveEpubHrefIndex(manifest: EpubManifest, value: string, fallbackIndex = 0) {
+  const href = stripEPUBFragment(value);
+  const exact = manifest.spine.find((spineItem) => stripEPUBFragment(spineItem.href) === href);
+  if (exact) return exact.index;
+  const clamped = Math.max(0, Math.min(fallbackIndex, Math.max(0, manifest.spine.length - 1)));
+  return Number.isFinite(clamped) ? clamped : 0;
+}
+
+function stripEPUBFragment(value: string) {
+  return value.split("#", 1)[0];
+}
+
+function normalizeEPUBLink(currentHref: string, href: string) {
+  const marker = "/epub/resources/";
+  const markerIndex = href.indexOf(marker);
+  if (markerIndex >= 0) {
+    const resource = href.slice(markerIndex + marker.length).split(/[?#]/, 1)[0];
+    return decodeEPUBPath(resource);
+  }
+  try {
+    const url = new URL(href, `https://foliospace.local/${currentHref}`);
+    return decodeEPUBPath(url.pathname.replace(/^\/+/, "")) + url.hash;
+  } catch {
+    if (href.startsWith("#")) return `${stripEPUBFragment(currentHref)}${href}`;
+    return href;
+  }
+}
+
+function decodeEPUBPath(value: string) {
+  return value
+    .split("/")
+    .map((part) => {
+      try {
+        return decodeURIComponent(part);
+      } catch {
+        return part;
+      }
+    })
+    .join("/");
+}
+
 function readWebtoonLocator(locator: string) {
   if (!locator.startsWith("webtoon:")) return null;
   const value = Number.parseFloat(locator.slice("webtoon:".length));
@@ -3000,6 +3156,16 @@ function encodeResourcePath(value: string) {
     .split("/")
     .map((part) => encodeURIComponent(part))
     .join("/");
+}
+
+function authenticatedResourcePath(path: string | undefined) {
+  if (!path || !path.startsWith("/api/")) return path || "";
+  const token = getAuthToken();
+  if (!token) return path;
+  const [base, hash = ""] = path.split("#", 2);
+  const separator = base.includes("?") ? "&" : "?";
+  const signed = `${base}${separator}access_token=${encodeURIComponent(token)}`;
+  return hash ? `${signed}#${hash}` : signed;
 }
 
 function compareBooks(left: Book, right: Book, sort: BookSort) {
@@ -4215,9 +4381,9 @@ function videoTranscodeLabel(status: VideoTranscodeStatus | null, t: Translation
 
 function videoPlaybackSource(video: VideoAsset) {
   if (video.playbackMode === "hls") {
-    return video.hlsUrl || `/api/client/videos/${video.id}/hls/index.m3u8`;
+    return authenticatedResourcePath(video.hlsUrl || `/api/client/videos/${video.id}/hls/index.m3u8`);
   }
-  return video.fileUrl || `/api/client/videos/${video.id}/file`;
+  return authenticatedResourcePath(video.fileUrl || `/api/client/videos/${video.id}/file`);
 }
 
 function formatDuration(seconds: number) {

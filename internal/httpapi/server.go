@@ -667,11 +667,14 @@ func (s *Server) authorizeAPI(w http.ResponseWriter, r *http.Request) bool {
 }
 
 func (s *Server) requestAuthorized(r *http.Request) bool {
-	return s.validToken(bearerToken(r.Header.Get("Authorization"))) || s.validCookie(r)
+	return s.validToken(bearerToken(r.Header.Get("Authorization"))) || s.validToken(r.URL.Query().Get("access_token")) || s.validCookie(r)
 }
 
 func (s *Server) requestToken(r *http.Request) string {
 	if token := bearerToken(r.Header.Get("Authorization")); s.validToken(token) {
+		return token
+	}
+	if token := r.URL.Query().Get("access_token"); s.validToken(token) {
 		return token
 	}
 	cookie, err := r.Cookie(authCookieName)
