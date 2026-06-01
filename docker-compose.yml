@@ -1,0 +1,18 @@
+services:
+  foliospace-library:
+    build: .
+    image: foliospace-library:0.881
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data/config:/config
+      - ./data/library:/library:ro
+      - ./data/books:/books:ro
+      - ./data/games:/games:ro
+    environment:
+      FOLIOSPACE_CONFIG_DIR: /config
+      FOLIOSPACE_LIBRARY_DIR: /library
+      FOLIOSPACE_DIRECTORY_ROOTS: /library,/books,/games
+      FOLIOSPACE_ADDR: :8080
+      FOLIOSPACE_API_TOKEN: ""
+      FOLIOSPACE_SCAN_WORKERS: "2"
