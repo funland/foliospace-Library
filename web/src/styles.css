@@ -911,10 +911,12 @@ h1 {
 }
 
 .directoryPicker {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 12px;
   width: min(720px, calc(100vw - 32px));
   max-height: min(760px, calc(100vh - 32px));
+  overflow: hidden;
   border: 1px solid #cfd9dd;
   border-radius: 8px;
   background: #ffffff;
@@ -954,8 +956,11 @@ h1 {
 
 .directoryList {
   display: grid;
+  align-content: start;
   gap: 6px;
-  min-height: 120px;
+  flex: 0 1 auto;
+  max-height: min(440px, 52vh);
+  min-height: 0;
   overflow: auto;
   border-top: 1px solid #eef2f3;
   padding-top: 10px;
