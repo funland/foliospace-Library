@@ -154,6 +154,22 @@ docker run -p 8080:8080 \
 
 Open `http://localhost:8080`. On a fresh `/config`, the setup page asks for an access key and lets you choose a container path such as `/library`, `/books`, or `/games`. If a directory is missing from the setup page, add a Docker volume mapping first; FolioSpace Library can only browse paths visible inside the container.
 
+### Publishing
+
+Docker Hub releases are built by GitHub Actions from Git tags. Configure these repository secrets before publishing:
+
+- `DOCKERHUB_USERNAME`
+- `DOCKERHUB_TOKEN`
+
+Then create and push a version tag:
+
+```bash
+git tag v0.881
+git push origin v0.881
+```
+
+The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:0.881` and `funland/foliospace-library:latest`.
+
 ## Current MVP Support
 
 - P0 reading formats: `.cbz`, `.zip`, `.epub`.
