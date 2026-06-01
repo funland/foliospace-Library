@@ -45,6 +45,8 @@ Returns available profiles.
   {
     "id": 1,
     "name": "Default",
+    "avatar": "reader",
+    "color": "teal",
     "isDefault": true,
     "createdAt": "2026-05-31T12:00:00Z",
     "updatedAt": "2026-05-31T12:00:00Z"
@@ -58,19 +60,25 @@ Creates a profile.
 
 ```json
 {
-  "name": "Guest"
+  "name": "Guest",
+  "avatar": "game",
+  "color": "violet"
 }
 ```
 
 ### `PUT /api/profiles/{profileId}`
 
-Renames a profile.
+Updates a profile.
 
 ```json
 {
-  "name": "Kids"
+  "name": "Kids",
+  "avatar": "comic",
+  "color": "amber"
 }
 ```
+
+`avatar` and `color` are UI metadata for the web profile switcher and native clients. Current built-in avatar ids are `reader`, `comic`, `game`, `movie`, `star`, `archive`, `coffee`, and `rocket`. Current built-in color ids are `teal`, `amber`, `violet`, `rose`, `blue`, `green`, `slate`, and `copper`.
 
 ### `DELETE /api/profiles/{profileId}`
 
@@ -232,6 +240,7 @@ Response:
     "privateState": true,
     "search": true,
     "preferences": true,
+    "profiles": true,
     "bearerTokenAuth": true,
     "setupWizard": true,
     "scannerJobEvents": true,

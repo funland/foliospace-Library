@@ -297,6 +297,7 @@ func (s *Server) handleClientInfo(w http.ResponseWriter, r *http.Request) {
 			PrivateState:      true,
 			Search:            true,
 			Preferences:       true,
+			Profiles:          true,
 			BearerTokenAuth:   s.authEnabled(),
 			SetupWizard:       true,
 			ScannerJobEvents:  true,
@@ -1386,6 +1387,7 @@ type clientCapabilities struct {
 	PrivateState      bool `json:"privateState"`
 	Search            bool `json:"search"`
 	Preferences       bool `json:"preferences"`
+	Profiles          bool `json:"profiles"`
 	BearerTokenAuth   bool `json:"bearerTokenAuth"`
 	SetupWizard       bool `json:"setupWizard"`
 	ScannerJobEvents  bool `json:"scannerJobEvents"`

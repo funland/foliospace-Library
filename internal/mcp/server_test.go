@@ -31,6 +31,8 @@ func TestServerListsTools(t *testing.T) {
 		!strings.Contains(body, "foliospace.open_video_manifest") ||
 		!strings.Contains(body, "foliospace.get_video_transcode_status") ||
 		!strings.Contains(body, "foliospace.get_video_transcode_queue") ||
+		!strings.Contains(body, "foliospace.list_profiles") ||
+		!strings.Contains(body, "foliospace.update_profile") ||
 		!strings.Contains(body, "foliospace.list_favorites") ||
 		!strings.Contains(body, "foliospace.get_scan_settings") ||
 		!strings.Contains(body, "foliospace.save_scan_settings") ||
@@ -183,6 +185,41 @@ func TestServerCallsScanSettingsTools(t *testing.T) {
 	}
 }
 
+func TestServerCallsProfileTools(t *testing.T) {
+	var calls []string
+	var bodies []string
+	server := New("http://foliospace.test", "")
+	server.httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls = append(calls, r.Method+" "+r.URL.RequestURI())
+		if r.Body != nil {
+			data, _ := io.ReadAll(r.Body)
+			bodies = append(bodies, string(data))
+		}
+		return jsonResponse(`{"id":2,"name":"Guest","avatar":"game","color":"violet"}`), nil
+	})}
+
+	for _, call := range []Request{
+		toolCall(t, "foliospace.list_profiles", nil),
+		toolCall(t, "foliospace.create_profile", map[string]any{"name": "Guest", "avatar": "game", "color": "violet"}),
+		toolCall(t, "foliospace.update_profile", map[string]any{"profileId": 2, "name": "Guest 2", "avatar": "reader", "color": "teal"}),
+		toolCall(t, "foliospace.delete_profile", map[string]any{"profileId": 2}),
+	} {
+		response := server.Handle(context.Background(), call)
+		if response.Error != nil {
+			t.Fatalf("profile tool error = %#v", response.Error)
+		}
+	}
+
+	wantCalls := "GET /api/profiles\nPOST /api/profiles\nPUT /api/profiles/2\nDELETE /api/profiles/2"
+	if got := strings.Join(calls, "\n"); got != wantCalls {
+		t.Fatalf("calls = %q, want %q", got, wantCalls)
+	}
+	if !strings.Contains(strings.Join(bodies, "\n"), `"avatar":"game"`) ||
+		!strings.Contains(strings.Join(bodies, "\n"), `"color":"teal"`) {
+		t.Fatalf("profile bodies = %#v, want avatar/color payloads", bodies)
+	}
+}
+
 func TestServerCallsPrivateShelfTools(t *testing.T) {
 	var paths []string
 	server := New("http://foliospace.test", "")
@@ -191,16 +228,16 @@ func TestServerCallsPrivateShelfTools(t *testing.T) {
 		return jsonResponse(`[]`), nil
 	})}
 
-	favoriteResponse := server.Handle(context.Background(), toolCall(t, "foliospace.list_favorites", map[string]any{"limit": 5}))
+	favoriteResponse := server.Handle(context.Background(), toolCall(t, "foliospace.list_favorites", map[string]any{"limit": 5, "profileId": 2}))
 	if favoriteResponse.Error != nil {
 		t.Fatalf("favorites tool error = %#v", favoriteResponse.Error)
 	}
-	statusResponse := server.Handle(context.Background(), toolCall(t, "foliospace.list_private_status", map[string]any{"status": "want", "limit": 7}))
+	statusResponse := server.Handle(context.Background(), toolCall(t, "foliospace.list_private_status", map[string]any{"status": "want", "limit": 7, "profileId": 2}))
 	if statusResponse.Error != nil {
 		t.Fatalf("private-status tool error = %#v", statusResponse.Error)
 	}
 
-	if strings.Join(paths, "\n") != "/api/client/books/favorites?limit=5\n/api/client/books/private-status/want?limit=7" {
+	if strings.Join(paths, "\n") != "/api/client/books/favorites?limit=5&profileId=2\n/api/client/books/private-status/want?limit=7&profileId=2" {
 		t.Fatalf("paths = %#v, want private shelf routes", paths)
 	}
 }
@@ -219,12 +256,13 @@ func TestServerCallsCollectionVolumesTool(t *testing.T) {
 		"offset":       40,
 		"q":            "space",
 		"sort":         "title",
+		"profileId":    3,
 	}))
 
 	if response.Error != nil {
 		t.Fatalf("collection volumes tool error = %#v", response.Error)
 	}
-	if gotPath != "/api/collections/42/volumes?limit=20&offset=40&q=space&sort=title" {
+	if gotPath != "/api/collections/42/volumes?limit=20&offset=40&q=space&sort=title&profileId=3" {
 		t.Fatalf("path = %s, want collection volumes query", gotPath)
 	}
 }

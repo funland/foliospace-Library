@@ -111,29 +111,33 @@ func (s *Server) Handle(ctx context.Context, req Request) Response {
 func tools() []Tool {
 	return []Tool{
 		{Name: "foliospace.client_info", Description: "Return FolioSpace service name, version, supported formats, and capability flags.", InputSchema: objectSchema(nil, nil)},
-		{Name: "foliospace.home", Description: "Return the agent-friendly home payload: continue reading, recent books, and collections.", InputSchema: objectSchema(map[string]any{"limit": integerSchema("Maximum number of items per section.")}, nil)},
-		{Name: "foliospace.search_books", Description: "Search indexed books and comics by title, author, or collection context.", InputSchema: objectSchema(map[string]any{"q": stringSchema("Search query."), "limit": integerSchema("Maximum number of results.")}, []string{"q"})},
-		{Name: "foliospace.open_book_manifest", Description: "Open a book/comic manifest with client-safe page, EPUB, progress, and state URLs.", InputSchema: objectSchema(map[string]any{"bookId": integerSchema("Book id.")}, []string{"bookId"})},
+		{Name: "foliospace.home", Description: "Return the agent-friendly home payload: continue reading, recent books, and collections.", InputSchema: objectSchema(map[string]any{"limit": integerSchema("Maximum number of items per section."), "profileId": integerSchema("Optional profile id for scoped shelves and preferences.")}, nil)},
+		{Name: "foliospace.search_books", Description: "Search indexed books and comics by title, author, or collection context.", InputSchema: objectSchema(map[string]any{"q": stringSchema("Search query."), "limit": integerSchema("Maximum number of results."), "profileId": integerSchema("Optional profile id for scoped reader state in results.")}, []string{"q"})},
+		{Name: "foliospace.open_book_manifest", Description: "Open a book/comic manifest with client-safe page, EPUB, progress, and state URLs.", InputSchema: objectSchema(map[string]any{"bookId": integerSchema("Book id."), "profileId": integerSchema("Optional profile id for scoped progress and private state.")}, []string{"bookId"})},
 		{Name: "foliospace.list_games", Description: "List paginated client-safe game ROM assets.", InputSchema: objectSchema(map[string]any{"limit": integerSchema("Maximum number of items."), "offset": integerSchema("Zero-based item offset."), "q": stringSchema("Optional search query."), "platform": stringSchema("Optional exact platform filter."), "format": stringSchema("Optional exact format filter."), "sort": stringSchema("recent, title, or platform.")}, nil)},
 		{Name: "foliospace.open_game_manifest", Description: "Open a game ROM manifest with metadata, cover URL, and opaque file URL.", InputSchema: objectSchema(map[string]any{"gameId": integerSchema("Game asset id.")}, []string{"gameId"})},
 		{Name: "foliospace.list_videos", Description: "List paginated client-safe video assets.", InputSchema: objectSchema(map[string]any{"limit": integerSchema("Maximum number of items."), "offset": integerSchema("Zero-based item offset."), "q": stringSchema("Optional search query."), "format": stringSchema("Optional exact format filter."), "sort": stringSchema("recent or title.")}, nil)},
 		{Name: "foliospace.open_video_manifest", Description: "Open a video manifest with metadata, thumbnail URL, and opaque range-stream file URL.", InputSchema: objectSchema(map[string]any{"videoId": integerSchema("Video asset id.")}, []string{"videoId"})},
 		{Name: "foliospace.get_video_transcode_status", Description: "Read HLS transcode state for a video asset, including queued, running, ready, or failed.", InputSchema: objectSchema(map[string]any{"videoId": integerSchema("Video asset id.")}, []string{"videoId"})},
 		{Name: "foliospace.get_video_transcode_queue", Description: "Read the active global video transcode task, if any.", InputSchema: objectSchema(nil, nil)},
-		{Name: "foliospace.get_preferences", Description: "Read client preferences such as interface language, reader settings, and feature defaults.", InputSchema: objectSchema(nil, nil)},
-		{Name: "foliospace.save_preferences", Description: "Save client preferences. Pass the same JSON shape as the HTTP Client API.", InputSchema: objectSchema(map[string]any{"interfaceLanguage": stringSchema("Interface language code, for example zh-Hans, zh-Hant, en, or ja.")}, nil)},
+		{Name: "foliospace.list_profiles", Description: "List in-app profiles with avatar and color metadata.", InputSchema: objectSchema(nil, nil)},
+		{Name: "foliospace.create_profile", Description: "Create an in-app profile. Optional avatar and color choose the role badge shown in the web UI.", InputSchema: objectSchema(map[string]any{"name": stringSchema("Profile display name."), "avatar": stringSchema("Optional avatar id, for example reader, comic, game, movie, star, archive, coffee, or rocket."), "color": stringSchema("Optional color id, for example teal, amber, violet, rose, blue, green, slate, or copper.")}, []string{"name"})},
+		{Name: "foliospace.update_profile", Description: "Update an in-app profile name, avatar, and color.", InputSchema: objectSchema(map[string]any{"profileId": integerSchema("Profile id."), "name": stringSchema("Profile display name."), "avatar": stringSchema("Optional avatar id."), "color": stringSchema("Optional color id.")}, []string{"profileId", "name"})},
+		{Name: "foliospace.delete_profile", Description: "Delete a non-default profile and its scoped reading state.", InputSchema: objectSchema(map[string]any{"profileId": integerSchema("Profile id.")}, []string{"profileId"})},
+		{Name: "foliospace.get_preferences", Description: "Read client preferences such as interface language, reader settings, and feature defaults.", InputSchema: objectSchema(map[string]any{"profileId": integerSchema("Optional profile id.")}, nil)},
+		{Name: "foliospace.save_preferences", Description: "Save client preferences. Pass the same JSON shape as the HTTP Client API.", InputSchema: objectSchema(map[string]any{"profileId": integerSchema("Optional profile id."), "interfaceLanguage": stringSchema("Interface language code, for example zh-Hans, zh-Hant, en, or ja.")}, nil)},
 		{Name: "foliospace.get_scan_settings", Description: "Read scan runtime settings such as worker count.", InputSchema: objectSchema(nil, nil)},
 		{Name: "foliospace.save_scan_settings", Description: "Save scan runtime settings. scanWorkers is normalized by the server.", InputSchema: objectSchema(map[string]any{"scanWorkers": integerSchema("Concurrent scan worker count, normalized by the server.")}, []string{"scanWorkers"})},
-		{Name: "foliospace.get_private_state", Description: "Read per-book private reader state such as bookmarks, notes, selected text, or local-only UI state.", InputSchema: objectSchema(map[string]any{"bookId": integerSchema("Book id.")}, []string{"bookId"})},
-		{Name: "foliospace.save_private_state", Description: "Save per-book private reader state. bookId selects the book; remaining fields are forwarded to the API.", InputSchema: objectSchema(map[string]any{"bookId": integerSchema("Book id.")}, []string{"bookId"})},
-		{Name: "foliospace.list_favorites", Description: "List favorite books as client-safe DTOs.", InputSchema: objectSchema(map[string]any{"limit": integerSchema("Maximum number of results.")}, nil)},
-		{Name: "foliospace.list_private_status", Description: "List books with a private status such as want, reading, finished, or dropped.", InputSchema: objectSchema(map[string]any{"status": stringSchema("Private status."), "limit": integerSchema("Maximum number of results.")}, []string{"status"})},
-		{Name: "foliospace.get_progress", Description: "Read saved reading progress for a book.", InputSchema: objectSchema(map[string]any{"bookId": integerSchema("Book id.")}, []string{"bookId"})},
-		{Name: "foliospace.save_progress", Description: "Save reading progress for a book. bookId selects the book; remaining fields are forwarded to the API.", InputSchema: objectSchema(map[string]any{"bookId": integerSchema("Book id.")}, []string{"bookId"})},
+		{Name: "foliospace.get_private_state", Description: "Read per-book private reader state such as bookmarks, notes, selected text, or local-only UI state.", InputSchema: objectSchema(map[string]any{"bookId": integerSchema("Book id."), "profileId": integerSchema("Optional profile id.")}, []string{"bookId"})},
+		{Name: "foliospace.save_private_state", Description: "Save per-book private reader state. bookId selects the book; remaining fields are forwarded to the API.", InputSchema: objectSchema(map[string]any{"bookId": integerSchema("Book id."), "profileId": integerSchema("Optional profile id.")}, []string{"bookId"})},
+		{Name: "foliospace.list_favorites", Description: "List favorite books as client-safe DTOs.", InputSchema: objectSchema(map[string]any{"limit": integerSchema("Maximum number of results."), "profileId": integerSchema("Optional profile id.")}, nil)},
+		{Name: "foliospace.list_private_status", Description: "List books with a private status such as want, reading, finished, or dropped.", InputSchema: objectSchema(map[string]any{"status": stringSchema("Private status."), "limit": integerSchema("Maximum number of results."), "profileId": integerSchema("Optional profile id.")}, []string{"status"})},
+		{Name: "foliospace.get_progress", Description: "Read saved reading progress for a book.", InputSchema: objectSchema(map[string]any{"bookId": integerSchema("Book id."), "profileId": integerSchema("Optional profile id.")}, []string{"bookId"})},
+		{Name: "foliospace.save_progress", Description: "Save reading progress for a book. bookId selects the book; remaining fields are forwarded to the API.", InputSchema: objectSchema(map[string]any{"bookId": integerSchema("Book id."), "profileId": integerSchema("Optional profile id.")}, []string{"bookId"})},
 		{Name: "foliospace.list_libraries", Description: "List configured library roots for diagnostics and scan selection. This admin tool can expose configured mount paths.", InputSchema: objectSchema(nil, nil)},
 		{Name: "foliospace.list_collections", Description: "List library collections.", InputSchema: objectSchema(nil, nil)},
-		{Name: "foliospace.list_collection_volumes", Description: "List books/comics in a collection with optional pagination and filtering.", InputSchema: objectSchema(map[string]any{"collectionId": integerSchema("Collection id."), "limit": integerSchema("Maximum number of items."), "offset": integerSchema("Zero-based item offset."), "q": stringSchema("Optional search query."), "sort": stringSchema("Server-supported sort key.")}, []string{"collectionId"})},
-		{Name: "foliospace.list_collection_assets", Description: "List mixed assets in a collection, including books, comics, games, documents, and media as available.", InputSchema: objectSchema(map[string]any{"collectionId": integerSchema("Collection id.")}, []string{"collectionId"})},
+		{Name: "foliospace.list_collection_volumes", Description: "List books/comics in a collection with optional pagination and filtering.", InputSchema: objectSchema(map[string]any{"collectionId": integerSchema("Collection id."), "limit": integerSchema("Maximum number of items."), "offset": integerSchema("Zero-based item offset."), "q": stringSchema("Optional search query."), "sort": stringSchema("Server-supported sort key."), "profileId": integerSchema("Optional profile id for scoped progress and private state.")}, []string{"collectionId"})},
+		{Name: "foliospace.list_collection_assets", Description: "List mixed assets in a collection, including books, comics, games, documents, and media as available.", InputSchema: objectSchema(map[string]any{"collectionId": integerSchema("Collection id."), "profileId": integerSchema("Optional profile id for scoped book state.")}, []string{"collectionId"})},
 		{Name: "foliospace.scan_library", Description: "Start a scan for a configured library.", InputSchema: objectSchema(map[string]any{"libraryId": integerSchema("Library id.")}, []string{"libraryId"})},
 		{Name: "foliospace.list_jobs", Description: "List scan/import jobs.", InputSchema: objectSchema(nil, nil)},
 		{Name: "foliospace.job_events", Description: "List events for a scan/import job.", InputSchema: objectSchema(map[string]any{"jobId": integerSchema("Job id.")}, []string{"jobId"})},
@@ -151,6 +155,7 @@ func resources() []Resource {
 		{URI: "foliospace://client/home", Name: "Home", Description: "Continue reading, recent books, and collections.", MimeType: "application/json"},
 		{URI: "foliospace://client/videos", Name: "Videos", Description: "Recent client-safe video catalog items.", MimeType: "application/json"},
 		{URI: "foliospace://client/preferences", Name: "Preferences", Description: "Client preference state.", MimeType: "application/json"},
+		{URI: "foliospace://profiles", Name: "Profiles", Description: "In-app profiles with avatar and color metadata.", MimeType: "application/json"},
 		{URI: "foliospace://settings/scan", Name: "Scan Settings", Description: "Scan worker and runtime settings.", MimeType: "application/json"},
 		{URI: "foliospace://libraries", Name: "Libraries", Description: "Configured libraries for diagnostics and scan selection.", MimeType: "application/json"},
 		{URI: "foliospace://jobs", Name: "Jobs", Description: "Scan/import job list.", MimeType: "application/json"},
@@ -177,6 +182,8 @@ func (s *Server) readResource(ctx context.Context, raw json.RawMessage) (any, er
 		data, err = s.get(ctx, "/api/client/videos?limit=20")
 	case "foliospace://client/preferences":
 		data, err = s.get(ctx, "/api/client/preferences")
+	case "foliospace://profiles":
+		data, err = s.get(ctx, "/api/profiles")
 	case "foliospace://settings/scan":
 		data, err = s.get(ctx, "/api/settings/scan")
 	case "foliospace://libraries":
@@ -222,15 +229,15 @@ func (s *Server) callTool(ctx context.Context, raw json.RawMessage) (any, error)
 	case "foliospace.client_info":
 		data, err = s.get(ctx, "/api/client/info")
 	case "foliospace.home":
-		data, err = s.get(ctx, "/api/client/home?"+limitQuery(params.Arguments, 12))
+		data, err = s.get(ctx, withProfileQuery("/api/client/home?"+limitQuery(params.Arguments, 12), params.Arguments))
 	case "foliospace.search_books":
 		query := stringArg(params.Arguments, "q")
 		if query == "" {
 			query = stringArg(params.Arguments, "query")
 		}
-		data, err = s.get(ctx, "/api/client/search?q="+url.QueryEscape(query)+"&"+limitQuery(params.Arguments, 20))
+		data, err = s.get(ctx, withProfileQuery("/api/client/search?q="+url.QueryEscape(query)+"&"+limitQuery(params.Arguments, 20), params.Arguments))
 	case "foliospace.open_book_manifest":
-		data, err = s.get(ctx, fmt.Sprintf("/api/client/books/%d/manifest", intArg(params.Arguments, "bookId")))
+		data, err = s.get(ctx, withProfileQuery(fmt.Sprintf("/api/client/books/%d/manifest", intArg(params.Arguments, "bookId")), params.Arguments))
 	case "foliospace.list_games":
 		data, err = s.get(ctx, "/api/client/games?"+gameListQuery(params.Arguments))
 	case "foliospace.open_game_manifest":
@@ -243,39 +250,48 @@ func (s *Server) callTool(ctx context.Context, raw json.RawMessage) (any, error)
 		data, err = s.get(ctx, fmt.Sprintf("/api/client/videos/%d/transcode/status", intArg(params.Arguments, "videoId")))
 	case "foliospace.get_video_transcode_queue":
 		data, err = s.get(ctx, "/api/client/videos/transcode/status")
+	case "foliospace.list_profiles":
+		data, err = s.get(ctx, "/api/profiles")
+	case "foliospace.create_profile":
+		data, err = s.post(ctx, "/api/profiles", profileBody(params.Arguments))
+	case "foliospace.update_profile":
+		profileID := intArg(params.Arguments, "profileId")
+		data, err = s.put(ctx, fmt.Sprintf("/api/profiles/%d", profileID), profileBody(params.Arguments))
+	case "foliospace.delete_profile":
+		data, err = s.delete(ctx, fmt.Sprintf("/api/profiles/%d", intArg(params.Arguments, "profileId")))
 	case "foliospace.get_preferences":
-		data, err = s.get(ctx, "/api/client/preferences")
+		data, err = s.get(ctx, withProfileQuery("/api/client/preferences", params.Arguments))
 	case "foliospace.save_preferences":
-		data, err = s.put(ctx, "/api/client/preferences", params.Arguments)
+		data, err = s.put(ctx, withProfileQuery("/api/client/preferences", params.Arguments), withoutKeys(params.Arguments, "profileId"))
 	case "foliospace.get_scan_settings":
 		data, err = s.get(ctx, "/api/settings/scan")
 	case "foliospace.save_scan_settings":
 		data, err = s.put(ctx, "/api/settings/scan", params.Arguments)
 	case "foliospace.get_private_state":
-		data, err = s.get(ctx, fmt.Sprintf("/api/client/books/%d/private-state", intArg(params.Arguments, "bookId")))
+		data, err = s.get(ctx, withProfileQuery(fmt.Sprintf("/api/client/books/%d/private-state", intArg(params.Arguments, "bookId")), params.Arguments))
 	case "foliospace.save_private_state":
 		bookID := intArg(params.Arguments, "bookId")
-		body := withoutKeys(params.Arguments, "bookId")
-		data, err = s.put(ctx, fmt.Sprintf("/api/client/books/%d/private-state", bookID), body)
+		body := withoutKeys(params.Arguments, "bookId", "profileId")
+		data, err = s.put(ctx, withProfileQuery(fmt.Sprintf("/api/client/books/%d/private-state", bookID), params.Arguments), body)
 	case "foliospace.list_favorites":
-		data, err = s.get(ctx, "/api/client/books/favorites?"+limitQuery(params.Arguments, 12))
+		data, err = s.get(ctx, withProfileQuery("/api/client/books/favorites?"+limitQuery(params.Arguments, 12), params.Arguments))
 	case "foliospace.list_private_status":
 		status := stringArg(params.Arguments, "status")
-		data, err = s.get(ctx, "/api/client/books/private-status/"+url.PathEscape(status)+"?"+limitQuery(params.Arguments, 12))
+		data, err = s.get(ctx, withProfileQuery("/api/client/books/private-status/"+url.PathEscape(status)+"?"+limitQuery(params.Arguments, 12), params.Arguments))
 	case "foliospace.get_progress":
-		data, err = s.get(ctx, fmt.Sprintf("/api/books/%d/progress", intArg(params.Arguments, "bookId")))
+		data, err = s.get(ctx, withProfileQuery(fmt.Sprintf("/api/books/%d/progress", intArg(params.Arguments, "bookId")), params.Arguments))
 	case "foliospace.save_progress":
 		bookID := intArg(params.Arguments, "bookId")
-		body := withoutKeys(params.Arguments, "bookId")
-		data, err = s.put(ctx, fmt.Sprintf("/api/books/%d/progress", bookID), body)
+		body := withoutKeys(params.Arguments, "bookId", "profileId")
+		data, err = s.put(ctx, withProfileQuery(fmt.Sprintf("/api/books/%d/progress", bookID), params.Arguments), body)
 	case "foliospace.list_libraries":
 		data, err = s.get(ctx, "/api/libraries")
 	case "foliospace.list_collections":
 		data, err = s.get(ctx, "/api/collections")
 	case "foliospace.list_collection_volumes":
-		data, err = s.get(ctx, fmt.Sprintf("/api/collections/%d/volumes?%s", intArg(params.Arguments, "collectionId"), collectionVolumesQuery(params.Arguments)))
+		data, err = s.get(ctx, withProfileQuery(fmt.Sprintf("/api/collections/%d/volumes?%s", intArg(params.Arguments, "collectionId"), collectionVolumesQuery(params.Arguments)), params.Arguments))
 	case "foliospace.list_collection_assets":
-		data, err = s.get(ctx, fmt.Sprintf("/api/collections/%d/assets", intArg(params.Arguments, "collectionId")))
+		data, err = s.get(ctx, withProfileQuery(fmt.Sprintf("/api/collections/%d/assets", intArg(params.Arguments, "collectionId")), params.Arguments))
 	case "foliospace.scan_library":
 		data, err = s.post(ctx, fmt.Sprintf("/api/libraries/%d/scan", intArg(params.Arguments, "libraryId")), map[string]any{})
 	case "foliospace.list_jobs":
@@ -315,6 +331,10 @@ func (s *Server) post(ctx context.Context, path string, body any) (any, error) {
 
 func (s *Server) put(ctx context.Context, path string, body any) (any, error) {
 	return s.do(ctx, http.MethodPut, path, body)
+}
+
+func (s *Server) delete(ctx context.Context, path string) (any, error) {
+	return s.do(ctx, http.MethodDelete, path, nil)
 }
 
 func (s *Server) do(ctx context.Context, method string, path string, body any) (any, error) {
@@ -463,6 +483,28 @@ func collectionVolumesQuery(args map[string]any) string {
 		}
 	}
 	return values.Encode()
+}
+
+func withProfileQuery(path string, args map[string]any) string {
+	profileID := intArg(args, "profileId")
+	if profileID <= 0 {
+		return path
+	}
+	separator := "?"
+	if strings.Contains(path, "?") {
+		separator = "&"
+	}
+	return path + separator + "profileId=" + strconv.FormatInt(profileID, 10)
+}
+
+func profileBody(args map[string]any) map[string]any {
+	body := map[string]any{}
+	for _, key := range []string{"name", "avatar", "color"} {
+		if value := stringArg(args, key); value != "" {
+			body[key] = value
+		}
+	}
+	return body
 }
 
 func intArg(args map[string]any, key string) int64 {

@@ -99,6 +99,10 @@ Find books marked want-to-read and show the first 10.
 ```
 
 ```text
+List my FolioSpace profiles, create a "Guest" profile with a game avatar, then show its continue-reading shelf.
+```
+
+```text
 Open the manifest for book 12 and tell me whether it is EPUB or CBZ.
 ```
 
@@ -122,6 +126,10 @@ Check whether FolioSpace is currently transcoding a video and which item is occu
 - `foliospace.open_video_manifest`: open a video client manifest by `videoId`; the returned `fileUrl` is an opaque Range-capable service URL, while `hlsUrl` is used when `playbackMode` is `hls`.
 - `foliospace.get_video_transcode_status`: read HLS transcode/cache status for a video; returns `idle`, `starting`, `running`, `queued`, `ready`, or `failed`.
 - `foliospace.get_video_transcode_queue`: read the current active global video transcode task, if any.
+- `foliospace.list_profiles`: list in-app profiles with avatar and color metadata.
+- `foliospace.create_profile`: create an in-app profile with optional `avatar` and `color`.
+- `foliospace.update_profile`: update a profile `name`, `avatar`, and `color`.
+- `foliospace.delete_profile`: delete a non-default profile and its scoped reading state.
 - `foliospace.get_preferences`: read client preferences such as interface language.
 - `foliospace.save_preferences`: save client preferences.
 - `foliospace.get_scan_settings`: read scan runtime settings such as worker count.
@@ -151,6 +159,7 @@ Check whether FolioSpace is currently transcoding a video and which item is occu
 - `foliospace://client/home`
 - `foliospace://client/videos`
 - `foliospace://client/preferences`
+- `foliospace://profiles`
 - `foliospace://settings/scan`
 - `foliospace://libraries`
 - `foliospace://jobs`
@@ -205,10 +214,28 @@ Check which video is occupying the transcode slot:
 {"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"foliospace.get_video_transcode_queue","arguments":{}}}
 ```
 
+List profiles:
+
+```json
+{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"foliospace.list_profiles","arguments":{}}}
+```
+
+Create a profile:
+
+```json
+{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"foliospace.create_profile","arguments":{"name":"Guest","avatar":"game","color":"violet"}}}
+```
+
+Read another profile's home shelf:
+
+```json
+{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"foliospace.home","arguments":{"profileId":2,"limit":12}}}
+```
+
 List want-to-read books:
 
 ```json
-{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"foliospace.list_private_status","arguments":{"status":"want","limit":12}}}
+{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"foliospace.list_private_status","arguments":{"profileId":2,"status":"want","limit":12}}}
 ```
 
 Pause a running scan job:
