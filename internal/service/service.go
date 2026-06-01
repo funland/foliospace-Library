@@ -301,6 +301,30 @@ func (s *Service) DirectoryRoots() ([]domain.DirectoryEntry, error) {
 	return roots, nil
 }
 
+func (s *Service) ListProfiles() ([]domain.Profile, error) {
+	return s.store.ListProfiles()
+}
+
+func (s *Service) CreateProfile(name string, avatar string, color string) (domain.Profile, error) {
+	return s.store.CreateProfile(name, avatar, color)
+}
+
+func (s *Service) RenameProfile(profileID int64, name string) (domain.Profile, error) {
+	return s.store.RenameProfile(profileID, name)
+}
+
+func (s *Service) UpdateProfile(profileID int64, name string, avatar string, color string) (domain.Profile, error) {
+	return s.store.UpdateProfile(profileID, name, avatar, color)
+}
+
+func (s *Service) DeleteProfile(profileID int64) error {
+	return s.store.DeleteProfile(profileID)
+}
+
+func (s *Service) ResolveProfileID(profileID int64) (int64, error) {
+	return s.store.ResolveProfileID(profileID)
+}
+
 func pathWithinDirectoryRoots(path string, roots []domain.DirectoryEntry) bool {
 	path = filepath.Clean(path)
 	for _, root := range roots {
@@ -379,6 +403,10 @@ func (s *Service) ListBooks(seriesID int64) ([]domain.Book, error) {
 	return s.store.ListBooks(seriesID)
 }
 
+func (s *Service) ListBooksForProfile(seriesID int64, profileID int64) ([]domain.Book, error) {
+	return s.store.ListBooksForProfile(seriesID, profileID)
+}
+
 func (s *Service) OpenSeriesCover(seriesID int64) (PageStream, error) {
 	page, err := s.store.ListBooksPage(domain.BookListOptions{
 		SeriesID: seriesID,
@@ -395,6 +423,10 @@ func (s *Service) OpenSeriesCover(seriesID int64) (PageStream, error) {
 }
 
 func (s *Service) CollectionAssets(seriesID int64) (domain.CollectionAssets, error) {
+	return s.CollectionAssetsForProfile(seriesID, 0)
+}
+
+func (s *Service) CollectionAssetsForProfile(seriesID int64, profileID int64) (domain.CollectionAssets, error) {
 	if platform := store.PlatformFromGamePlatformCollectionID(seriesID); platform != "" {
 		games, err := s.store.ListGamesByPlatform(platform)
 		if err != nil {
@@ -406,7 +438,7 @@ func (s *Service) CollectionAssets(seriesID int64) (domain.CollectionAssets, err
 	if err != nil {
 		return domain.CollectionAssets{}, err
 	}
-	books, err := s.store.ListBooks(seriesID)
+	books, err := s.store.ListBooksForProfile(seriesID, profileID)
 	if err != nil {
 		return domain.CollectionAssets{}, err
 	}
@@ -421,11 +453,23 @@ func (s *Service) ListBooksPage(options domain.BookListOptions) (domain.BookList
 	return s.store.ListBooksPage(options)
 }
 
+func (s *Service) ListBooksPageForProfile(options domain.BookListOptions, profileID int64) (domain.BookListPage, error) {
+	return s.store.ListBooksPageForProfile(options, profileID)
+}
+
 func (s *Service) SearchBooks(query string, limit int) ([]domain.Book, error) {
 	return s.store.SearchBooks(query, limit)
 }
 
+func (s *Service) SearchBooksForProfile(query string, profileID int64, limit int) ([]domain.Book, error) {
+	return s.store.SearchBooksForProfile(query, profileID, limit)
+}
+
 func (s *Service) UpdateBookPrivateState(bookID int64, state domain.BookPrivateState) (domain.Book, error) {
+	return s.UpdateBookPrivateStateForProfile(bookID, 0, state)
+}
+
+func (s *Service) UpdateBookPrivateStateForProfile(bookID int64, profileID int64, state domain.BookPrivateState) (domain.Book, error) {
 	state.Status = strings.TrimSpace(state.Status)
 	state.Summary = strings.TrimSpace(state.Summary)
 	if state.Rating < 0 {
@@ -434,22 +478,38 @@ func (s *Service) UpdateBookPrivateState(bookID int64, state domain.BookPrivateS
 	if state.Rating > 5 {
 		state.Rating = 5
 	}
-	if err := s.store.UpdateBookPrivateState(bookID, state); err != nil {
+	profileID, err := s.store.ResolveProfileID(profileID)
+	if err != nil {
 		return domain.Book{}, err
 	}
-	return s.store.BookByID(bookID)
+	if err := s.store.UpdateBookPrivateStateForProfile(bookID, profileID, state); err != nil {
+		return domain.Book{}, err
+	}
+	return s.store.BookByIDForProfile(bookID, profileID)
 }
 
 func (s *Service) ClientPreferences() (domain.ClientPreferences, error) {
 	return s.store.ClientPreferences()
 }
 
+func (s *Service) ClientPreferencesForProfile(profileID int64) (domain.ClientPreferences, error) {
+	return s.store.ClientPreferencesForProfile(profileID)
+}
+
 func (s *Service) SaveClientPreferences(prefs domain.ClientPreferences) (domain.ClientPreferences, error) {
+	return s.SaveClientPreferencesForProfile(0, prefs)
+}
+
+func (s *Service) SaveClientPreferencesForProfile(profileID int64, prefs domain.ClientPreferences) (domain.ClientPreferences, error) {
 	prefs = normalizeClientPreferences(prefs)
-	if err := s.store.SaveClientPreferences(prefs); err != nil {
+	profileID, err := s.store.ResolveProfileID(profileID)
+	if err != nil {
 		return domain.ClientPreferences{}, err
 	}
-	return s.store.ClientPreferences()
+	if err := s.store.SaveClientPreferencesForProfile(profileID, prefs); err != nil {
+		return domain.ClientPreferences{}, err
+	}
+	return s.store.ClientPreferencesForProfile(profileID)
 }
 
 func normalizeClientPreferences(prefs domain.ClientPreferences) domain.ClientPreferences {
@@ -490,8 +550,16 @@ func (s *Service) ContinueReading(limit int) ([]domain.Book, error) {
 	return s.store.ListContinueReading(limit)
 }
 
+func (s *Service) ContinueReadingForProfile(profileID int64, limit int) ([]domain.Book, error) {
+	return s.store.ListContinueReadingForProfile(profileID, limit)
+}
+
 func (s *Service) RecentBooks(limit int) ([]domain.Book, error) {
 	return s.store.ListRecentBooks(limit)
+}
+
+func (s *Service) RecentBooksForProfile(profileID int64, limit int) ([]domain.Book, error) {
+	return s.store.ListRecentBooksForProfile(profileID, limit)
 }
 
 func (s *Service) RecentGames(limit int) ([]domain.GameAsset, error) {
@@ -874,8 +942,16 @@ func (s *Service) FavoriteBooks(limit int) ([]domain.Book, error) {
 	return s.store.ListFavoriteBooks(limit)
 }
 
+func (s *Service) FavoriteBooksForProfile(profileID int64, limit int) ([]domain.Book, error) {
+	return s.store.ListFavoriteBooksForProfile(profileID, limit)
+}
+
 func (s *Service) BooksByPrivateStatus(status string, limit int) ([]domain.Book, error) {
 	return s.store.ListBooksByPrivateStatus(status, limit)
+}
+
+func (s *Service) BooksByPrivateStatusForProfile(profileID int64, status string, limit int) ([]domain.Book, error) {
+	return s.store.ListBooksByPrivateStatusForProfile(profileID, status, limit)
 }
 
 func libretroBoxartCandidates(game domain.GameAsset) []string {
@@ -1102,6 +1178,10 @@ func (s *Service) Book(id int64) (domain.Book, error) {
 	return s.store.BookByID(id)
 }
 
+func (s *Service) BookForProfile(id int64, profileID int64) (domain.Book, error) {
+	return s.store.BookByIDForProfile(id, profileID)
+}
+
 func (s *Service) AnalyzeBook(id int64) ([]domain.Page, error) {
 	book, err := s.store.BookByID(id)
 	if err != nil {
@@ -1247,17 +1327,25 @@ func (s *Service) SaveProgress(bookID int64, pageIndex int) error {
 }
 
 func (s *Service) SaveProgressDetail(bookID int64, pageIndex int, locator string, progressFraction float64) error {
+	return s.SaveProgressDetailForProfile(bookID, 0, pageIndex, locator, progressFraction)
+}
+
+func (s *Service) SaveProgressDetailForProfile(bookID int64, profileID int64, pageIndex int, locator string, progressFraction float64) error {
 	if progressFraction < 0 {
 		progressFraction = 0
 	}
 	if progressFraction > 1 {
 		progressFraction = 1
 	}
-	return s.store.SaveProgressDetail(bookID, pageIndex, locator, progressFraction)
+	return s.store.SaveProgressDetailForProfile(bookID, profileID, pageIndex, locator, progressFraction)
 }
 
 func (s *Service) Progress(bookID int64) (domain.ReadProgress, error) {
 	return s.store.Progress(bookID)
+}
+
+func (s *Service) ProgressForProfile(bookID int64, profileID int64) (domain.ReadProgress, error) {
+	return s.store.ProgressForProfile(bookID, profileID)
 }
 
 func (s *Service) ListJobs() ([]domain.ScanJob, error) {

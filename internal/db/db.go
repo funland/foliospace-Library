@@ -45,6 +45,16 @@ func Migrate(conn *sql.DB) error {
 			value TEXT NOT NULL,
 			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
+		`CREATE TABLE IF NOT EXISTS profiles (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL,
+			avatar TEXT NOT NULL DEFAULT 'reader',
+			color TEXT NOT NULL DEFAULT 'teal',
+			is_default INTEGER NOT NULL DEFAULT 0,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`INSERT OR IGNORE INTO profiles(id, name, is_default) VALUES(1, 'Default', 1)`,
 		`CREATE TABLE IF NOT EXISTS series (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			library_id INTEGER NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
@@ -162,6 +172,26 @@ func Migrate(conn *sql.DB) error {
 			progress_fraction REAL NOT NULL DEFAULT 0,
 			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
+		`CREATE TABLE IF NOT EXISTS profile_read_progress (
+			profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+			book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+			page_index INTEGER NOT NULL,
+			locator TEXT NOT NULL DEFAULT '',
+			progress_fraction REAL NOT NULL DEFAULT 0,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY(profile_id, book_id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS book_private_states (
+			profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+			book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+			private_status TEXT NOT NULL DEFAULT '',
+			favorite INTEGER NOT NULL DEFAULT 0,
+			rating INTEGER NOT NULL DEFAULT 0,
+			tags TEXT NOT NULL DEFAULT '',
+			summary TEXT NOT NULL DEFAULT '',
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY(profile_id, book_id)
+		)`,
 		`CREATE TABLE IF NOT EXISTS file_errors (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			library_id INTEGER NOT NULL,
@@ -177,6 +207,15 @@ func Migrate(conn *sql.DB) error {
 		)`,
 		`CREATE TABLE IF NOT EXISTS client_preferences (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
+			locale TEXT NOT NULL DEFAULT 'zh',
+			reader_page_mode TEXT NOT NULL DEFAULT 'single',
+			epub_page_mode TEXT NOT NULL DEFAULT 'single',
+			epub_theme TEXT NOT NULL DEFAULT 'light',
+			epub_font_size INTEGER NOT NULL DEFAULT 18,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS profile_client_preferences (
+			profile_id INTEGER PRIMARY KEY REFERENCES profiles(id) ON DELETE CASCADE,
 			locale TEXT NOT NULL DEFAULT 'zh',
 			reader_page_mode TEXT NOT NULL DEFAULT 'single',
 			epub_page_mode TEXT NOT NULL DEFAULT 'single',
@@ -235,6 +274,26 @@ func Migrate(conn *sql.DB) error {
 	}
 	if err := addColumnIfMissing(conn, "libraries", "asset_type", "TEXT NOT NULL DEFAULT 'mixed'"); err != nil {
 		return err
+	}
+	if err := addColumnIfMissing(conn, "profiles", "avatar", "TEXT NOT NULL DEFAULT 'reader'"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(conn, "profiles", "color", "TEXT NOT NULL DEFAULT 'teal'"); err != nil {
+		return err
+	}
+	if _, err := conn.Exec(`INSERT OR IGNORE INTO profile_read_progress(profile_id, book_id, page_index, locator, progress_fraction, updated_at)
+		SELECT 1, book_id, page_index, locator, progress_fraction, updated_at FROM read_progress`); err != nil {
+		return fmt.Errorf("migrate default profile progress: %w", err)
+	}
+	if _, err := conn.Exec(`INSERT OR IGNORE INTO book_private_states(profile_id, book_id, private_status, favorite, rating, tags, summary, updated_at)
+		SELECT 1, id, private_status, favorite, rating, tags, summary, updated_at
+		FROM books
+		WHERE private_status <> '' OR favorite <> 0 OR rating <> 0 OR tags <> '' OR summary <> ''`); err != nil {
+		return fmt.Errorf("migrate default profile private state: %w", err)
+	}
+	if _, err := conn.Exec(`INSERT OR IGNORE INTO profile_client_preferences(profile_id, locale, reader_page_mode, epub_page_mode, epub_theme, epub_font_size, updated_at)
+		SELECT 1, locale, reader_page_mode, epub_page_mode, epub_theme, epub_font_size, updated_at FROM client_preferences WHERE id = 1`); err != nil {
+		return fmt.Errorf("migrate default profile preferences: %w", err)
 	}
 	return nil
 }

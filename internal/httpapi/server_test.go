@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"archive/zip"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -641,6 +642,75 @@ func TestClientAPIPreferences(t *testing.T) {
 	}
 }
 
+func TestAPIProfilesScopeWebReadingStateWithDefaultFallback(t *testing.T) {
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibrary("Comics", "/library")
+	if err != nil {
+		t.Fatal(err)
+	}
+	series, err := st.UpsertSeries(lib.ID, "Series A", "Series A")
+	if err != nil {
+		t.Fatal(err)
+	}
+	book, err := st.UpsertBook(series.ID, "Shared Book", "cbz")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ts := httptest.NewServer(New(service.New(st), nil).Routes())
+	defer ts.Close()
+
+	profilesBody := get(t, ts.URL+"/api/profiles")
+	if !strings.Contains(profilesBody, `"isDefault":true`) || !strings.Contains(profilesBody, `"Default"`) {
+		t.Fatalf("profiles body = %q, want default profile", profilesBody)
+	}
+
+	var created struct {
+		ID        int64  `json:"id"`
+		Name      string `json:"name"`
+		IsDefault bool   `json:"isDefault"`
+	}
+	if err := json.Unmarshal([]byte(postJSONBody(t, ts.URL+"/api/profiles", `{"name":"Guest"}`)), &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.ID == 0 || created.Name != "Guest" || created.IsDefault {
+		t.Fatalf("created profile = %#v, want non-default guest", created)
+	}
+	profileHeader := itoa(created.ID)
+
+	putJSON(t, ts.URL+"/api/books/"+itoa(book.ID)+"/progress", `{"pageIndex":1,"locator":"default","progressFraction":0.1}`)
+	putJSONWithProfile(t, ts.URL+"/api/books/"+itoa(book.ID)+"/progress", `{"pageIndex":7,"locator":"guest","progressFraction":0.7}`, profileHeader)
+	putJSON(t, ts.URL+"/api/books/"+itoa(book.ID)+"/private-state", `{"status":"reading","favorite":true,"rating":5,"tags":["default"],"summary":"default note"}`)
+	putJSONWithProfile(t, ts.URL+"/api/books/"+itoa(book.ID)+"/private-state", `{"status":"want","favorite":false,"rating":2,"tags":["guest"],"summary":"guest note"}`, profileHeader)
+
+	defaultProgress := get(t, ts.URL+"/api/books/"+itoa(book.ID)+"/progress")
+	if !strings.Contains(defaultProgress, `"pageIndex":1`) || !strings.Contains(defaultProgress, `"locator":"default"`) {
+		t.Fatalf("default progress = %q, want default profile state", defaultProgress)
+	}
+	guestProgress := getWithProfile(t, ts.URL+"/api/books/"+itoa(book.ID)+"/progress", profileHeader)
+	if !strings.Contains(guestProgress, `"pageIndex":7`) || !strings.Contains(guestProgress, `"locator":"guest"`) {
+		t.Fatalf("guest progress = %q, want guest profile state", guestProgress)
+	}
+
+	defaultFavorites := get(t, ts.URL+"/api/books/favorites?limit=5")
+	if !strings.Contains(defaultFavorites, `"favorite":true`) || !strings.Contains(defaultFavorites, `"default note"`) {
+		t.Fatalf("default favorites = %q, want default favorite", defaultFavorites)
+	}
+	guestFavorites := getWithProfile(t, ts.URL+"/api/books/favorites?limit=5", profileHeader)
+	if strings.Contains(guestFavorites, `"favorite":true`) || strings.Contains(guestFavorites, `"default note"`) {
+		t.Fatalf("guest favorites = %q, want isolated guest state", guestFavorites)
+	}
+	guestWant := getWithProfile(t, ts.URL+"/api/books/private-status/want?limit=5", profileHeader)
+	if !strings.Contains(guestWant, `"privateStatus":"want"`) || !strings.Contains(guestWant, `"guest note"`) {
+		t.Fatalf("guest want shelf = %q, want guest private state", guestWant)
+	}
+}
+
 func TestScanSettingsAPI(t *testing.T) {
 	conn, err := db.Open(t.TempDir())
 	if err != nil {
@@ -950,6 +1020,28 @@ func get(t *testing.T, url string) string {
 	return string(data)
 }
 
+func getWithProfile(t *testing.T, url string, profileID string) string {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-FolioSpace-Profile-Id", profileID)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode >= 400 {
+		t.Fatalf("GET %s status %d: %s", url, resp.StatusCode, data)
+	}
+	return string(data)
+}
+
 func authGet(t *testing.T, url string, token string) string {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodGet, url, nil)
@@ -1032,6 +1124,25 @@ func putJSON(t *testing.T, url string, body string) {
 		t.Fatal(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		data, _ := io.ReadAll(resp.Body)
+		t.Fatalf("PUT %s status %d: %s", url, resp.StatusCode, data)
+	}
+}
+
+func putJSONWithProfile(t *testing.T, url string, body string, profileID string) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPut, url, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-FolioSpace-Profile-Id", profileID)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)

@@ -23,6 +23,59 @@ When `FOLIOSPACE_API_TOKEN` is set, every `/api/*` route requires one of:
 
 Native clients should use the bearer token. The cookie flow exists mainly so browser-loaded covers, pages, and EPUB iframe resources can work without manually attaching headers to every subresource.
 
+## Profiles And Scoped State
+
+FolioSpace supports multiple in-app profiles inside the same authenticated service. Switching profiles does not require another token or password.
+
+Profile-scoped endpoints accept either:
+
+- `X-FolioSpace-Profile-Id: <profileId>`
+- `?profileId=<profileId>`
+
+If the profile id is missing, invalid, deleted, or unknown, the server falls back to the default profile. Older native clients can keep using the v1 API without sending profile information and will continue to read and write the default profile.
+
+Profile-scoped data includes reading progress, continue/recent/favorite/want shelves, private status, rating, tags, notes, summaries, and client preferences. Instance-level data remains shared: libraries, scan jobs, indexed files, metadata, covers, setup, and service authentication.
+
+### `GET /api/profiles`
+
+Returns available profiles.
+
+```json
+[
+  {
+    "id": 1,
+    "name": "Default",
+    "isDefault": true,
+    "createdAt": "2026-05-31T12:00:00Z",
+    "updatedAt": "2026-05-31T12:00:00Z"
+  }
+]
+```
+
+### `POST /api/profiles`
+
+Creates a profile.
+
+```json
+{
+  "name": "Guest"
+}
+```
+
+### `PUT /api/profiles/{profileId}`
+
+Renames a profile.
+
+```json
+{
+  "name": "Kids"
+}
+```
+
+### `DELETE /api/profiles/{profileId}`
+
+Deletes a non-default profile and its scoped state. The default profile cannot be deleted.
+
 ### Auth Helpers
 
 #### `GET /api/auth/status`

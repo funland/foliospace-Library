@@ -233,21 +233,200 @@ button:hover {
   background: #ffffff;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 10px 12px;
   padding: 10px 18px;
 }
 
 .topbar input {
-  width: min(420px, 50vw);
+  flex: 1 1 260px;
+  max-width: 420px;
   border: 1px solid #ccd4d8;
   border-radius: 6px;
   padding: 9px 10px;
 }
 
+.profileControls {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  margin-left: auto;
+  position: relative;
+}
+
+.profileMenuButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 260px;
+  min-height: 36px;
+  border-color: #cbd8dc;
+  background: #fbfdfd;
+  padding: 3px 9px 3px 5px;
+}
+
+.profileMenuButton span:not(.profileAvatar) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profileMenuButton > svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: #647177;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
+.profileAvatar {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: #ffffff;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.28);
+}
+
+.profileAvatar svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.profileColor-teal { background: linear-gradient(135deg, #2f8b91, #1f5960); }
+.profileColor-amber { background: linear-gradient(135deg, #d89b2b, #8f5c14); }
+.profileColor-violet { background: linear-gradient(135deg, #7b68c7, #45378d); }
+.profileColor-rose { background: linear-gradient(135deg, #c95a77, #8a334f); }
+.profileColor-blue { background: linear-gradient(135deg, #4786c8, #25558f); }
+.profileColor-green { background: linear-gradient(135deg, #4f9b68, #2e6844); }
+.profileColor-slate { background: linear-gradient(135deg, #60747b, #33454b); }
+.profileColor-copper { background: linear-gradient(135deg, #b77845, #794523); }
+
+.profilePanel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 12;
+  display: grid;
+  gap: 12px;
+  width: min(340px, calc(100vw - 32px));
+  border: 1px solid #cfd9dd;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 18px 48px rgba(18, 24, 27, 0.22);
+  padding: 12px;
+}
+
+.profilePanelHeader {
+  display: grid;
+  gap: 2px;
+}
+
+.profilePanelHeader small,
+.profileStylePanel small {
+  color: #647177;
+}
+
+.profileGrid {
+  display: grid;
+  gap: 6px;
+  max-height: min(300px, 42vh);
+  overflow: auto;
+}
+
+.profileCard {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  min-height: 44px;
+  padding: 6px 8px;
+  text-align: left;
+}
+
+.profileCard span:not(.profileAvatar) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profileCard.selected {
+  border-color: #2f6f7b;
+  background: #edf6f7;
+}
+
+.profileStylePanel {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid #eef2f3;
+  padding-top: 10px;
+}
+
+.profilePresetGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.profilePresetGrid button {
+  display: grid;
+  place-items: center;
+  min-height: 42px;
+  padding: 4px;
+}
+
+.profilePresetGrid button.selected {
+  border-color: #203035;
+  background: #f1f6f7;
+}
+
+.profileIconButton,
+.profileRenameButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+.profileIconButton {
+  width: 36px;
+  padding: 0;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.profileRenameButton {
+  width: 36px;
+  padding: 0;
+}
+
+.profileRenameButton svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.9;
+}
+
 .localeSelect {
   min-height: 36px;
-  margin-left: auto;
   border: 1px solid #ccd4d8;
   border-radius: 6px;
   background: #ffffff;
@@ -255,9 +434,15 @@ button:hover {
   padding: 0 8px;
 }
 
-.topbar span {
+.statusText {
+  flex: 0 1 auto;
+  max-width: min(360px, 34vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: #5d6a70;
   font-size: 13px;
+  text-align: left;
 }
 
 .scanProgress {
@@ -2157,6 +2342,31 @@ button.danger:hover {
   .brand {
     margin: 0 10px 0 0;
     white-space: nowrap;
+  }
+
+  .topbar {
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .topbar input {
+    max-width: none;
+    flex-basis: 100%;
+  }
+
+  .profileControls {
+    flex: 1 1 100%;
+    margin-left: 0;
+  }
+
+  .profileMenuButton {
+    max-width: none;
+    flex: 1 1 auto;
+  }
+
+  .statusText {
+    flex-basis: 100%;
+    text-align: left;
   }
 
   .grid,

@@ -14,8 +14,100 @@ type Store struct {
 	db *sql.DB
 }
 
+const defaultProfileID int64 = 1
+
 func New(db *sql.DB) *Store {
 	return &Store{db: db}
+}
+
+func (s *Store) DefaultProfile() (domain.Profile, error) {
+	row := s.db.QueryRow(`SELECT id, name, avatar, color, is_default, created_at, updated_at FROM profiles WHERE is_default = 1 ORDER BY id LIMIT 1`)
+	return scanProfile(row)
+}
+
+func (s *Store) ProfileByID(profileID int64) (domain.Profile, error) {
+	row := s.db.QueryRow(`SELECT id, name, avatar, color, is_default, created_at, updated_at FROM profiles WHERE id = ?`, profileID)
+	return scanProfile(row)
+}
+
+func (s *Store) ResolveProfileID(profileID int64) (int64, error) {
+	if profileID > 0 {
+		if _, err := s.ProfileByID(profileID); err == nil {
+			return profileID, nil
+		} else if err != sql.ErrNoRows {
+			return 0, err
+		}
+	}
+	profile, err := s.DefaultProfile()
+	if err != nil {
+		return 0, err
+	}
+	return profile.ID, nil
+}
+
+func (s *Store) ListProfiles() ([]domain.Profile, error) {
+	rows, err := s.db.Query(`SELECT id, name, avatar, color, is_default, created_at, updated_at FROM profiles ORDER BY is_default DESC, name, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]domain.Profile, 0)
+	for rows.Next() {
+		profile, err := scanProfile(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, profile)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) CreateProfile(name string, avatar string, color string) (domain.Profile, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = "Profile"
+	}
+	avatar = normalizeProfileAvatar(avatar)
+	color = normalizeProfileColor(color)
+	result, err := s.db.Exec(`INSERT INTO profiles(name, avatar, color, is_default) VALUES(?, ?, ?, 0)`, name, avatar, color)
+	if err != nil {
+		return domain.Profile{}, err
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return domain.Profile{}, err
+	}
+	return s.ProfileByID(id)
+}
+
+func (s *Store) UpdateProfile(profileID int64, name string, avatar string, color string) (domain.Profile, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = "Profile"
+	}
+	avatar = normalizeProfileAvatar(avatar)
+	color = normalizeProfileColor(color)
+	if _, err := s.db.Exec(`UPDATE profiles SET name = ?, avatar = ?, color = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, name, avatar, color, profileID); err != nil {
+		return domain.Profile{}, err
+	}
+	return s.ProfileByID(profileID)
+}
+
+func (s *Store) RenameProfile(profileID int64, name string) (domain.Profile, error) {
+	profile, err := s.ProfileByID(profileID)
+	if err != nil {
+		return domain.Profile{}, err
+	}
+	return s.UpdateProfile(profileID, name, profile.Avatar, profile.Color)
+}
+
+func (s *Store) DeleteProfile(profileID int64) error {
+	if profileID == defaultProfileID {
+		return fmt.Errorf("cannot delete default profile")
+	}
+	_, err := s.db.Exec(`DELETE FROM profiles WHERE id = ? AND is_default = 0`, profileID)
+	return err
 }
 
 func (s *Store) Setting(key string) (string, error) {
@@ -422,13 +514,21 @@ func (s *Store) UpsertBook(seriesID int64, title string, format string) (domain.
 }
 
 func (s *Store) BookBySeriesTitle(seriesID int64, title string, format string) (domain.Book, error) {
-	row := s.db.QueryRow(bookSelectSQL()+`
+	row := s.db.QueryRow(bookSelectSQL(defaultProfileID)+`
 		WHERE b.series_id = ? AND b.title = ? AND b.format = ?`, seriesID, title, format)
 	return scanBook(row)
 }
 
 func (s *Store) BookByID(id int64) (domain.Book, error) {
-	row := s.db.QueryRow(bookSelectSQL()+` WHERE b.id = ?`, id)
+	return s.BookByIDForProfile(id, defaultProfileID)
+}
+
+func (s *Store) BookByIDForProfile(id int64, profileID int64) (domain.Book, error) {
+	profileID, err := s.ResolveProfileID(profileID)
+	if err != nil {
+		return domain.Book{}, err
+	}
+	row := s.db.QueryRow(bookSelectSQL(profileID)+` WHERE b.id = ?`, id)
 	return scanBook(row)
 }
 
@@ -453,6 +553,14 @@ func (s *Store) UpdateBookMetadata(bookID int64, creator string, description str
 }
 
 func (s *Store) UpdateBookPrivateState(bookID int64, state domain.BookPrivateState) error {
+	return s.UpdateBookPrivateStateForProfile(bookID, defaultProfileID, state)
+}
+
+func (s *Store) UpdateBookPrivateStateForProfile(bookID int64, profileID int64, state domain.BookPrivateState) error {
+	profileID, err := s.ResolveProfileID(profileID)
+	if err != nil {
+		return err
+	}
 	status := strings.TrimSpace(state.Status)
 	summary := strings.TrimSpace(state.Summary)
 	rating := state.Rating
@@ -466,16 +574,48 @@ func (s *Store) UpdateBookPrivateState(bookID int64, state domain.BookPrivateSta
 	if state.Favorite {
 		favorite = 1
 	}
-	_, err := s.db.Exec(`UPDATE books
-		SET private_status = ?, favorite = ?, rating = ?, tags = ?, summary = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE id = ?`, status, favorite, rating, encodeTags(state.Tags), summary, bookID)
+	_, err = s.db.Exec(`INSERT INTO book_private_states(profile_id, book_id, private_status, favorite, rating, tags, summary)
+		VALUES(?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(profile_id, book_id) DO UPDATE SET private_status = excluded.private_status,
+			favorite = excluded.favorite,
+			rating = excluded.rating,
+			tags = excluded.tags,
+			summary = excluded.summary,
+			updated_at = CURRENT_TIMESTAMP`, profileID, bookID, status, favorite, rating, encodeTags(state.Tags), summary)
+	if err != nil {
+		return err
+	}
+	if profileID == defaultProfileID {
+		_, err = s.db.Exec(`UPDATE books
+			SET private_status = ?, favorite = ?, rating = ?, tags = ?, summary = ?, updated_at = CURRENT_TIMESTAMP
+			WHERE id = ?`, status, favorite, rating, encodeTags(state.Tags), summary, bookID)
+	}
 	return err
 }
 
 func (s *Store) ClientPreferences() (domain.ClientPreferences, error) {
-	row := s.db.QueryRow(`SELECT locale, reader_page_mode, epub_page_mode, epub_theme, epub_font_size FROM client_preferences WHERE id = 1`)
+	return s.ClientPreferencesForProfile(defaultProfileID)
+}
+
+func (s *Store) ClientPreferencesForProfile(profileID int64) (domain.ClientPreferences, error) {
+	profileID, err := s.ResolveProfileID(profileID)
+	if err != nil {
+		return domain.ClientPreferences{}, err
+	}
+	row := s.db.QueryRow(`SELECT locale, reader_page_mode, epub_page_mode, epub_theme, epub_font_size FROM profile_client_preferences WHERE profile_id = ?`, profileID)
 	var prefs domain.ClientPreferences
-	err := row.Scan(&prefs.Locale, &prefs.ReaderPageMode, &prefs.EPUBPageMode, &prefs.EPUBTheme, &prefs.EPUBFontSize)
+	err = row.Scan(&prefs.Locale, &prefs.ReaderPageMode, &prefs.EPUBPageMode, &prefs.EPUBTheme, &prefs.EPUBFontSize)
+	if err == nil {
+		return prefs, nil
+	}
+	if err != sql.ErrNoRows {
+		return domain.ClientPreferences{}, err
+	}
+	if profileID != defaultProfileID {
+		return DefaultClientPreferences(), nil
+	}
+	row = s.db.QueryRow(`SELECT locale, reader_page_mode, epub_page_mode, epub_theme, epub_font_size FROM client_preferences WHERE id = 1`)
+	err = row.Scan(&prefs.Locale, &prefs.ReaderPageMode, &prefs.EPUBPageMode, &prefs.EPUBTheme, &prefs.EPUBFontSize)
 	if err == sql.ErrNoRows {
 		return DefaultClientPreferences(), nil
 	}
@@ -486,7 +626,28 @@ func (s *Store) ClientPreferences() (domain.ClientPreferences, error) {
 }
 
 func (s *Store) SaveClientPreferences(prefs domain.ClientPreferences) error {
-	_, err := s.db.Exec(`INSERT INTO client_preferences(id, locale, reader_page_mode, epub_page_mode, epub_theme, epub_font_size)
+	return s.SaveClientPreferencesForProfile(defaultProfileID, prefs)
+}
+
+func (s *Store) SaveClientPreferencesForProfile(profileID int64, prefs domain.ClientPreferences) error {
+	profileID, err := s.ResolveProfileID(profileID)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`INSERT INTO profile_client_preferences(profile_id, locale, reader_page_mode, epub_page_mode, epub_theme, epub_font_size)
+		VALUES(?, ?, ?, ?, ?, ?)
+		ON CONFLICT(profile_id) DO UPDATE SET locale = excluded.locale,
+			reader_page_mode = excluded.reader_page_mode,
+			epub_page_mode = excluded.epub_page_mode,
+			epub_theme = excluded.epub_theme,
+			epub_font_size = excluded.epub_font_size,
+			updated_at = CURRENT_TIMESTAMP`,
+		profileID, prefs.Locale, prefs.ReaderPageMode, prefs.EPUBPageMode, prefs.EPUBTheme, prefs.EPUBFontSize)
+	if err != nil {
+		return err
+	}
+	if profileID == defaultProfileID {
+		_, err = s.db.Exec(`INSERT INTO client_preferences(id, locale, reader_page_mode, epub_page_mode, epub_theme, epub_font_size)
 		VALUES(1, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET locale = excluded.locale,
 			reader_page_mode = excluded.reader_page_mode,
@@ -494,7 +655,8 @@ func (s *Store) SaveClientPreferences(prefs domain.ClientPreferences) error {
 			epub_theme = excluded.epub_theme,
 			epub_font_size = excluded.epub_font_size,
 			updated_at = CURRENT_TIMESTAMP`,
-		prefs.Locale, prefs.ReaderPageMode, prefs.EPUBPageMode, prefs.EPUBTheme, prefs.EPUBFontSize)
+			prefs.Locale, prefs.ReaderPageMode, prefs.EPUBPageMode, prefs.EPUBTheme, prefs.EPUBFontSize)
+	}
 	return err
 }
 
@@ -509,7 +671,15 @@ func DefaultClientPreferences() domain.ClientPreferences {
 }
 
 func (s *Store) ListBooks(seriesID int64) ([]domain.Book, error) {
-	rows, err := s.db.Query(bookSelectSQL()+`
+	return s.ListBooksForProfile(seriesID, defaultProfileID)
+}
+
+func (s *Store) ListBooksForProfile(seriesID int64, profileID int64) ([]domain.Book, error) {
+	profileID, err := s.ResolveProfileID(profileID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.Query(bookSelectSQL(profileID)+`
 		WHERE b.series_id = ?
 		ORDER BY b.title`, seriesID)
 	if err != nil {
@@ -529,19 +699,27 @@ func (s *Store) ListBooks(seriesID int64) ([]domain.Book, error) {
 }
 
 func (s *Store) SearchBooks(query string, limit int) ([]domain.Book, error) {
+	return s.SearchBooksForProfile(query, defaultProfileID, limit)
+}
+
+func (s *Store) SearchBooksForProfile(query string, profileID int64, limit int) ([]domain.Book, error) {
+	profileID, err := s.ResolveProfileID(profileID)
+	if err != nil {
+		return nil, err
+	}
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return []domain.Book{}, nil
 	}
 	limit = normalizeSearchLimit(limit)
 	pattern := "%" + escapeLike(query) + "%"
-	rows, err := s.db.Query(bookSelectSQL()+`
+	rows, err := s.db.Query(bookSelectSQL(profileID)+`
 		WHERE LOWER(b.title) LIKE LOWER(?) ESCAPE '\'
 			OR LOWER(s.title) LIKE LOWER(?) ESCAPE '\'
 			OR LOWER(b.format) LIKE LOWER(?) ESCAPE '\'
-			OR LOWER(b.tags) LIKE LOWER(?) ESCAPE '\'
-			OR LOWER(b.summary) LIKE LOWER(?) ESCAPE '\'
-		ORDER BY b.favorite DESC, rp.updated_at IS NULL, rp.updated_at DESC, b.updated_at DESC, b.title
+			OR LOWER(COALESCE(ps.tags, '')) LIKE LOWER(?) ESCAPE '\'
+			OR LOWER(COALESCE(ps.summary, '')) LIKE LOWER(?) ESCAPE '\'
+		ORDER BY COALESCE(ps.favorite, 0) DESC, rp.updated_at IS NULL, rp.updated_at DESC, b.updated_at DESC, b.title
 		LIMIT ?`, pattern, pattern, pattern, pattern, pattern, limit)
 	if err != nil {
 		return nil, err
@@ -570,6 +748,14 @@ func normalizeSearchLimit(limit int) int {
 }
 
 func (s *Store) ListBooksPage(options domain.BookListOptions) (domain.BookListPage, error) {
+	return s.ListBooksPageForProfile(options, defaultProfileID)
+}
+
+func (s *Store) ListBooksPageForProfile(options domain.BookListOptions, profileID int64) (domain.BookListPage, error) {
+	profileID, err := s.ResolveProfileID(profileID)
+	if err != nil {
+		return domain.BookListPage{}, err
+	}
 	options.Limit = normalizeBookListLimit(options.Limit)
 	if options.Offset < 0 {
 		options.Offset = 0
@@ -581,13 +767,13 @@ func (s *Store) ListBooksPage(options domain.BookListOptions) (domain.BookListPa
 	if err := s.db.QueryRow(`SELECT COUNT(*)
 		FROM books b
 		JOIN series s ON s.id = b.series_id
-		LEFT JOIN read_progress rp ON rp.book_id = b.id`+where, countArgs...).Scan(&total); err != nil {
+		LEFT JOIN profile_read_progress rp ON rp.book_id = b.id AND rp.profile_id = `+profileIDSQL(profileID)+where, countArgs...).Scan(&total); err != nil {
 		return domain.BookListPage{}, err
 	}
 
 	queryArgs := append([]any(nil), args...)
 	queryArgs = append(queryArgs, options.Limit, options.Offset)
-	rows, err := s.db.Query(bookSelectSQL()+where+bookListOrderBy(options.Sort)+`
+	rows, err := s.db.Query(bookSelectSQL(profileID)+where+bookListOrderBy(options.Sort)+`
 		LIMIT ? OFFSET ?`, queryArgs...)
 	if err != nil {
 		return domain.BookListPage{}, err
@@ -656,10 +842,18 @@ func escapeLike(value string) string {
 }
 
 func (s *Store) ListContinueReading(limit int) ([]domain.Book, error) {
+	return s.ListContinueReadingForProfile(defaultProfileID, limit)
+}
+
+func (s *Store) ListContinueReadingForProfile(profileID int64, limit int) ([]domain.Book, error) {
+	profileID, err := s.ResolveProfileID(profileID)
+	if err != nil {
+		return nil, err
+	}
 	if limit <= 0 {
 		limit = 12
 	}
-	rows, err := s.db.Query(bookSelectSQL()+`
+	rows, err := s.db.Query(bookSelectSQL(profileID)+`
 		WHERE rp.book_id IS NOT NULL
 		ORDER BY rp.updated_at DESC, b.updated_at DESC
 		LIMIT ?`, limit)
@@ -680,10 +874,18 @@ func (s *Store) ListContinueReading(limit int) ([]domain.Book, error) {
 }
 
 func (s *Store) ListRecentBooks(limit int) ([]domain.Book, error) {
+	return s.ListRecentBooksForProfile(defaultProfileID, limit)
+}
+
+func (s *Store) ListRecentBooksForProfile(profileID int64, limit int) ([]domain.Book, error) {
+	profileID, err := s.ResolveProfileID(profileID)
+	if err != nil {
+		return nil, err
+	}
 	if limit <= 0 {
 		limit = 12
 	}
-	rows, err := s.db.Query(bookSelectSQL()+`
+	rows, err := s.db.Query(bookSelectSQL(profileID)+`
 		ORDER BY b.created_at DESC, b.id DESC
 		LIMIT ?`, limit)
 	if err != nil {
@@ -703,10 +905,18 @@ func (s *Store) ListRecentBooks(limit int) ([]domain.Book, error) {
 }
 
 func (s *Store) ListFavoriteBooks(limit int) ([]domain.Book, error) {
+	return s.ListFavoriteBooksForProfile(defaultProfileID, limit)
+}
+
+func (s *Store) ListFavoriteBooksForProfile(profileID int64, limit int) ([]domain.Book, error) {
+	profileID, err := s.ResolveProfileID(profileID)
+	if err != nil {
+		return nil, err
+	}
 	limit = normalizeShelfLimit(limit)
-	rows, err := s.db.Query(bookSelectSQL()+`
-		WHERE b.favorite = 1
-		ORDER BY b.updated_at DESC, b.title
+	rows, err := s.db.Query(bookSelectSQL(profileID)+`
+		WHERE COALESCE(ps.favorite, 0) = 1
+		ORDER BY ps.updated_at DESC, b.title
 		LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
@@ -716,10 +926,18 @@ func (s *Store) ListFavoriteBooks(limit int) ([]domain.Book, error) {
 }
 
 func (s *Store) ListBooksByPrivateStatus(status string, limit int) ([]domain.Book, error) {
+	return s.ListBooksByPrivateStatusForProfile(defaultProfileID, status, limit)
+}
+
+func (s *Store) ListBooksByPrivateStatusForProfile(profileID int64, status string, limit int) ([]domain.Book, error) {
+	profileID, err := s.ResolveProfileID(profileID)
+	if err != nil {
+		return nil, err
+	}
 	limit = normalizeShelfLimit(limit)
-	rows, err := s.db.Query(bookSelectSQL()+`
-		WHERE b.private_status = ?
-		ORDER BY b.updated_at DESC, b.title
+	rows, err := s.db.Query(bookSelectSQL(profileID)+`
+		WHERE COALESCE(ps.private_status, '') = ?
+		ORDER BY ps.updated_at DESC, b.title
 		LIMIT ?`, strings.TrimSpace(status), limit)
 	if err != nil {
 		return nil, err
@@ -1363,14 +1581,38 @@ func (s *Store) SaveProgress(bookID int64, pageIndex int) error {
 }
 
 func (s *Store) SaveProgressDetail(bookID int64, pageIndex int, locator string, progressFraction float64) error {
-	_, err := s.db.Exec(`INSERT INTO read_progress(book_id, page_index, locator, progress_fraction) VALUES(?, ?, ?, ?)
-		ON CONFLICT(book_id) DO UPDATE SET page_index = excluded.page_index, locator = excluded.locator, progress_fraction = excluded.progress_fraction, updated_at = CURRENT_TIMESTAMP`,
-		bookID, pageIndex, locator, progressFraction)
+	return s.SaveProgressDetailForProfile(bookID, defaultProfileID, pageIndex, locator, progressFraction)
+}
+
+func (s *Store) SaveProgressDetailForProfile(bookID int64, profileID int64, pageIndex int, locator string, progressFraction float64) error {
+	profileID, err := s.ResolveProfileID(profileID)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`INSERT INTO profile_read_progress(profile_id, book_id, page_index, locator, progress_fraction) VALUES(?, ?, ?, ?, ?)
+		ON CONFLICT(profile_id, book_id) DO UPDATE SET page_index = excluded.page_index, locator = excluded.locator, progress_fraction = excluded.progress_fraction, updated_at = CURRENT_TIMESTAMP`,
+		profileID, bookID, pageIndex, locator, progressFraction)
+	if err != nil {
+		return err
+	}
+	if profileID == defaultProfileID {
+		_, err = s.db.Exec(`INSERT INTO read_progress(book_id, page_index, locator, progress_fraction) VALUES(?, ?, ?, ?)
+			ON CONFLICT(book_id) DO UPDATE SET page_index = excluded.page_index, locator = excluded.locator, progress_fraction = excluded.progress_fraction, updated_at = CURRENT_TIMESTAMP`,
+			bookID, pageIndex, locator, progressFraction)
+	}
 	return err
 }
 
 func (s *Store) Progress(bookID int64) (domain.ReadProgress, error) {
-	row := s.db.QueryRow(`SELECT book_id, page_index, locator, progress_fraction, updated_at FROM read_progress WHERE book_id = ?`, bookID)
+	return s.ProgressForProfile(bookID, defaultProfileID)
+}
+
+func (s *Store) ProgressForProfile(bookID int64, profileID int64) (domain.ReadProgress, error) {
+	profileID, err := s.ResolveProfileID(profileID)
+	if err != nil {
+		return domain.ReadProgress{}, err
+	}
+	row := s.db.QueryRow(`SELECT book_id, page_index, locator, progress_fraction, updated_at FROM profile_read_progress WHERE book_id = ? AND profile_id = ?`, bookID, profileID)
 	var progress domain.ReadProgress
 	var updated string
 	if err := row.Scan(&progress.BookID, &progress.PageIndex, &progress.Locator, &progress.ProgressFraction, &updated); err != nil {
@@ -1437,6 +1679,40 @@ func scanLibrary(row scanner) (domain.Library, error) {
 	lib.CreatedAt = parseTime(created)
 	lib.UpdatedAt = parseTime(updated)
 	return lib, nil
+}
+
+func scanProfile(row scanner) (domain.Profile, error) {
+	var profile domain.Profile
+	var isDefault int
+	var created string
+	var updated string
+	if err := row.Scan(&profile.ID, &profile.Name, &profile.Avatar, &profile.Color, &isDefault, &created, &updated); err != nil {
+		return profile, err
+	}
+	profile.Avatar = normalizeProfileAvatar(profile.Avatar)
+	profile.Color = normalizeProfileColor(profile.Color)
+	profile.IsDefault = isDefault != 0
+	profile.CreatedAt = parseTime(created)
+	profile.UpdatedAt = parseTime(updated)
+	return profile, nil
+}
+
+func normalizeProfileAvatar(value string) string {
+	switch strings.TrimSpace(value) {
+	case "reader", "comic", "game", "movie", "star", "archive", "coffee", "rocket":
+		return strings.TrimSpace(value)
+	default:
+		return "reader"
+	}
+}
+
+func normalizeProfileColor(value string) string {
+	switch strings.TrimSpace(value) {
+	case "teal", "amber", "violet", "rose", "blue", "green", "slate", "copper":
+		return strings.TrimSpace(value)
+	default:
+		return "teal"
+	}
 }
 
 func normalizeLibraryAssetType(value string) string {
@@ -1546,15 +1822,24 @@ func decodeTags(value string) []string {
 	return tags
 }
 
-func bookSelectSQL() string {
+func profileIDSQL(profileID int64) string {
+	if profileID <= 0 {
+		profileID = defaultProfileID
+	}
+	return fmt.Sprintf("%d", profileID)
+}
+
+func bookSelectSQL(profileID int64) string {
+	profileIDValue := profileIDSQL(profileID)
 	return `SELECT b.id, b.series_id, s.title, b.title, b.creator, b.description, b.format, b.page_count, b.cover_status, b.analyzed,
 			COALESCE(f.abs_path, ''), b.created_at, b.updated_at,
 			COALESCE(rp.page_index, 0), COALESCE(rp.progress_fraction, 0), COALESCE(rp.updated_at, ''),
-			b.private_status, b.favorite, b.rating, b.tags, b.summary
+			COALESCE(ps.private_status, ''), COALESCE(ps.favorite, 0), COALESCE(ps.rating, 0), COALESCE(ps.tags, ''), COALESCE(ps.summary, '')
 		FROM books b
 		JOIN series s ON s.id = b.series_id
 		LEFT JOIN files f ON f.book_id = b.id
-		LEFT JOIN read_progress rp ON rp.book_id = b.id`
+		LEFT JOIN profile_read_progress rp ON rp.book_id = b.id AND rp.profile_id = ` + profileIDValue + `
+		LEFT JOIN book_private_states ps ON ps.book_id = b.id AND ps.profile_id = ` + profileIDValue
 }
 
 func scanFile(row scanner) (domain.File, error) {

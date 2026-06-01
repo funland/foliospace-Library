@@ -3,7 +3,7 @@ import type { FormEvent, MouseEvent, ReactNode, TouchEvent } from "react";
 import { GlobalWorkerOptions, getDocument } from "pdfjs-dist";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import pdfWorkerURL from "pdfjs-dist/build/pdf.worker.mjs?url";
-import { api, Book, BookPrivateState, clearAuthToken, ClientInfo, ClientPreferences, DirectoryEntry, DirectoryListing, EpubManifest, FileError, GameAsset, getAuthToken, JobEvent, Library, Page, ScanJob, Series, setAuthToken, SetupStatus, ScanSettings, VideoAsset, VideoTranscodeQueueStatus, VideoTranscodeStatus } from "./api";
+import { api, Book, BookPrivateState, clearAuthToken, ClientInfo, ClientPreferences, DirectoryEntry, DirectoryListing, EpubManifest, FileError, GameAsset, getActiveProfileId, getAuthToken, JobEvent, Library, Page, Profile, ScanJob, Series, setActiveProfileId as persistActiveProfileId, setAuthToken, SetupStatus, ScanSettings, VideoAsset, VideoTranscodeQueueStatus, VideoTranscodeStatus } from "./api";
 
 GlobalWorkerOptions.workerSrc = pdfWorkerURL;
 
@@ -79,6 +79,10 @@ export function App() {
   const [scanWorkerDraft, setScanWorkerDraft] = useState(1);
   const [scanSettingsSaving, setScanSettingsSaving] = useState(false);
   const [activeTask, setActiveTask] = useState<string | null>(null);
+  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [activeProfileId, setActiveProfileId] = useState(0);
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [readerLoadState, setReaderLoadState] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [readerRetryKey, setReaderRetryKey] = useState(0);
   const [readerPageMode, setReaderPageMode] = useState<ReaderPageMode>(initialPreferences.readerPageMode);
@@ -104,6 +108,11 @@ export function App() {
   const [bookDetailsOpen, setBookDetailsOpen] = useState(false);
   const [locale, setLocale] = useState<Locale>(initialPreferences.locale);
   const t = translations[locale];
+  const activeProfile = useMemo(
+    () => profiles.find((profile) => profile.id === activeProfileId) ?? profiles.find((profile) => profile.isDefault) ?? profiles[0] ?? null,
+    [activeProfileId, profiles],
+  );
+  const activeProfileLabel = activeProfile ? profileDisplayName(activeProfile, t) : t.defaultProfile;
   const imageCache = useRef<Set<string>>(new Set());
   const readerRef = useRef<HTMLElement | null>(null);
   const webtoonRef = useRef<HTMLDivElement | null>(null);
@@ -131,38 +140,51 @@ export function App() {
     if (showProgress) {
       setActiveTask("Refreshing library");
     }
-    const [preferences, info, nextScanSettings, nextLibraries, nextSeries, nextJobs, nextErrors, nextContinueBooks, nextRecentBooks, nextFavoriteBooks, nextWantBooks, nextGameShelf, nextVideoShelf] = await Promise.all([
-      api.clientPreferences(),
-      api.clientInfo(),
-      api.scanSettings(),
-      api.libraries(),
-      api.series(),
-      api.jobs(),
-      api.errors(),
-      api.continueReading(),
-      api.recentBooks(),
-      api.favoriteBooks(),
-      api.privateStatusBooks("want"),
-      api.recentGames(),
-      api.recentVideos(),
-    ]);
-    applyClientPreferences(preferences);
-    preferencesLoaded.current = true;
-    setClientInfo(info);
-    setScanSettings(nextScanSettings);
-    setScanWorkerDraft(nextScanSettings.scanWorkers);
-    setLibraries(arrayOrEmpty(nextLibraries));
-    setSeries(arrayOrEmpty(nextSeries));
-    setJobs(arrayOrEmpty(nextJobs));
-    setErrors(arrayOrEmpty(nextErrors));
-    setContinueBooks(arrayOrEmpty(nextContinueBooks));
-    setRecentBooks(arrayOrEmpty(nextRecentBooks));
-    setFavoriteBooks(arrayOrEmpty(nextFavoriteBooks));
-    setWantBooks(arrayOrEmpty(nextWantBooks));
-    setGameShelf(arrayOrEmpty(nextGameShelf));
-    setVideoShelf(arrayOrEmpty(nextVideoShelf));
-    if (showProgress) {
-      setActiveTask(null);
+    try {
+      const nextProfiles = await api.profiles();
+      const profileList = arrayOrEmpty(nextProfiles);
+      const resolvedProfile = resolveActiveProfile(profileList, getActiveProfileId());
+      setProfiles(profileList);
+      setActiveProfileId(resolvedProfile?.id ?? 0);
+      if (resolvedProfile) {
+        persistActiveProfileId(resolvedProfile.id);
+      } else {
+        persistActiveProfileId("");
+      }
+      const [preferences, info, nextScanSettings, nextLibraries, nextSeries, nextJobs, nextErrors, nextContinueBooks, nextRecentBooks, nextFavoriteBooks, nextWantBooks, nextGameShelf, nextVideoShelf] = await Promise.all([
+        api.clientPreferences(),
+        api.clientInfo(),
+        api.scanSettings(),
+        api.libraries(),
+        api.series(),
+        api.jobs(),
+        api.errors(),
+        api.continueReading(),
+        api.recentBooks(),
+        api.favoriteBooks(),
+        api.privateStatusBooks("want"),
+        api.recentGames(),
+        api.recentVideos(),
+      ]);
+      applyClientPreferences(preferences);
+      preferencesLoaded.current = true;
+      setClientInfo(info);
+      setScanSettings(nextScanSettings);
+      setScanWorkerDraft(nextScanSettings.scanWorkers);
+      setLibraries(arrayOrEmpty(nextLibraries));
+      setSeries(arrayOrEmpty(nextSeries));
+      setJobs(arrayOrEmpty(nextJobs));
+      setErrors(arrayOrEmpty(nextErrors));
+      setContinueBooks(arrayOrEmpty(nextContinueBooks));
+      setRecentBooks(arrayOrEmpty(nextRecentBooks));
+      setFavoriteBooks(arrayOrEmpty(nextFavoriteBooks));
+      setWantBooks(arrayOrEmpty(nextWantBooks));
+      setGameShelf(arrayOrEmpty(nextGameShelf));
+      setVideoShelf(arrayOrEmpty(nextVideoShelf));
+    } finally {
+      if (showProgress) {
+        setActiveTask(null);
+      }
     }
   }
 
@@ -651,6 +673,124 @@ export function App() {
     setBookHasMore(false);
     void loadBooksPage(selectedSeries, 0, true);
   }, [loadBooksPage, selectedSeries]);
+
+  function resetProfileScopedViewState() {
+    setView("library");
+    setSelectedBook(null);
+    setSelectedVideo(null);
+    setVideoTranscodeStatus(null);
+    setVideoTranscodeQueueStatus(null);
+    setPages([]);
+    setEpubManifest(null);
+    setBookDetailsOpen(false);
+    setPrivateDraft(emptyPrivateState());
+    setPageIndex(0);
+    setDisplayedPageIndex(0);
+    setEpubPagePosition(0);
+    setEpubPageCount(1);
+    setPdfPageCount(1);
+    setWebtoonProgress(0);
+    setWebtoonRestoreProgress(null);
+    setEpubTocOpen(false);
+    setReaderLoadState("idle");
+    setBooks([]);
+    setBookTotal(0);
+    setBookHasMore(false);
+    setContinueBooks([]);
+    setRecentBooks([]);
+    setFavoriteBooks([]);
+    setWantBooks([]);
+    setGlobalBooks([]);
+  }
+
+  async function leaveProfileScopedSurface() {
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      }
+    } catch {
+      // The profile switch still needs to continue and return to Home.
+    }
+    setReaderFullscreen(false);
+    resetProfileScopedViewState();
+  }
+
+  async function reloadSelectedSeries() {
+    if (!selectedSeries) return;
+    await loadBooksPage(selectedSeries, 0, true);
+  }
+
+  async function switchProfile(profileID: number) {
+    if (!profileID || profileID === activeProfileId || profileSaving) return;
+    const targetProfile = profiles.find((profile) => profile.id === profileID) ?? null;
+    setProfileMenuOpen(false);
+    setProfileSaving(true);
+    persistActiveProfileId(profileID);
+    setActiveProfileId(profileID);
+    await leaveProfileScopedSurface();
+    setStatus(t.profileSwitching);
+    try {
+      await refreshAll(true);
+      await reloadSelectedSeries();
+      setStatus(t.profileSwitched(targetProfile?.name ?? t.defaultProfile));
+    } catch (error) {
+      handleAPIError(error);
+    } finally {
+      setProfileSaving(false);
+    }
+  }
+
+  async function createProfile() {
+    const name = window.prompt(t.createProfilePrompt, "");
+    const trimmedName = name?.trim();
+    if (!trimmedName) return;
+    setProfileSaving(true);
+    try {
+      const preset = profilePresetForIndex(profiles.length);
+      const profile = await api.createProfile(trimmedName, preset.avatar, preset.color);
+      persistActiveProfileId(profile.id);
+      setActiveProfileId(profile.id);
+      await leaveProfileScopedSurface();
+      await refreshAll(true);
+      await reloadSelectedSeries();
+      setStatus(t.profileCreated(profile.name));
+    } catch (error) {
+      handleAPIError(error);
+    } finally {
+      setProfileSaving(false);
+    }
+  }
+
+  async function renameActiveProfile() {
+    if (!activeProfile || profileSaving) return;
+    const name = window.prompt(t.renameProfilePrompt(activeProfile.name), activeProfile.name);
+    const trimmedName = name?.trim();
+    if (!trimmedName || trimmedName === activeProfile.name) return;
+    setProfileSaving(true);
+    try {
+      const profile = await api.renameProfile(activeProfile.id, trimmedName);
+      setProfiles((items) => items.map((item) => item.id === profile.id ? profile : item));
+      setStatus(t.profileRenamed(profile.name));
+    } catch (error) {
+      handleAPIError(error);
+    } finally {
+      setProfileSaving(false);
+    }
+  }
+
+  async function updateActiveProfileStyle(avatar: string, color: string) {
+    if (!activeProfile || profileSaving) return;
+    setProfileSaving(true);
+    try {
+      const profile = await api.updateProfile(activeProfile.id, { name: activeProfile.name, avatar, color });
+      setProfiles((items) => items.map((item) => item.id === profile.id ? profile : item));
+      setStatus(t.profileStyled(profile.name));
+    } catch (error) {
+      handleAPIError(error);
+    } finally {
+      setProfileSaving(false);
+    }
+  }
 
   useEffect(() => {
     if (!selectedVideo) return;
@@ -1251,6 +1391,72 @@ export function App() {
 
         <header className="topbar">
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t.searchLibrary} />
+          <div className="profileControls" aria-label={t.profile}>
+            <button
+              type="button"
+              className="profileMenuButton"
+              onClick={() => setProfileMenuOpen((value) => !value)}
+              disabled={profileSaving || profiles.length === 0}
+              aria-label={t.profile}
+              aria-expanded={profileMenuOpen}
+            >
+              {activeProfile ? <ProfileAvatar profile={activeProfile} /> : <ProfileAvatar profile={fallbackProfile(t.defaultProfile)} />}
+              <span>{activeProfileLabel}</span>
+              <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                <path d="m6 9 6 6 6-6" />
+              </svg>
+            </button>
+            {profileMenuOpen && (
+              <div className="profilePanel" role="menu">
+                <div className="profilePanelHeader">
+                  <strong>{t.profile}</strong>
+                  <small>{t.profileSharedLibrary}</small>
+                </div>
+                <div className="profileGrid">
+                  {profiles.map((profile) => (
+                    <button
+                      type="button"
+                      key={profile.id}
+                      className={profile.id === activeProfile?.id ? "profileCard selected" : "profileCard"}
+                      onClick={() => switchProfile(profile.id)}
+                      disabled={profileSaving}
+                    >
+                      <ProfileAvatar profile={profile} />
+                      <span>{profileDisplayName(profile, t)}</span>
+                    </button>
+                  ))}
+                </div>
+                {activeProfile && (
+                  <div className="profileStylePanel">
+                    <small>{t.profileStyle}</small>
+                    <div className="profilePresetGrid">
+                      {profilePresets.map((preset) => (
+                        <button
+                          type="button"
+                          key={`${preset.avatar}-${preset.color}`}
+                          className={activeProfile.avatar === preset.avatar && activeProfile.color === preset.color ? "selected" : ""}
+                          onClick={() => updateActiveProfileStyle(preset.avatar, preset.color)}
+                          disabled={profileSaving}
+                          title={preset.label}
+                        >
+                          <ProfileAvatar profile={{ ...activeProfile, avatar: preset.avatar, color: preset.color }} />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+            <button type="button" className="profileIconButton" onClick={createProfile} disabled={profileSaving} title={t.newProfile} aria-label={t.newProfile}>
+              +
+            </button>
+            <button type="button" className="profileRenameButton" onClick={renameActiveProfile} disabled={profileSaving || !activeProfile} title={t.renameProfile} aria-label={t.renameProfile}>
+              <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                <path d="M12 20h9" />
+                <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+              </svg>
+            </button>
+          </div>
           <select className="localeSelect" value={locale} onChange={(event) => setLocale(event.target.value as Locale)} aria-label={t.language}>
             <option value="zh">中文</option>
             <option value="zht">繁體中文</option>
@@ -1258,7 +1464,7 @@ export function App() {
             <option value="ja">日本語</option>
             <option value="ko">한국어</option>
           </select>
-          <span>{activeScan ? `Scanning: ${scanProgressLabel} · ${t.elapsed} ${activeScanElapsed}` : status}</span>
+          <span className="statusText">{activeScan ? `Scanning: ${scanProgressLabel} · ${t.elapsed} ${activeScanElapsed}` : status}</span>
         </header>
 
         {activeScan && (
@@ -2832,6 +3038,20 @@ type Translation = typeof translations.en;
 const translations = {
   zh: {
     language: "语言",
+    profile: "用户档案",
+    defaultProfile: "默认用户",
+    defaultProfileBadge: "默认",
+    newProfile: "新建用户",
+    renameProfile: "重命名",
+    createProfilePrompt: "新建用户档案\n请输入新用户名称",
+    renameProfilePrompt: (name: string) => `重命名当前用户档案：${name}\n请输入新的用户名称`,
+    profileSwitching: "正在切换用户",
+    profileSwitched: (name: string) => `已切换到 ${name}`,
+    profileCreated: (name: string) => `已创建用户 ${name}`,
+    profileRenamed: (name: string) => `已重命名为 ${name}`,
+    profileStyled: (name: string) => `已更新 ${name} 的角色`,
+    profileStyle: "角色样式",
+    profileSharedLibrary: "书库共用，进度和收藏独立保存。",
     library: "首页",
     reader: "阅读器",
     jobs: "任务",
@@ -2988,6 +3208,20 @@ const translations = {
   },
   zht: {
     language: "語言",
+    profile: "使用者檔案",
+    defaultProfile: "預設使用者",
+    defaultProfileBadge: "預設",
+    newProfile: "新增使用者",
+    renameProfile: "重新命名",
+    createProfilePrompt: "新增使用者檔案\n請輸入新使用者名稱",
+    renameProfilePrompt: (name: string) => `重新命名目前使用者檔案：${name}\n請輸入新的使用者名稱`,
+    profileSwitching: "正在切換使用者",
+    profileSwitched: (name: string) => `已切換到 ${name}`,
+    profileCreated: (name: string) => `已新增使用者 ${name}`,
+    profileRenamed: (name: string) => `已重新命名為 ${name}`,
+    profileStyled: (name: string) => `已更新 ${name} 的角色`,
+    profileStyle: "角色樣式",
+    profileSharedLibrary: "書庫共用，進度和收藏獨立保存。",
     library: "首頁",
     reader: "閱讀器",
     jobs: "任務",
@@ -3144,6 +3378,20 @@ const translations = {
   },
   en: {
     language: "Language",
+    profile: "Profile",
+    defaultProfile: "Default Profile",
+    defaultProfileBadge: "Default",
+    newProfile: "New Profile",
+    renameProfile: "Rename",
+    createProfilePrompt: "Create a new profile\nEnter the new profile name",
+    renameProfilePrompt: (name: string) => `Rename current profile: ${name}\nEnter the new profile name`,
+    profileSwitching: "Switching profile",
+    profileSwitched: (name: string) => `Switched to ${name}`,
+    profileCreated: (name: string) => `Created profile ${name}`,
+    profileRenamed: (name: string) => `Renamed to ${name}`,
+    profileStyled: (name: string) => `Updated ${name}'s avatar`,
+    profileStyle: "Avatar style",
+    profileSharedLibrary: "Libraries are shared; progress and shelves stay separate.",
     library: "Home",
     reader: "Reader",
     jobs: "Jobs",
@@ -3300,6 +3548,20 @@ const translations = {
   },
   ja: {
     language: "言語",
+    profile: "プロフィール",
+    defaultProfile: "デフォルト",
+    defaultProfileBadge: "既定",
+    newProfile: "新規プロフィール",
+    renameProfile: "名前変更",
+    createProfilePrompt: "新規プロフィールを作成\n新しいプロフィール名を入力",
+    renameProfilePrompt: (name: string) => `現在のプロフィール名を変更：${name}\n新しいプロフィール名を入力`,
+    profileSwitching: "プロフィールを切り替え中",
+    profileSwitched: (name: string) => `${name} に切り替えました`,
+    profileCreated: (name: string) => `${name} を作成しました`,
+    profileRenamed: (name: string) => `${name} に変更しました`,
+    profileStyled: (name: string) => `${name} のアバターを更新しました`,
+    profileStyle: "アバター",
+    profileSharedLibrary: "ライブラリは共有、進捗と棚は個別に保存されます。",
     library: "ホーム",
     reader: "リーダー",
     jobs: "ジョブ",
@@ -3456,6 +3718,20 @@ const translations = {
   },
   ko: {
     language: "언어",
+    profile: "프로필",
+    defaultProfile: "기본 프로필",
+    defaultProfileBadge: "기본",
+    newProfile: "새 프로필",
+    renameProfile: "이름 변경",
+    createProfilePrompt: "새 프로필 만들기\n새 프로필 이름을 입력하세요",
+    renameProfilePrompt: (name: string) => `현재 프로필 이름 변경: ${name}\n새 프로필 이름을 입력하세요`,
+    profileSwitching: "프로필 전환 중",
+    profileSwitched: (name: string) => `${name}(으)로 전환됨`,
+    profileCreated: (name: string) => `${name} 프로필 생성됨`,
+    profileRenamed: (name: string) => `${name}(으)로 이름 변경됨`,
+    profileStyled: (name: string) => `${name} 아바타가 업데이트됨`,
+    profileStyle: "아바타 스타일",
+    profileSharedLibrary: "라이브러리는 공유되고 진행률과 서가는 별도로 저장됩니다.",
     library: "홈",
     reader: "리더",
     jobs: "작업",
@@ -3696,6 +3972,125 @@ function isLocale(value: string | null | undefined): value is Locale {
 
 function arrayOrEmpty<T>(value: T[] | null | undefined): T[] {
   return Array.isArray(value) ? value : [];
+}
+
+function resolveActiveProfile(profiles: Profile[], storedProfileID: string | number) {
+  const parsedID = Number(storedProfileID);
+  if (Number.isFinite(parsedID) && parsedID > 0) {
+    const storedProfile = profiles.find((profile) => profile.id === Math.trunc(parsedID));
+    if (storedProfile) return storedProfile;
+  }
+  return profiles.find((profile) => profile.isDefault) ?? profiles[0] ?? null;
+}
+
+function profileDisplayName(profile: Profile, t: Translation) {
+  return profile.isDefault ? `${profile.name} · ${t.defaultProfileBadge}` : profile.name;
+}
+
+const profilePresets = [
+  { avatar: "reader", color: "teal", label: "Reader" },
+  { avatar: "comic", color: "amber", label: "Comic" },
+  { avatar: "game", color: "violet", label: "Game" },
+  { avatar: "movie", color: "rose", label: "Movie" },
+  { avatar: "star", color: "blue", label: "Stargazer" },
+  { avatar: "archive", color: "green", label: "Archive" },
+  { avatar: "coffee", color: "slate", label: "Study" },
+  { avatar: "rocket", color: "copper", label: "Explorer" },
+] as const;
+
+function profilePresetForIndex(index: number) {
+  return profilePresets[Math.max(0, index) % profilePresets.length];
+}
+
+function fallbackProfile(name: string): Profile {
+  return {
+    id: 0,
+    name,
+    avatar: "reader",
+    color: "teal",
+    isDefault: true,
+    createdAt: "",
+    updatedAt: "",
+  };
+}
+
+function ProfileAvatar({ profile }: { profile: Pick<Profile, "name" | "avatar" | "color"> }) {
+  return (
+    <span className={`profileAvatar profileColor-${profile.color || "teal"}`} aria-hidden="true">
+      <svg viewBox="0 0 24 24" focusable="false">
+        {profileAvatarPaths(profile.avatar)}
+      </svg>
+    </span>
+  );
+}
+
+function profileAvatarPaths(avatar: string) {
+  switch (avatar) {
+    case "comic":
+      return (
+        <>
+          <path d="M5 5.5h10.5a3.5 3.5 0 0 1 3.5 3.5v8.5H8.5A3.5 3.5 0 0 1 5 14Z" />
+          <path d="M9 9h6" />
+          <path d="M9 12h4" />
+        </>
+      );
+    case "game":
+      return (
+        <>
+          <path d="M7.5 10h9a4 4 0 0 1 3.9 3.1l.5 2.3a2 2 0 0 1-3.3 1.9l-1.5-1.4H7.9l-1.5 1.4a2 2 0 0 1-3.3-1.9l.5-2.3A4 4 0 0 1 7.5 10Z" />
+          <path d="M8 13v3" />
+          <path d="M6.5 14.5h3" />
+          <path d="M15.5 14h.1" />
+          <path d="M18 14.8h.1" />
+        </>
+      );
+    case "movie":
+      return (
+        <>
+          <path d="M5 6h14v12H5Z" />
+          <path d="M8 6v12" />
+          <path d="M16 6v12" />
+          <path d="M5 10h14" />
+          <path d="M5 14h14" />
+        </>
+      );
+    case "star":
+      return <path d="m12 4 2.2 4.7 5.1.7-3.7 3.6.9 5.1-4.5-2.4-4.5 2.4.9-5.1-3.7-3.6 5.1-.7Z" />;
+    case "archive":
+      return (
+        <>
+          <path d="M5 7h14v12H5Z" />
+          <path d="M7 5h10v2H7Z" />
+          <path d="M9 11h6" />
+        </>
+      );
+    case "coffee":
+      return (
+        <>
+          <path d="M6 9h10v5a4 4 0 0 1-4 4h-2a4 4 0 0 1-4-4Z" />
+          <path d="M16 10h1a2 2 0 0 1 0 4h-1" />
+          <path d="M8 5v2" />
+          <path d="M12 5v2" />
+        </>
+      );
+    case "rocket":
+      return (
+        <>
+          <path d="M12 14 9 11c.9-3.8 3-6 7-7 .3 4-1.2 6.9-4 10Z" />
+          <path d="M9 11 5.5 12.5 8 15" />
+          <path d="M12 14 13 18l2-3.5" />
+          <path d="M6 18l2-2" />
+        </>
+      );
+    default:
+      return (
+        <>
+          <path d="M5 5.5A3.5 3.5 0 0 1 8.5 2H19v16H8.5A3.5 3.5 0 0 0 5 21.5Z" />
+          <path d="M5 5.5v16" />
+          <path d="M9 6h6" />
+        </>
+      );
+  }
 }
 
 function mergeByID<T extends { id: number }>(current: T[], incoming: T[]) {

@@ -16,6 +16,16 @@ export type DirectoryListing = {
   entries: DirectoryEntry[];
 };
 
+export type Profile = {
+  id: number;
+  name: string;
+  avatar: string;
+  color: string;
+  isDefault: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type Series = {
   id: number;
   libraryId: number;
@@ -271,6 +281,7 @@ export type ScanSettings = {
 };
 
 const authTokenKey = "foliospace_api_token";
+const activeProfileKey = "foliospace_active_profile_id";
 
 export function getAuthToken() {
   try {
@@ -296,12 +307,37 @@ export function clearAuthToken() {
   }
 }
 
+export function getActiveProfileId() {
+  try {
+    const value = window.localStorage.getItem(activeProfileKey) ?? "";
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? String(Math.trunc(parsed)) : "";
+  } catch {
+    return "";
+  }
+}
+
+export function setActiveProfileId(profileId: number | string) {
+  try {
+    const value = String(profileId).trim();
+    if (value) {
+      window.localStorage.setItem(activeProfileKey, value);
+    } else {
+      window.localStorage.removeItem(activeProfileKey);
+    }
+  } catch {
+    // Ignore storage failures in restricted browser contexts.
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getAuthToken();
+  const profileId = getActiveProfileId();
   const response = await fetch(path, {
     headers: {
       "Content-Type": "application/json",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(profileId ? { "X-FolioSpace-Profile-Id": profileId } : {}),
       ...(init?.headers ?? {}),
     },
     ...init,
@@ -331,6 +367,23 @@ export const api = {
       body: JSON.stringify(input),
     }),
   directoryRoots: () => request<{ roots: DirectoryEntry[] }>("/api/config/directory-roots"),
+  profiles: () => request<Profile[]>("/api/profiles"),
+  createProfile: (name: string, avatar?: string, color?: string) =>
+    request<Profile>("/api/profiles", {
+      method: "POST",
+      body: JSON.stringify({ name, avatar, color }),
+    }),
+  updateProfile: (profileId: number, input: { name: string; avatar?: string; color?: string }) =>
+    request<Profile>(`/api/profiles/${profileId}`, {
+      method: "PUT",
+      body: JSON.stringify(input),
+    }),
+  renameProfile: (profileId: number, name: string) =>
+    request<Profile>(`/api/profiles/${profileId}`, {
+      method: "PUT",
+      body: JSON.stringify({ name }),
+    }),
+  deleteProfile: (profileId: number) => request<{ ok: boolean }>(`/api/profiles/${profileId}`, { method: "DELETE" }),
   scanSettings: () => request<ScanSettings>("/api/settings/scan"),
   saveScanSettings: (settings: ScanSettings) =>
     request<ScanSettings>("/api/settings/scan", {

@@ -44,6 +44,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/setup/status", s.handleSetupStatus)
 	mux.HandleFunc("/api/setup/initialize", s.handleSetupInitialize)
 	mux.HandleFunc("/api/config/directory-roots", s.handleDirectoryRoots)
+	mux.HandleFunc("/api/profiles", s.handleProfiles)
+	mux.HandleFunc("/api/profiles/", s.handleProfileAction)
 	mux.HandleFunc("/api/settings/scan", s.handleScanSettings)
 	mux.HandleFunc("/api/client/info", s.handleClientInfo)
 	mux.HandleFunc("/api/client/preferences", s.handleClientPreferences)
@@ -163,6 +165,54 @@ func (s *Server) handleDirectoryRoots(w http.ResponseWriter, r *http.Request) {
 	writeJSONOrError(w, map[string]any{"roots": roots}, err)
 }
 
+func (s *Server) handleProfiles(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		profiles, err := s.service.ListProfiles()
+		writeJSONOrError(w, profiles, err)
+	case http.MethodPost:
+		var req struct {
+			Name   string `json:"name"`
+			Avatar string `json:"avatar"`
+			Color  string `json:"color"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		profile, err := s.service.CreateProfile(req.Name, req.Avatar, req.Color)
+		writeJSONOrError(w, profile, err)
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleProfileAction(w http.ResponseWriter, r *http.Request) {
+	id, tail, ok := parseIDTail(r.URL.Path, "/api/profiles/")
+	if !ok || tail != "" {
+		http.NotFound(w, r)
+		return
+	}
+	switch r.Method {
+	case http.MethodPut:
+		var req struct {
+			Name   string `json:"name"`
+			Avatar string `json:"avatar"`
+			Color  string `json:"color"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		profile, err := s.service.UpdateProfile(id, req.Name, req.Avatar, req.Color)
+		writeJSONOrError(w, profile, err)
+	case http.MethodDelete:
+		writeJSONOrError(w, map[string]bool{"ok": true}, s.service.DeleteProfile(id))
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
 func (s *Server) handleScanSettings(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -264,22 +314,23 @@ func (s *Server) handleClientHome(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	continueReading, err := s.service.ContinueReading(queryLimit(r, 12))
+	profileID := s.requestProfileID(r)
+	continueReading, err := s.service.ContinueReadingForProfile(profileID, queryLimit(r, 12))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	recentBooks, err := s.service.RecentBooks(queryLimit(r, 12))
+	recentBooks, err := s.service.RecentBooksForProfile(profileID, queryLimit(r, 12))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	favoriteBooks, err := s.service.FavoriteBooks(queryLimit(r, 12))
+	favoriteBooks, err := s.service.FavoriteBooksForProfile(profileID, queryLimit(r, 12))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	wantBooks, err := s.service.BooksByPrivateStatus("want", queryLimit(r, 12))
+	wantBooks, err := s.service.BooksByPrivateStatusForProfile(profileID, "want", queryLimit(r, 12))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -316,7 +367,7 @@ func (s *Server) handleClientPreferences(w http.ResponseWriter, r *http.Request)
 	}
 	switch r.Method {
 	case http.MethodGet:
-		prefs, err := s.service.ClientPreferences()
+		prefs, err := s.service.ClientPreferencesForProfile(s.requestProfileID(r))
 		writeJSONOrError(w, prefs, err)
 	case http.MethodPut:
 		var req domain.ClientPreferences
@@ -324,7 +375,7 @@ func (s *Server) handleClientPreferences(w http.ResponseWriter, r *http.Request)
 			writeError(w, http.StatusBadRequest, err)
 			return
 		}
-		prefs, err := s.service.SaveClientPreferences(req)
+		prefs, err := s.service.SaveClientPreferencesForProfile(s.requestProfileID(r), req)
 		writeJSONOrError(w, prefs, err)
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -341,12 +392,12 @@ func (s *Server) handleClientBookAction(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if tail == "manifest" && r.Method == http.MethodGet {
-		manifest, err := s.clientBookManifest(id)
+		manifest, err := s.clientBookManifest(id, s.requestProfileID(r))
 		writeJSONOrError(w, manifest, err)
 		return
 	}
 	if tail == "private-state" && r.Method == http.MethodGet {
-		response, err := s.clientBookPrivateState(id)
+		response, err := s.clientBookPrivateState(id, s.requestProfileID(r))
 		writeJSONOrError(w, response, err)
 		return
 	}
@@ -356,7 +407,7 @@ func (s *Server) handleClientBookAction(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusBadRequest, err)
 			return
 		}
-		book, err := s.service.UpdateBookPrivateState(id, req)
+		book, err := s.service.UpdateBookPrivateStateForProfile(id, s.requestProfileID(r), req)
 		if err != nil {
 			writeJSONOrError(w, nil, err)
 			return
@@ -560,7 +611,7 @@ func (s *Server) handleClientFavoriteBooks(w http.ResponseWriter, r *http.Reques
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	items, err := s.service.FavoriteBooks(queryLimit(r, 12))
+	items, err := s.service.FavoriteBooksForProfile(s.requestProfileID(r), queryLimit(r, 12))
 	writeJSONOrError(w, clientBooks(items), err)
 }
 
@@ -577,7 +628,7 @@ func (s *Server) handleClientPrivateStatusBooks(w http.ResponseWriter, r *http.R
 		http.NotFound(w, r)
 		return
 	}
-	items, err := s.service.BooksByPrivateStatus(status, queryLimit(r, 12))
+	items, err := s.service.BooksByPrivateStatusForProfile(s.requestProfileID(r), status, queryLimit(r, 12))
 	writeJSONOrError(w, clientBooks(items), err)
 }
 
@@ -590,7 +641,7 @@ func (s *Server) handleClientSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
-	books, err := s.service.SearchBooks(query, queryInt(r, "limit", 20, 100))
+	books, err := s.service.SearchBooksForProfile(query, s.requestProfileID(r), queryInt(r, "limit", 20, 100))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -686,12 +737,12 @@ func (s *Server) setAuthCookie(w http.ResponseWriter, token string) {
 	})
 }
 
-func (s *Server) clientBookManifest(bookID int64) (clientBookManifestResponse, error) {
-	book, err := s.service.Book(bookID)
+func (s *Server) clientBookManifest(bookID int64, profileID int64) (clientBookManifestResponse, error) {
+	book, err := s.service.BookForProfile(bookID, profileID)
 	if err != nil {
 		return clientBookManifestResponse{}, err
 	}
-	progress, err := s.clientProgress(bookID)
+	progress, err := s.clientProgress(bookID, profileID)
 	if err != nil {
 		return clientBookManifestResponse{}, err
 	}
@@ -734,8 +785,8 @@ func (s *Server) clientBookManifest(bookID int64) (clientBookManifestResponse, e
 	return out, nil
 }
 
-func (s *Server) clientBookPrivateState(bookID int64) (clientPrivateStateResponse, error) {
-	book, err := s.service.Book(bookID)
+func (s *Server) clientBookPrivateState(bookID int64, profileID int64) (clientPrivateStateResponse, error) {
+	book, err := s.service.BookForProfile(bookID, profileID)
 	if err != nil {
 		return clientPrivateStateResponse{}, err
 	}
@@ -745,8 +796,8 @@ func (s *Server) clientBookPrivateState(bookID int64) (clientPrivateStateRespons
 	}, nil
 }
 
-func (s *Server) clientProgress(bookID int64) (clientProgress, error) {
-	progress, err := s.service.Progress(bookID)
+func (s *Server) clientProgress(bookID int64, profileID int64) (clientProgress, error) {
+	progress, err := s.service.ProgressForProfile(bookID, profileID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return clientProgress{BookID: bookID, PageIndex: 0, Locator: "", ProgressFraction: 0}, nil
 	}
@@ -837,7 +888,7 @@ func (s *Server) handleSeriesAction(w http.ResponseWriter, r *http.Request) {
 		s.streamSeriesCover(w, id)
 		return
 	}
-	items, err := s.service.ListBooks(id)
+	items, err := s.service.ListBooksForProfile(id, s.requestProfileID(r))
 	writeJSONOrError(w, items, err)
 }
 
@@ -852,25 +903,26 @@ func (s *Server) handleCollectionAction(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if action == "assets" {
-		assets, err := s.service.CollectionAssets(id)
+		assets, err := s.service.CollectionAssetsForProfile(id, s.requestProfileID(r))
 		writeJSONOrError(w, map[string]any{
 			"books": assets.Books,
 			"games": games(assets.Games),
 		}, err)
 		return
 	}
+	profileID := s.requestProfileID(r)
 	if hasBookListQuery(r) {
-		page, err := s.service.ListBooksPage(domain.BookListOptions{
+		page, err := s.service.ListBooksPageForProfile(domain.BookListOptions{
 			SeriesID: id,
 			Limit:    queryInt(r, "limit", 60, 200),
 			Offset:   queryInt(r, "offset", 0, 0),
 			Query:    r.URL.Query().Get("q"),
 			Sort:     r.URL.Query().Get("sort"),
-		})
+		}, profileID)
 		writeJSONOrError(w, page, err)
 		return
 	}
-	items, err := s.service.ListBooks(id)
+	items, err := s.service.ListBooksForProfile(id, profileID)
 	writeJSONOrError(w, items, err)
 }
 
@@ -879,7 +931,7 @@ func (s *Server) handleContinueReading(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	items, err := s.service.ContinueReading(queryLimit(r, 12))
+	items, err := s.service.ContinueReadingForProfile(s.requestProfileID(r), queryLimit(r, 12))
 	writeJSONOrError(w, items, err)
 }
 
@@ -888,7 +940,7 @@ func (s *Server) handleRecentBooks(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	items, err := s.service.RecentBooks(queryLimit(r, 12))
+	items, err := s.service.RecentBooksForProfile(s.requestProfileID(r), queryLimit(r, 12))
 	writeJSONOrError(w, items, err)
 }
 
@@ -945,7 +997,7 @@ func (s *Server) handleFavoriteBooks(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	items, err := s.service.FavoriteBooks(queryLimit(r, 12))
+	items, err := s.service.FavoriteBooksForProfile(s.requestProfileID(r), queryLimit(r, 12))
 	writeJSONOrError(w, items, err)
 }
 
@@ -959,7 +1011,7 @@ func (s *Server) handlePrivateStatusBooks(w http.ResponseWriter, r *http.Request
 		http.NotFound(w, r)
 		return
 	}
-	items, err := s.service.BooksByPrivateStatus(status, queryLimit(r, 12))
+	items, err := s.service.BooksByPrivateStatusForProfile(s.requestProfileID(r), status, queryLimit(r, 12))
 	writeJSONOrError(w, items, err)
 }
 
@@ -969,7 +1021,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
-	books, err := s.service.SearchBooks(query, queryInt(r, "limit", 20, 100))
+	books, err := s.service.SearchBooksForProfile(query, s.requestProfileID(r), queryInt(r, "limit", 20, 100))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -988,7 +1040,7 @@ func (s *Server) handleBookAction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if tail == "" && r.Method == http.MethodGet {
-		book, err := s.service.Book(id)
+		book, err := s.service.BookForProfile(id, s.requestProfileID(r))
 		writeJSONOrError(w, book, err)
 		return
 	}
@@ -1029,11 +1081,11 @@ func (s *Server) handleBookAction(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err)
 			return
 		}
-		writeJSONOrError(w, map[string]bool{"ok": true}, s.service.SaveProgressDetail(id, req.PageIndex, req.Locator, req.ProgressFraction))
+		writeJSONOrError(w, map[string]bool{"ok": true}, s.service.SaveProgressDetailForProfile(id, s.requestProfileID(r), req.PageIndex, req.Locator, req.ProgressFraction))
 		return
 	}
 	if tail == "progress" && r.Method == http.MethodGet {
-		progress, err := s.service.Progress(id)
+		progress, err := s.service.ProgressForProfile(id, s.requestProfileID(r))
 		if errors.Is(err, sql.ErrNoRows) {
 			writeJSONOrError(w, domainDefaultProgress(id), nil)
 			return
@@ -1047,7 +1099,7 @@ func (s *Server) handleBookAction(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err)
 			return
 		}
-		book, err := s.service.UpdateBookPrivateState(id, req)
+		book, err := s.service.UpdateBookPrivateStateForProfile(id, s.requestProfileID(r), req)
 		writeJSONOrError(w, book, err)
 		return
 	}
@@ -1071,6 +1123,25 @@ func domainDefaultProgress(bookID int64) map[string]any {
 
 func queryLimit(r *http.Request, fallback int) int {
 	return queryInt(r, "limit", fallback, 50)
+}
+
+func (s *Server) requestProfileID(r *http.Request) int64 {
+	raw := strings.TrimSpace(r.Header.Get("X-FolioSpace-Profile-Id"))
+	if raw == "" {
+		raw = strings.TrimSpace(r.URL.Query().Get("profileId"))
+	}
+	if raw == "" {
+		return 0
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || value <= 0 {
+		return 0
+	}
+	profileID, err := s.service.ResolveProfileID(value)
+	if err != nil {
+		return 0
+	}
+	return profileID
 }
 
 func queryInt(r *http.Request, key string, fallback int, max int) int {

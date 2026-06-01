@@ -38,6 +38,16 @@ type DirectoryListing struct {
 	Entries []DirectoryEntry `json:"entries"`
 }
 
+type Profile struct {
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	Avatar    string    `json:"avatar"`
+	Color     string    `json:"color"`
+	IsDefault bool      `json:"isDefault"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
 type Series struct {
 	ID             int64  `json:"id"`
 	LibraryID      int64  `json:"libraryId"`

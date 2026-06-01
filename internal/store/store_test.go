@@ -132,6 +132,143 @@ func TestStorePersistsClientPreferences(t *testing.T) {
 	}
 }
 
+func TestStoreCreatesDefaultProfileAndIsolatesProfileState(t *testing.T) {
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	s := New(conn)
+	defaultProfile, err := s.DefaultProfile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if defaultProfile.ID == 0 || !defaultProfile.IsDefault || defaultProfile.Name == "" {
+		t.Fatalf("default profile = %#v, want named default profile", defaultProfile)
+	}
+	guestProfile, err := s.CreateProfile("Guest", "comic", "amber")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if guestProfile.ID == defaultProfile.ID || guestProfile.IsDefault {
+		t.Fatalf("guest profile = %#v, want non-default profile distinct from %#v", guestProfile, defaultProfile)
+	}
+
+	lib, err := s.CreateLibrary("Comics", "/library")
+	if err != nil {
+		t.Fatal(err)
+	}
+	series, err := s.UpsertSeries(lib.ID, "Series A", "Series A")
+	if err != nil {
+		t.Fatal(err)
+	}
+	book, err := s.UpsertBook(series.ID, "Book 1", "cbz")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.SaveProgressDetailForProfile(book.ID, defaultProfile.ID, 3, "page:3", 0.3); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveProgressDetailForProfile(book.ID, guestProfile.ID, 8, "page:8", 0.8); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateBookPrivateStateForProfile(book.ID, defaultProfile.ID, domain.BookPrivateState{Status: "reading", Favorite: true, Rating: 4, Tags: []string{"me"}, Summary: "mine"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateBookPrivateStateForProfile(book.ID, guestProfile.ID, domain.BookPrivateState{Status: "want", Favorite: false, Rating: 2, Tags: []string{"guest"}, Summary: "guest note"}); err != nil {
+		t.Fatal(err)
+	}
+
+	defaultProgress, err := s.ProgressForProfile(book.ID, defaultProfile.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if defaultProgress.PageIndex != 3 || defaultProgress.Locator != "page:3" || defaultProgress.ProgressFraction != 0.3 {
+		t.Fatalf("default progress = %#v, want profile-specific progress", defaultProgress)
+	}
+	guestProgress, err := s.ProgressForProfile(book.ID, guestProfile.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if guestProgress.PageIndex != 8 || guestProgress.Locator != "page:8" || guestProgress.ProgressFraction != 0.8 {
+		t.Fatalf("guest progress = %#v, want separate profile-specific progress", guestProgress)
+	}
+
+	defaultBook, err := s.BookByIDForProfile(book.ID, defaultProfile.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if defaultBook.PrivateStatus != "reading" || !defaultBook.Favorite || defaultBook.Rating != 4 || defaultBook.Summary != "mine" || defaultBook.CurrentPage != 3 {
+		t.Fatalf("default book = %#v, want default profile state", defaultBook)
+	}
+	guestBook, err := s.BookByIDForProfile(book.ID, guestProfile.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if guestBook.PrivateStatus != "want" || guestBook.Favorite || guestBook.Rating != 2 || guestBook.Summary != "guest note" || guestBook.CurrentPage != 8 {
+		t.Fatalf("guest book = %#v, want guest profile state", guestBook)
+	}
+
+	defaultFavorites, err := s.ListFavoriteBooksForProfile(defaultProfile.ID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(defaultFavorites) != 1 || defaultFavorites[0].ID != book.ID {
+		t.Fatalf("default favorites = %#v, want favorite book", defaultFavorites)
+	}
+	guestFavorites, err := s.ListFavoriteBooksForProfile(guestProfile.ID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(guestFavorites) != 0 {
+		t.Fatalf("guest favorites = %#v, want no favorites", guestFavorites)
+	}
+}
+
+func TestStoreScopesClientPreferencesByProfile(t *testing.T) {
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	s := New(conn)
+	defaultProfile, err := s.DefaultProfile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	guestProfile, err := s.CreateProfile("Guest", "comic", "amber")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defaultPrefs := domain.ClientPreferences{Locale: "en", ReaderPageMode: "single", EPUBPageMode: "single", EPUBTheme: "light", EPUBFontSize: 18}
+	guestPrefs := domain.ClientPreferences{Locale: "ja", ReaderPageMode: "webtoon", EPUBPageMode: "double", EPUBTheme: "dark", EPUBFontSize: 22}
+	if err := s.SaveClientPreferencesForProfile(defaultProfile.ID, defaultPrefs); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveClientPreferencesForProfile(guestProfile.ID, guestPrefs); err != nil {
+		t.Fatal(err)
+	}
+
+	gotDefault, err := s.ClientPreferencesForProfile(defaultProfile.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotDefault != defaultPrefs {
+		t.Fatalf("default prefs = %#v, want %#v", gotDefault, defaultPrefs)
+	}
+	gotGuest, err := s.ClientPreferencesForProfile(guestProfile.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotGuest != guestPrefs {
+		t.Fatalf("guest prefs = %#v, want %#v", gotGuest, guestPrefs)
+	}
+}
+
 func TestStoreRequestsScanJobControl(t *testing.T) {
 	conn, err := db.Open(t.TempDir())
 	if err != nil {
