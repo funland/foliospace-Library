@@ -1686,17 +1686,33 @@ button.danger:hover {
 }
 
 .reader.immersiveMode {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  width: 100vw;
   height: 100dvh;
   overflow: hidden;
 }
 
 .reader.immersiveMode .readerHeader,
-.reader.immersiveMode .readerControls {
+.reader.immersiveMode .readerControls,
+.reader.immersiveMode .readerStateBar,
+.reader.immersiveMode .bookDetails {
   display: none;
 }
 
 .reader.immersiveMode .pageStage {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
   grid-row: 1 / -1;
+}
+
+.reader.immersiveMode .webtoonReader {
+  inset: 0;
+  width: 100%;
 }
 
 .readerFullscreenExit {
