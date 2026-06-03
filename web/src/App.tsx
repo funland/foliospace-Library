@@ -1353,7 +1353,7 @@ export function App() {
     : null;
   const activeScanElapsed = activeScan ? formatElapsed(activeScan, nowTick) : null;
   const selectedJobLatest = selectedJob ? jobs.find((job) => job.id === selectedJob.id) ?? selectedJob : null;
-  const useWebtoonReader = selectedBook ? readerPageMode === "webtoon" && selectedBook.format !== "epub" && selectedBook.format !== "pdf" : false;
+  const useWebtoonReader = selectedBook ? readerPageMode === "webtoon" && selectedBook.format !== "epub" : false;
   const readerClassName = selectedBook
     ? `reader ${selectedBook.format}Reader${useWebtoonReader ? " webtoonMode" : ""}${readerFullscreen ? " immersiveMode" : ""}`
     : "reader";
@@ -1980,17 +1980,15 @@ export function App() {
                         >
                           {t.double}
                         </button>
-                        {selectedBook.format !== "pdf" && (
-                          <button
-                            className={readerPageMode === "webtoon" ? "selected" : ""}
-                            onClick={() => {
-                              setReaderPageMode("webtoon");
-                              setReaderLoadState("ready");
-                            }}
-                          >
-                            {t.webtoon}
-                          </button>
-                        )}
+                        <button
+                          className={readerPageMode === "webtoon" ? "selected" : ""}
+                          onClick={() => {
+                            setReaderPageMode("webtoon");
+                            setReaderLoadState("ready");
+                          }}
+                        >
+                          {t.webtoon}
+                        </button>
                       </div>
                     )}
                     <button className="readerFullscreenButton" onClick={toggleReaderFullscreen}>{readerFullscreen ? t.exitFullscreen : t.fullscreen}</button>
@@ -2065,7 +2063,7 @@ export function App() {
                   </section>
                 )}
                 <div
-                  className={`pageStage ${selectedBook.format === "epub" ? "epub" : selectedBook.format === "pdf" ? "pdf" : readerPageMode}`}
+                  className={`pageStage ${selectedBook.format === "epub" ? "epub" : selectedBook.format === "pdf" ? `pdf ${readerPageMode === "webtoon" ? "webtoon" : ""}` : readerPageMode}`}
                   onMouseDownCapture={handleReaderMouseDown}
                   onTouchStartCapture={handleReaderTouchStart}
                 >
@@ -2135,8 +2133,12 @@ export function App() {
                     <PdfReader
                       book={selectedBook}
                       pageIndex={pageIndex}
-                      pageMode={readerPageMode === "webtoon" ? "single" : readerPageMode}
+                      pageMode={readerPageMode}
                       onPageCount={(count) => setPdfPageCount(count)}
+                      onPageChange={(nextIndex) => {
+                        setPageIndex((value) => (value === nextIndex ? value : nextIndex));
+                        setDisplayedPageIndex((value) => (value === nextIndex ? value : nextIndex));
+                      }}
                     />
                   ) : useWebtoonReader ? (
                     <div ref={webtoonRef} className="webtoonReader" onScroll={updateWebtoonPosition} aria-live="polite">
@@ -2511,15 +2513,18 @@ function PdfReader({
   pageIndex,
   pageMode,
   onPageCount,
+  onPageChange,
 }: {
   book: Book;
   pageIndex: number;
   pageMode: ReaderPageMode;
   onPageCount: (count: number) => void;
+  onPageChange?: (pageIndex: number) => void;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRefs = useRef<(HTMLCanvasElement | null)[]>([]);
   const renderTasksRef = useRef<Array<{ cancel: () => void } | null>>([]);
+  const scrollFrameRef = useRef<number | null>(null);
   const [documentProxy, setDocumentProxy] = useState<PDFDocumentProxy | null>(null);
   const [renderError, setRenderError] = useState("");
   const [sizeTick, setSizeTick] = useState(0);
@@ -2562,6 +2567,8 @@ function PdfReader({
     };
   }, [book.id]);
 
+  const renderPageIndex = pageMode === "webtoon" ? 0 : pageIndex;
+
   useEffect(() => {
     if (!documentProxy || !containerRef.current) return;
     let cancelled = false;
@@ -2570,9 +2577,12 @@ function PdfReader({
     renderTasksRef.current.forEach((task) => task?.cancel());
     renderTasksRef.current = [];
     const rect = container.getBoundingClientRect();
+    const isWebtoonMode = pageMode === "webtoon";
     const gap = pageMode === "double" ? 18 : 0;
-    const pagesToRender = pdfVisiblePages(pageIndex, pdf.numPages, pageMode);
-    const slotWidth = Math.max(120, (rect.width - gap) / Math.max(1, pagesToRender.length));
+    const pagesToRender = pdfVisiblePages(renderPageIndex, pdf.numPages, pageMode);
+    const slotWidth = isWebtoonMode
+      ? Math.max(160, Math.min(rect.width - 32, 980))
+      : Math.max(120, (rect.width - gap) / Math.max(1, pagesToRender.length));
     const slotHeight = Math.max(160, rect.height);
 
     async function render() {
@@ -2584,7 +2594,9 @@ function PdfReader({
           if (cancelled) return;
           const baseViewport = page.getViewport({ scale: 1 });
           const dpr = Math.max(1, window.devicePixelRatio || 1);
-          const cssScale = Math.min(slotWidth / baseViewport.width, slotHeight / baseViewport.height);
+          const cssScale = isWebtoonMode
+            ? slotWidth / baseViewport.width
+            : Math.min(slotWidth / baseViewport.width, slotHeight / baseViewport.height);
           const viewport = page.getViewport({ scale: cssScale * dpr });
           const context = canvas.getContext("2d");
           if (!context) continue;
@@ -2614,12 +2626,45 @@ function PdfReader({
       renderTasksRef.current.forEach((task) => task?.cancel());
       renderTasksRef.current = [];
     };
-  }, [documentProxy, pageIndex, pageMode, sizeTick]);
+  }, [documentProxy, renderPageIndex, pageMode, sizeTick]);
 
-  const pages = documentProxy ? pdfVisiblePages(pageIndex, documentProxy.numPages, pageMode) : [];
+  useEffect(() => {
+    return () => {
+      if (scrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(scrollFrameRef.current);
+      }
+    };
+  }, []);
+
+  const pages = documentProxy ? pdfVisiblePages(renderPageIndex, documentProxy.numPages, pageMode) : [];
+
+  function updatePDFWebtoonPosition() {
+    if (pageMode !== "webtoon" || !containerRef.current || !onPageChange) return;
+    if (scrollFrameRef.current !== null) {
+      window.cancelAnimationFrame(scrollFrameRef.current);
+    }
+    scrollFrameRef.current = window.requestAnimationFrame(() => {
+      scrollFrameRef.current = null;
+      const node = containerRef.current;
+      if (!node) return;
+      const markers = Array.from(node.querySelectorAll<HTMLCanvasElement>("[data-page-index]"));
+      const viewportAnchor = node.scrollTop + node.clientHeight * 0.28;
+      let current = 0;
+      for (const marker of markers) {
+        if (marker.offsetTop <= viewportAnchor) {
+          current = Number(marker.dataset.pageIndex ?? 0);
+        } else {
+          break;
+        }
+      }
+      if (Number.isFinite(current)) {
+        onPageChange(current);
+      }
+    });
+  }
 
   return (
-    <div ref={containerRef} className={`pdfReader ${pageMode}`}>
+    <div ref={containerRef} className={`pdfReader ${pageMode}`} onScroll={updatePDFWebtoonPosition}>
       {renderError && <div className="pdfReaderError">{renderError}</div>}
       {pages.map((pageNumber, index) => (
         <canvas
@@ -2627,6 +2672,7 @@ function PdfReader({
           ref={(node) => {
             canvasRefs.current[index] = node;
           }}
+          data-page-index={pageNumber - 1}
           aria-label={`PDF page ${pageNumber}`}
         />
       ))}
@@ -2637,6 +2683,7 @@ function PdfReader({
 function pdfVisiblePages(index: number, total: number, mode: ReaderPageMode) {
   const first = Math.max(1, Math.min(total, index + 1));
   if (mode === "single") return [first];
+  if (mode === "webtoon") return Array.from({ length: total }, (_, offset) => offset + 1);
   return [first, first + 1].filter((page) => page >= 1 && page <= total);
 }
 
