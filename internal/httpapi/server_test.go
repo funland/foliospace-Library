@@ -242,6 +242,9 @@ func TestClientAPIHomeAndManifestsHideFilePaths(t *testing.T) {
 		!strings.Contains(infoBody, `"mp4"`) ||
 		!strings.Contains(infoBody, `"videoCatalog":true`) ||
 		!strings.Contains(infoBody, `"pdfPageLayout":true`) ||
+		!strings.Contains(infoBody, `"pdfWebtoonLayout":true`) ||
+		!strings.Contains(infoBody, `"comicWebtoonLayout":true`) ||
+		!strings.Contains(infoBody, `"compactReader":true`) ||
 		!strings.Contains(infoBody, `"scanSettings":true`) {
 		t.Fatalf("client info response %q does not include v1 capabilities", infoBody)
 	}
@@ -267,16 +270,22 @@ func TestClientAPIHomeAndManifestsHideFilePaths(t *testing.T) {
 	if strings.Contains(cbzManifestBody, root) || strings.Contains(cbzManifestBody, "filePath") {
 		t.Fatalf("cbz client manifest leaked file path: %q", cbzManifestBody)
 	}
-	if !strings.Contains(cbzManifestBody, `"format":"cbz"`) || !strings.Contains(cbzManifestBody, `"/api/books/`+itoa(cbzBookID)+`/pages/0"`) {
-		t.Fatalf("cbz client manifest response %q is missing page URLs", cbzManifestBody)
+	if !strings.Contains(cbzManifestBody, `"format":"cbz"`) ||
+		!strings.Contains(cbzManifestBody, `"readerModes":["single","double","webtoon"]`) ||
+		!strings.Contains(cbzManifestBody, `"defaultReaderMode":"single"`) ||
+		!strings.Contains(cbzManifestBody, `"/api/books/`+itoa(cbzBookID)+`/pages/0"`) {
+		t.Fatalf("cbz client manifest response %q is missing reader modes or page URLs", cbzManifestBody)
 	}
 
 	epubManifestBody := get(t, ts.URL+"/api/client/books/"+itoa(epubBookID)+"/manifest")
 	if strings.Contains(epubManifestBody, root) || strings.Contains(epubManifestBody, "filePath") {
 		t.Fatalf("epub client manifest leaked file path: %q", epubManifestBody)
 	}
-	if !strings.Contains(epubManifestBody, `"format":"epub"`) || !strings.Contains(epubManifestBody, `"resourceBaseUrl":"/api/books/`+itoa(epubBookID)+`/epub/resources/"`) {
-		t.Fatalf("epub client manifest response %q is missing epub open data", epubManifestBody)
+	if !strings.Contains(epubManifestBody, `"format":"epub"`) ||
+		!strings.Contains(epubManifestBody, `"readerModes":["single"]`) ||
+		!strings.Contains(epubManifestBody, `"defaultReaderMode":"single"`) ||
+		!strings.Contains(epubManifestBody, `"resourceBaseUrl":"/api/books/`+itoa(epubBookID)+`/epub/resources/"`) {
+		t.Fatalf("epub client manifest response %q is missing reader modes or epub open data", epubManifestBody)
 	}
 
 	games, err := st.ListRecentGames(10)

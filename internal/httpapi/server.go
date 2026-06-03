@@ -283,26 +283,29 @@ func (s *Server) handleClientInfo(w http.ResponseWriter, r *http.Request) {
 		APIVersion:       "v1",
 		SupportedFormats: []string{"cbz", "zip", "epub", "pdf", "mp4", "m4v", "mov", "mkv", "avi", "webm", "nes", "sfc", "smc", "gba", "gb", "gbc", "nds", "3ds", "cia", "chd", "iso", "bin", "cue", "7z"},
 		Capabilities: clientCapabilities{
-			ClientHome:        true,
-			UnifiedManifest:   true,
-			ProgressSync:      true,
-			EPUBStreaming:     true,
-			PDFStreaming:      true,
-			PDFPageLayout:     true,
-			PageStreaming:     true,
-			GameShelf:         true,
-			GameCatalog:       true,
-			VideoCatalog:      true,
-			VideoHLS:          true,
-			PrivateState:      true,
-			Search:            true,
-			Preferences:       true,
-			Profiles:          true,
-			BearerTokenAuth:   s.authEnabled(),
-			SetupWizard:       true,
-			ScannerJobEvents:  true,
-			ScannerJobControl: true,
-			ScanSettings:      true,
+			ClientHome:         true,
+			UnifiedManifest:    true,
+			ProgressSync:       true,
+			EPUBStreaming:      true,
+			PDFStreaming:       true,
+			PDFPageLayout:      true,
+			PDFWebtoonLayout:   true,
+			ComicWebtoonLayout: true,
+			CompactReader:      true,
+			PageStreaming:      true,
+			GameShelf:          true,
+			GameCatalog:        true,
+			VideoCatalog:       true,
+			VideoHLS:           true,
+			PrivateState:       true,
+			Search:             true,
+			Preferences:        true,
+			Profiles:           true,
+			BearerTokenAuth:    s.authEnabled(),
+			SetupWizard:        true,
+			ScannerJobEvents:   true,
+			ScannerJobControl:  true,
+			ScanSettings:       true,
 		},
 	})
 }
@@ -752,10 +755,12 @@ func (s *Server) clientBookManifest(bookID int64, profileID int64) (clientBookMa
 	}
 
 	out := clientBookManifestResponse{
-		Book:     clientBookItem(book),
-		Format:   book.Format,
-		CoverURL: clientCoverURL(book.ID),
-		Progress: progress,
+		Book:              clientBookItem(book),
+		Format:            book.Format,
+		CoverURL:          clientCoverURL(book.ID),
+		Progress:          progress,
+		ReaderModes:       readerModesForBookFormat(book.Format),
+		DefaultReaderMode: defaultReaderModeForBookFormat(book.Format),
 	}
 	if book.Format == "epub" {
 		manifest, err := s.service.EPUBManifest(bookID)
@@ -787,6 +792,21 @@ func (s *Server) clientBookManifest(bookID int64, profileID int64) (clientBookMa
 		})
 	}
 	return out, nil
+}
+
+func readerModesForBookFormat(format string) []string {
+	switch strings.ToLower(format) {
+	case "epub":
+		return []string{"single"}
+	case "cbz", "zip", "pdf":
+		return []string{"single", "double", "webtoon"}
+	default:
+		return []string{"single"}
+	}
+}
+
+func defaultReaderModeForBookFormat(format string) string {
+	return "single"
 }
 
 func (s *Server) clientBookPrivateState(bookID int64, profileID int64) (clientPrivateStateResponse, error) {
@@ -1376,26 +1396,29 @@ type clientInfoResponse struct {
 }
 
 type clientCapabilities struct {
-	ClientHome        bool `json:"clientHome"`
-	UnifiedManifest   bool `json:"unifiedManifest"`
-	ProgressSync      bool `json:"progressSync"`
-	EPUBStreaming     bool `json:"epubStreaming"`
-	PDFStreaming      bool `json:"pdfStreaming"`
-	PDFPageLayout     bool `json:"pdfPageLayout"`
-	PageStreaming     bool `json:"pageStreaming"`
-	GameShelf         bool `json:"gameShelf"`
-	GameCatalog       bool `json:"gameCatalog"`
-	VideoCatalog      bool `json:"videoCatalog"`
-	VideoHLS          bool `json:"videoHls"`
-	PrivateState      bool `json:"privateState"`
-	Search            bool `json:"search"`
-	Preferences       bool `json:"preferences"`
-	Profiles          bool `json:"profiles"`
-	BearerTokenAuth   bool `json:"bearerTokenAuth"`
-	SetupWizard       bool `json:"setupWizard"`
-	ScannerJobEvents  bool `json:"scannerJobEvents"`
-	ScannerJobControl bool `json:"scannerJobControl"`
-	ScanSettings      bool `json:"scanSettings"`
+	ClientHome         bool `json:"clientHome"`
+	UnifiedManifest    bool `json:"unifiedManifest"`
+	ProgressSync       bool `json:"progressSync"`
+	EPUBStreaming      bool `json:"epubStreaming"`
+	PDFStreaming       bool `json:"pdfStreaming"`
+	PDFPageLayout      bool `json:"pdfPageLayout"`
+	PDFWebtoonLayout   bool `json:"pdfWebtoonLayout"`
+	ComicWebtoonLayout bool `json:"comicWebtoonLayout"`
+	CompactReader      bool `json:"compactReader"`
+	PageStreaming      bool `json:"pageStreaming"`
+	GameShelf          bool `json:"gameShelf"`
+	GameCatalog        bool `json:"gameCatalog"`
+	VideoCatalog       bool `json:"videoCatalog"`
+	VideoHLS           bool `json:"videoHls"`
+	PrivateState       bool `json:"privateState"`
+	Search             bool `json:"search"`
+	Preferences        bool `json:"preferences"`
+	Profiles           bool `json:"profiles"`
+	BearerTokenAuth    bool `json:"bearerTokenAuth"`
+	SetupWizard        bool `json:"setupWizard"`
+	ScannerJobEvents   bool `json:"scannerJobEvents"`
+	ScannerJobControl  bool `json:"scannerJobControl"`
+	ScanSettings       bool `json:"scanSettings"`
 }
 
 type clientHomeResponse struct {
@@ -1448,12 +1471,14 @@ type clientBook struct {
 }
 
 type clientBookManifestResponse struct {
-	Book     clientBook          `json:"book"`
-	Format   string              `json:"format"`
-	CoverURL string              `json:"coverUrl"`
-	Progress clientProgress      `json:"progress"`
-	Pages    []clientPageRef     `json:"pages,omitempty"`
-	EPUB     *clientEPUBOpenInfo `json:"epub,omitempty"`
+	Book              clientBook          `json:"book"`
+	Format            string              `json:"format"`
+	CoverURL          string              `json:"coverUrl"`
+	Progress          clientProgress      `json:"progress"`
+	ReaderModes       []string            `json:"readerModes"`
+	DefaultReaderMode string              `json:"defaultReaderMode"`
+	Pages             []clientPageRef     `json:"pages,omitempty"`
+	EPUB              *clientEPUBOpenInfo `json:"epub,omitempty"`
 }
 
 type clientGame struct {

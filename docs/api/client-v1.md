@@ -232,6 +232,9 @@ Response:
     "epubStreaming": true,
     "pdfStreaming": true,
     "pdfPageLayout": true,
+    "pdfWebtoonLayout": true,
+    "comicWebtoonLayout": true,
+    "compactReader": true,
     "pageStreaming": true,
     "gameShelf": true,
     "gameCatalog": true,
@@ -250,7 +253,7 @@ Response:
 }
 ```
 
-PDF clients should read the manifest through `GET /api/client/books/{bookId}/manifest`, then fetch the PDF through the opaque page URL at `GET /api/books/{bookId}/pages/0`. The server supports HTTP Range requests for that URL, so native clients can stream PDF data without exposing the NAS path. `pdfPageLayout` means clients may offer single-page and two-page spread modes on top of the same PDF stream.
+PDF clients should read the manifest through `GET /api/client/books/{bookId}/manifest`, then fetch the PDF through the opaque page URL at `GET /api/books/{bookId}/pages/0`. The server supports HTTP Range requests for that URL, so native clients can stream PDF data without exposing the NAS path. `pdfPageLayout` means clients may offer single-page and two-page spread modes on top of the same PDF stream. `pdfWebtoonLayout` and `comicWebtoonLayout` mean clients may also offer vertical continuous scrolling when a manifest includes `webtoon` in `readerModes`. `compactReader` means the bundled web UI has a phone-oriented compact reader, but native clients can still implement their own layout.
 
 ### `GET /api/client/preferences`
 
@@ -271,7 +274,7 @@ Response:
 Fields:
 
 - `locale`: `zh`, `zht`, `en`, `ja`, or `ko`.
-- `readerPageMode`: `single`, `double`, or `webtoon` for image archives. `webtoon` means vertical continuous scrolling for long-strip comics.
+- `readerPageMode`: `single`, `double`, or `webtoon` for image/PDF readers. `webtoon` means vertical continuous scrolling for long-strip comics or PDF/image documents.
 - `epubPageMode`: `single` or `double`.
 - `epubTheme`: `light`, `sepia`, or `dark`.
 - `epubFontSize`: integer, normalized to `14...26`.
@@ -572,6 +575,8 @@ Returns all stable metadata needed to open one book.
   },
   "format": "cbz",
   "coverUrl": "/api/books/42/cover",
+  "readerModes": ["single", "double", "webtoon"],
+  "defaultReaderMode": "single",
   "progress": {
     "bookId": 42,
     "pageIndex": 16,
@@ -614,6 +619,8 @@ Use `pages[index].url` to stream the image bytes. The returned page URL is relat
   },
   "format": "epub",
   "coverUrl": "/api/books/84/cover",
+  "readerModes": ["single"],
+  "defaultReaderMode": "single",
   "progress": {
     "bookId": 84,
     "pageIndex": 3,
@@ -652,6 +659,20 @@ Example:
 ```text
 /api/books/84/epub/resources/OPS/text/chapter1.xhtml
 ```
+
+#### Reader Modes
+
+Every book manifest includes `readerModes` and `defaultReaderMode` so clients do not need to infer supported layouts from file extensions alone.
+
+- `single`: one page at a time.
+- `double`: two-page spread where the client has enough screen space.
+- `webtoon`: vertical continuous scrolling for long-strip comics or PDF/image documents.
+
+Current defaults are conservative:
+
+- EPUB: `readerModes: ["single"]`.
+- CBZ/ZIP/PDF: `readerModes: ["single", "double", "webtoon"]`.
+- `defaultReaderMode` is currently `single` for all formats. Future metadata or user preferences may choose `webtoon` automatically for known long-strip works.
 
 ### `GET /api/client/games/{gameId}/manifest`
 
@@ -858,7 +879,7 @@ Response:
 }
 ```
 
-For CBZ/ZIP, `pageIndex` is the page array index and `locator` can be empty. In Webtoon/vertical-scroll mode, clients may store `locator` as `webtoon:<fraction>` where `<fraction>` is the scroll progress from `0` to `1`.
+For CBZ/ZIP/PDF, `pageIndex` is the page array index and `locator` can be empty. In Webtoon/vertical-scroll mode, clients may store `locator` as `webtoon:<fraction>` where `<fraction>` is the scroll progress from `0` to `1`.
 
 For EPUB, use `pageIndex` as the spine index and use `locator` for the current EPUB resource href or a future CFI-like locator. `progressFraction` is clamped by the server to `0...1`.
 
@@ -1016,7 +1037,7 @@ Good MCP tools:
 - `foliospace.client_info`: return server info and capability flags.
 - `foliospace.home`: return continue-reading, recent books, and collections.
 - `foliospace.search_books`: search/filter books by title, collection, format, progress, or unread state.
-- `foliospace.open_book_manifest`: return the client manifest for a book.
+- `foliospace.open_book_manifest`: return the client manifest for a book, including `readerModes` and `defaultReaderMode`.
 - `foliospace.list_games` and `foliospace.open_game_manifest`: browse and open local ROM assets through client-safe DTOs.
 - `foliospace.list_videos` and `foliospace.open_video_manifest`: browse and open local video assets through client-safe DTOs.
 - `foliospace.get_private_state` and `foliospace.save_private_state`: inspect or update status, favorite, rating, tags, and notes.
