@@ -25,7 +25,7 @@ import (
 )
 
 const thumbnailAlgorithmVersion = "v1"
-const thumbnailClientCacheVersion = thumbnailAlgorithmVersion + "-cover-refresh-2"
+const thumbnailClientCacheVersion = thumbnailAlgorithmVersion + "-cover-refresh-3"
 const thumbnailCacheKeyProfile = "portrait-1x-3x4.15"
 const thumbnailJPEGQuality = 90
 const thumbnailTargetAspectRatio = 3.0 / 4.15
@@ -409,12 +409,18 @@ func (s *Service) generateThumbnailJob(ctx context.Context, job domain.Thumbnail
 	}
 	imageStream, err := s.openBookThumbnailSource(book)
 	if err != nil {
+		if book.Format == "pdf" {
+			return fmt.Errorf("render pdf thumbnail source: %w", err)
+		}
 		return s.writeGenericThumbnailJob(job, book, cachePath, err)
 	}
 	defer imageStream.Body.Close()
 
 	img, _, err := image.Decode(io.LimitReader(imageStream.Body, 64<<20))
 	if err != nil {
+		if book.Format == "pdf" {
+			return fmt.Errorf("decode pdf thumbnail source: %w", err)
+		}
 		return s.writeGenericThumbnailJob(job, book, cachePath, fmt.Errorf("decode thumbnail source: %w", err))
 	}
 	resized := resizeImageToMaxWidth(cropImageToAspect(img, thumbnailTargetAspectRatio), thumbnailMaxWidth(job.Size))

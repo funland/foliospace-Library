@@ -685,6 +685,95 @@ func TestPDFThumbnailFallsBackToRenderedSourceInsteadOfStalePlaceholder(t *testi
 	}
 }
 
+func TestPDFThumbnailRetriesAfterTransientRenderFailure(t *testing.T) {
+	root := t.TempDir()
+	bookPath := filepath.Join(root, "Books", "sample.pdf")
+	if err := os.MkdirAll(filepath.Dir(bookPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bookPath, []byte("%PDF-1.4\n%%EOF\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(bookPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	renderedJPEG := makeTestJPEGBytes(t, 640, 900, color.RGBA{R: 58, G: 126, B: 92, A: 255})
+	failFlag := installTogglePDFToPPM(t, renderedJPEG)
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("Books", root, "book")
+	if err != nil {
+		t.Fatal(err)
+	}
+	series, err := st.UpsertSeries(lib.ID, "Books", "Books")
+	if err != nil {
+		t.Fatal(err)
+	}
+	book, err := st.UpsertBook(series.ID, "sample", "pdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertFile(book.ID, lib.ID, bookPath, "Books/sample.pdf", info.Size(), info.ModTime(), ".pdf"); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := NewWithConfig(st, t.TempDir())
+	svc.PauseThumbnailWorker()
+	stream, err := svc.OpenBookThumbnail(book.ID, "small")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = stream.Body.Close()
+	svc.ResumeThumbnailWorker()
+	if err := svc.ProcessNextThumbnailJobForTest(); err != nil {
+		t.Fatal(err)
+	}
+	status, err := svc.ThumbnailWorkerStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Ready != 0 || status.Failed != 1 {
+		t.Fatalf("thumbnail worker status = %#v, want failed PDF render without caching generic cover as ready", status)
+	}
+
+	if err := os.Remove(failFlag); err != nil {
+		t.Fatal(err)
+	}
+	svc.PauseThumbnailWorker()
+	stream, err = svc.OpenBookThumbnail(book.ID, "small")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = stream.Body.Close()
+	svc.ResumeThumbnailWorker()
+	if err := svc.ProcessNextThumbnailJobForTest(); err != nil {
+		t.Fatal(err)
+	}
+	cached, err := svc.OpenBookThumbnail(book.ID, "small")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cached.Body.Close()
+	data, err := io.ReadAll(cached.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cached.ContentType != "image/jpeg" || !cached.CacheHit {
+		t.Fatalf("cached contentType=%q cacheHit=%v, want rendered PDF thumbnail after retry", cached.ContentType, cached.CacheHit)
+	}
+	img, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCenterColorNear(t, img, color.RGBA{R: 58, G: 126, B: 92, A: 255})
+}
+
 func TestBookThumbnailCropsLandscapeCoverToPortraitRatio(t *testing.T) {
 	root := t.TempDir()
 	bookPath := filepath.Join(root, "Series A", "landscape.cbz")
@@ -1212,6 +1301,36 @@ cp %q "$out.jpg"
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func installTogglePDFToPPM(t *testing.T, renderedJPEG []byte) string {
+	t.Helper()
+	binDir := t.TempDir()
+	sourcePath := filepath.Join(binDir, "rendered.jpg")
+	if err := os.WriteFile(sourcePath, renderedJPEG, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	failFlag := filepath.Join(binDir, "fail")
+	if err := os.WriteFile(failFlag, []byte("fail"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	scriptPath := filepath.Join(binDir, "pdftoppm")
+	script := fmt.Sprintf(`#!/bin/sh
+if [ -f %q ]; then
+  echo "temporary pdf render failure" >&2
+  exit 2
+fi
+out=""
+for arg in "$@"; do
+  out="$arg"
+done
+cp %q "$out.jpg"
+`, failFlag, sourcePath)
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return failFlag
 }
 
 func assertCenterColorNear(t *testing.T, img image.Image, want color.RGBA) {

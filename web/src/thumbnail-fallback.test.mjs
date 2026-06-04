@@ -41,3 +41,9 @@ test("collection covers use server-provided thumbnail fields before lazy fallbac
   const styleSource = await readFile(path.join(srcDir, "styles.css"), "utf8");
   assert.ok(styleSource.includes(".collectionThumb.withCover"), "known collection thumbnails should use a non-bookshelf loading placeholder");
 });
+
+test("docker runtime includes PDF thumbnail renderer dependency", async () => {
+  const dockerfile = await readFile(path.resolve(webDir, "..", "Dockerfile"), "utf8");
+
+  assert.ok(dockerfile.includes("poppler-utils"), "runtime image should install poppler-utils so pdftoppm can render PDF covers and thumbnails");
+});

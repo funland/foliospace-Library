@@ -218,8 +218,8 @@ Clients should treat every returned `coverUrl`, `thumbnailUrl`, page URL, EPUB r
 Book cover and thumbnail URLs may include a client cache-busting query value such as:
 
 ```text
-/api/books/42/cover?v=v1-cover-refresh-2
-/api/books/42/thumbnail?size=small&v=v1-cover-refresh-2
+/api/books/42/cover?v=v1-cover-refresh-3
+/api/books/42/thumbnail?size=small&v=v1-cover-refresh-3
 ```
 
 That query value is for browser and client cache invalidation only. It is separate from the thumbnail cache algorithm, which remains `v1`. Older clients and integrations can still use the pre-existing routes:
@@ -232,7 +232,7 @@ That query value is for browser and client cache invalidation only. It is separa
 
 The thumbnail endpoint is a read-through cache. When a JPEG thumbnail is ready, it returns the cached image with private browser caching and an ETag. On a cache miss, the request queues thumbnail generation and returns the best backward-compatible image immediately: the original cover/page image when available, a stale compatible thumbnail when useful, or the built-in generic cover. Fallback responses are marked `no-store` and include `X-FolioSpace-Thumbnail-Fallback` so clients can retry later without caching an intermediate state forever.
 
-PDF covers and PDF thumbnail sources are generated from the first rendered page when the host has `pdftoppm` available. If rendering is unavailable or fails, the service keeps the previous behavior and falls back to the built-in PDF/generic cover. This is backward-compatible at the API level because the resource remains an image URL, but clients should not hard-code one content type for PDF covers; a PDF cover can now be `image/jpeg` instead of the older SVG placeholder.
+PDF covers and PDF thumbnail sources are generated from the first rendered page with `pdftoppm`. The official container image includes `poppler-utils` for that renderer. If rendering is temporarily unavailable or fails, the HTTP response can still fall back to the built-in PDF/generic cover, but the failed PDF thumbnail job is not stored as a ready cache entry; later requests can retry and replace the fallback once rendering works. This is backward-compatible at the API level because the resource remains an image URL, but clients should not hard-code one content type for PDF covers; a PDF cover can now be `image/jpeg` instead of the older SVG placeholder.
 
 Legacy REST endpoints keep their existing fields and response shapes. Some book responses now include an additive `thumbnailUrl` and `thumbnailStatus` to help the web UI and older integrations pick up the refreshed cache version without changing the endpoint they call. The client-safe `/api/client/*` facade still omits local NAS paths such as `filePath`, `rootPath`, and `directoryPath`.
 
@@ -406,7 +406,7 @@ Response:
       "bookCount": 12,
       "coverBookId": 42,
       "thumbnailStatus": "pending",
-      "thumbnailUrl": "/api/books/42/thumbnail?size=small&v=v1-cover-refresh-2"
+      "thumbnailUrl": "/api/books/42/thumbnail?size=small&v=v1-cover-refresh-3"
     }
   ]
 }

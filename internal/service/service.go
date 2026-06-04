@@ -1300,7 +1300,7 @@ const (
 	pdfCoverRenderDPI      = 144
 	pdfThumbnailRenderDPI  = 96
 	pdfCoverRenderTimeout  = 10 * time.Second
-	pdfThumbnailSourceMark = "pdf-first-page:pdftoppm:v1"
+	pdfThumbnailSourceMark = "pdf-first-page:pdftoppm:v2"
 	pdfPlaceholderMark     = "pdf-placeholder:v1"
 )
 
