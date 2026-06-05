@@ -1,12 +1,18 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"image"
+	"image/color"
+	_ "image/gif"
+	"image/jpeg"
+	_ "image/png"
 	"io"
 	"net/http"
 	"net/url"
@@ -86,6 +92,10 @@ type SetupInput struct {
 
 type ScanSettings struct {
 	ScanWorkers int `json:"scanWorkers"`
+}
+
+type PageImageOptions struct {
+	MaxWidth int
 }
 
 func New(store *store.Store) *Service {
@@ -388,7 +398,11 @@ func (s *Service) ScanLibrary(id int64) (domain.ScanJob, error) {
 }
 
 func (s *Service) ListSeries() ([]domain.Series, error) {
-	series, err := s.store.ListSeries()
+	return s.ListSeriesForProfile(0)
+}
+
+func (s *Service) ListSeriesForProfile(profileID int64) ([]domain.Series, error) {
+	series, err := s.store.ListSeriesForProfile(profileID)
 	if err != nil {
 		return nil, err
 	}
@@ -397,6 +411,17 @@ func (s *Service) ListSeries() ([]domain.Series, error) {
 		return nil, err
 	}
 	return append(series, gameCollections...), nil
+}
+
+func (s *Service) UpdateCollectionPrivateStateForProfile(seriesID int64, profileID int64, state domain.CollectionPrivateState) (domain.Series, error) {
+	profileID, err := s.store.ResolveProfileID(profileID)
+	if err != nil {
+		return domain.Series{}, err
+	}
+	if err := s.store.UpdateCollectionPrivateStateForProfile(seriesID, profileID, state); err != nil {
+		return domain.Series{}, err
+	}
+	return s.store.SeriesByIDForProfile(seriesID, profileID)
 }
 
 func (s *Service) ListBooks(seriesID int64) ([]domain.Book, error) {
@@ -1219,6 +1244,10 @@ func (s *Service) Pages(bookID int64) ([]domain.Page, error) {
 }
 
 func (s *Service) OpenPage(bookID int64, pageIndex int) (PageStream, error) {
+	return s.OpenPageWithOptions(bookID, pageIndex, PageImageOptions{})
+}
+
+func (s *Service) OpenPageWithOptions(bookID int64, pageIndex int, options PageImageOptions) (PageStream, error) {
 	book, err := s.store.BookByID(bookID)
 	if err != nil {
 		return PageStream{}, err
@@ -1254,7 +1283,60 @@ func (s *Service) OpenPage(bookID int64, pageIndex int) (PageStream, error) {
 	if err != nil {
 		return PageStream{}, err
 	}
-	return PageStream{Body: body, ContentType: contentType}, nil
+	if options.MaxWidth <= 0 || !strings.HasPrefix(contentType, "image/") {
+		return PageStream{Body: body, ContentType: contentType}, nil
+	}
+	return downsamplePageStream(body, contentType, options.MaxWidth)
+}
+
+func downsamplePageStream(body io.ReadCloser, contentType string, maxWidth int) (PageStream, error) {
+	defer body.Close()
+
+	data, err := io.ReadAll(body)
+	if err != nil {
+		return PageStream{}, err
+	}
+	img, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return PageStream{Body: io.NopCloser(bytes.NewReader(data)), ContentType: contentType}, nil
+	}
+	bounds := img.Bounds()
+	srcWidth := bounds.Dx()
+	srcHeight := bounds.Dy()
+	if srcWidth <= 0 || srcHeight <= 0 || srcWidth <= maxWidth {
+		return PageStream{Body: io.NopCloser(bytes.NewReader(data)), ContentType: contentType}, nil
+	}
+
+	dstWidth := maxWidth
+	dstHeight := max(1, int(float64(srcHeight)*float64(dstWidth)/float64(srcWidth)))
+	dst := image.NewRGBA(image.Rect(0, 0, dstWidth, dstHeight))
+	for y := 0; y < dstHeight; y++ {
+		srcY := bounds.Min.Y + y*srcHeight/dstHeight
+		for x := 0; x < dstWidth; x++ {
+			srcX := bounds.Min.X + x*srcWidth/dstWidth
+			dst.Set(x, y, blendOverWhite(img.At(srcX, srcY)))
+		}
+	}
+
+	var out bytes.Buffer
+	if err := jpeg.Encode(&out, dst, &jpeg.Options{Quality: 86}); err != nil {
+		return PageStream{}, err
+	}
+	return PageStream{Body: io.NopCloser(bytes.NewReader(out.Bytes())), ContentType: "image/jpeg"}, nil
+}
+
+func blendOverWhite(c color.Color) color.RGBA {
+	r, g, b, a := c.RGBA()
+	if a == 0xffff {
+		return color.RGBA{R: uint8(r >> 8), G: uint8(g >> 8), B: uint8(b >> 8), A: 0xff}
+	}
+	alpha := float64(a) / 65535
+	return color.RGBA{
+		R: uint8(float64(r>>8)*alpha + 255*(1-alpha)),
+		G: uint8(float64(g>>8)*alpha + 255*(1-alpha)),
+		B: uint8(float64(b>>8)*alpha + 255*(1-alpha)),
+		A: 0xff,
+	}
 }
 
 func (s *Service) OpenCover(bookID int64) (PageStream, error) {

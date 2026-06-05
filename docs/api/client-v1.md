@@ -378,7 +378,9 @@ Response:
       "title": "Series A",
       "collectionType": "directory",
       "primaryType": "book",
-      "bookCount": 12
+      "bookCount": 12,
+      "favorite": true,
+      "liked": false
     }
   ]
 }
@@ -587,13 +589,14 @@ Returns all stable metadata needed to open one book.
     {
       "index": 0,
       "name": "001.jpg",
-      "url": "/api/books/42/pages/0"
+      "url": "/api/books/42/pages/0",
+      "displayUrl": "/api/books/42/pages/0?maxWidth=1200"
     }
   ]
 }
 ```
 
-Use `pages[index].url` to stream the image bytes. The returned page URL is relative to the same base URL and still requires bearer auth when auth is enabled.
+Use `pages[index].displayUrl` for normal comic reading surfaces, especially phones, tablets, and webtoon/vertical-scroll mode. It points at a server-downsampled image that limits decoded client memory. Use `pages[index].url` when the client explicitly needs the original page bytes. Returned page URLs are relative to the same base URL and still require bearer auth when auth is enabled.
 
 #### EPUB Response
 
@@ -836,6 +839,10 @@ Streams the book cover image.
 
 Streams one CBZ/ZIP page image.
 
+Optional query:
+
+- `maxWidth`: downsample image archive pages to this pixel width before streaming. Values are clamped to `320...2400`. The response is JPEG when downsampled. This is intended for memory-safe mobile, tablet, and webtoon readers; omit it to stream the original archive entry.
+
 ### `GET /api/books/{bookId}/epub/resources/{resourcePath}`
 
 Streams one EPUB resource. This can be XHTML, CSS, image, font, or other EPUB content.
@@ -889,7 +896,22 @@ The native home screen can start from `/api/client/home`, but collection browsin
 
 ### `GET /api/collections`
 
-Lists collections.
+Lists collections. Responses include profile-scoped `favorite` and `liked` flags when a profile is selected with `X-FolioSpace-Profile-Id` or `profileId`.
+
+### `PUT /api/collections/{collectionId}/private-state`
+
+Saves profile-scoped collection state.
+
+Request:
+
+```json
+{
+  "favorite": true,
+  "liked": true
+}
+```
+
+Response is the updated collection DTO.
 
 ### `GET /api/collections/{collectionId}/volumes`
 
@@ -1045,7 +1067,7 @@ Good MCP tools:
 - `foliospace.get_preferences` and `foliospace.save_preferences`: inspect or update UI language and reader defaults.
 - `foliospace.get_progress` and `foliospace.save_progress`: inspect or update reading progress.
 - `foliospace.list_libraries`: list configured libraries for diagnostics and scan selection.
-- `foliospace.list_collections`, `foliospace.list_collection_volumes`, and `foliospace.list_collection_assets`: browse the indexed library.
+- `foliospace.list_collections`, `foliospace.save_collection_state`, `foliospace.list_collection_volumes`, and `foliospace.list_collection_assets`: browse the indexed library and save profile-scoped collection favorite/liked flags.
 - `foliospace.scan_library`: start a scan for a configured library.
 - `foliospace.list_jobs`, `foliospace.job_events`, `foliospace.pause_job`, `foliospace.cancel_job`, and `foliospace.resume_job`: inspect and control scan progress.
 - `foliospace.list_errors`: surface broken archives, unsupported files, permission errors, and missing mounts.

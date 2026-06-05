@@ -135,7 +135,8 @@ func tools() []Tool {
 		{Name: "foliospace.get_progress", Description: "Read saved reading progress for a book.", InputSchema: objectSchema(map[string]any{"bookId": integerSchema("Book id."), "profileId": integerSchema("Optional profile id.")}, []string{"bookId"})},
 		{Name: "foliospace.save_progress", Description: "Save reading progress for a book. bookId selects the book; remaining fields are forwarded to the API.", InputSchema: objectSchema(map[string]any{"bookId": integerSchema("Book id."), "profileId": integerSchema("Optional profile id.")}, []string{"bookId"})},
 		{Name: "foliospace.list_libraries", Description: "List configured library roots for diagnostics and scan selection. This admin tool can expose configured mount paths.", InputSchema: objectSchema(nil, nil)},
-		{Name: "foliospace.list_collections", Description: "List library collections.", InputSchema: objectSchema(nil, nil)},
+		{Name: "foliospace.list_collections", Description: "List library collections with profile-scoped favorite and liked flags.", InputSchema: objectSchema(map[string]any{"profileId": integerSchema("Optional profile id for collection private state.")}, nil)},
+		{Name: "foliospace.save_collection_state", Description: "Save profile-scoped collection favorite and liked flags.", InputSchema: objectSchema(map[string]any{"collectionId": integerSchema("Collection id."), "profileId": integerSchema("Optional profile id."), "favorite": booleanSchema("Whether the collection is a favorite."), "liked": booleanSchema("Whether the collection is liked.")}, []string{"collectionId"})},
 		{Name: "foliospace.list_collection_volumes", Description: "List books/comics in a collection with optional pagination and filtering.", InputSchema: objectSchema(map[string]any{"collectionId": integerSchema("Collection id."), "limit": integerSchema("Maximum number of items."), "offset": integerSchema("Zero-based item offset."), "q": stringSchema("Optional search query."), "sort": stringSchema("Server-supported sort key."), "profileId": integerSchema("Optional profile id for scoped progress and private state.")}, []string{"collectionId"})},
 		{Name: "foliospace.list_collection_assets", Description: "List mixed assets in a collection, including books, comics, games, documents, and media as available.", InputSchema: objectSchema(map[string]any{"collectionId": integerSchema("Collection id."), "profileId": integerSchema("Optional profile id for scoped book state.")}, []string{"collectionId"})},
 		{Name: "foliospace.scan_library", Description: "Start a scan for a configured library.", InputSchema: objectSchema(map[string]any{"libraryId": integerSchema("Library id.")}, []string{"libraryId"})},
@@ -287,7 +288,11 @@ func (s *Server) callTool(ctx context.Context, raw json.RawMessage) (any, error)
 	case "foliospace.list_libraries":
 		data, err = s.get(ctx, "/api/libraries")
 	case "foliospace.list_collections":
-		data, err = s.get(ctx, "/api/collections")
+		data, err = s.get(ctx, withProfileQuery("/api/collections", params.Arguments))
+	case "foliospace.save_collection_state":
+		collectionID := intArg(params.Arguments, "collectionId")
+		body := withoutKeys(params.Arguments, "collectionId", "profileId")
+		data, err = s.put(ctx, withProfileQuery(fmt.Sprintf("/api/collections/%d/private-state", collectionID), params.Arguments), body)
 	case "foliospace.list_collection_volumes":
 		data, err = s.get(ctx, withProfileQuery(fmt.Sprintf("/api/collections/%d/volumes?%s", intArg(params.Arguments, "collectionId"), collectionVolumesQuery(params.Arguments)), params.Arguments))
 	case "foliospace.list_collection_assets":
@@ -572,4 +577,8 @@ func stringSchema(description string) map[string]any {
 
 func integerSchema(description string) map[string]any {
 	return map[string]any{"type": "integer", "description": description}
+}
+
+func booleanSchema(description string) map[string]any {
+	return map[string]any{"type": "boolean", "description": description}
 }

@@ -119,7 +119,7 @@ Check whether FolioSpace is currently transcoding a video and which item is occu
 - `foliospace.client_info`: service name, version, supported formats, and capability flags.
 - `foliospace.home`: continue reading, recent books, and collections.
 - `foliospace.search_books`: search indexed books and comics.
-- `foliospace.open_book_manifest`: open a CBZ/ZIP/EPUB/PDF client manifest by `bookId`. Manifests include `readerModes` and `defaultReaderMode` so clients can expose single-page, double-page, or webtoon/vertical-scroll controls without guessing from the extension. PDF manifests expose the opaque PDF stream URL; clients should use HTTP Range capable reads against that URL.
+- `foliospace.open_book_manifest`: open a CBZ/ZIP/EPUB/PDF client manifest by `bookId`. Manifests include `readerModes` and `defaultReaderMode` so clients can expose single-page, double-page, or webtoon/vertical-scroll controls without guessing from the extension. CBZ/ZIP page entries include `url` for the original image and `displayUrl` for a server-downsampled mobile/tablet-safe image. PDF manifests expose the opaque PDF stream URL; clients should use HTTP Range capable reads against that URL.
 - `foliospace.list_games`: list paginated client-safe ROM assets with `limit`, `offset`, `q`, `platform`, `format`, and `sort`.
 - `foliospace.open_game_manifest`: open a ROM client manifest by `gameId`.
 - `foliospace.list_videos`: list paginated client-safe video assets with `limit`, `offset`, `q`, `format`, and `sort`.
@@ -141,7 +141,8 @@ Check whether FolioSpace is currently transcoding a video and which item is occu
 - `foliospace.get_progress`: read reading progress.
 - `foliospace.save_progress`: save reading progress.
 - `foliospace.list_libraries`: list configured libraries for diagnostics and scan selection. This admin tool can expose configured mount paths.
-- `foliospace.list_collections`: list collections.
+- `foliospace.list_collections`: list collections with profile-scoped favorite and liked flags.
+- `foliospace.save_collection_state`: save collection `favorite` and `liked` flags.
 - `foliospace.list_collection_volumes`: list books/comics in a collection with optional `limit`, `offset`, `q`, and `sort`.
 - `foliospace.list_collection_assets`: list mixed collection assets by `collectionId`.
 - `foliospace.scan_library`: start a library scan by `libraryId`.
@@ -236,6 +237,12 @@ List want-to-read books:
 
 ```json
 {"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"foliospace.list_private_status","arguments":{"profileId":2,"status":"want","limit":12}}}
+```
+
+Mark a collection as favorite and liked:
+
+```json
+{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"foliospace.save_collection_state","arguments":{"profileId":2,"collectionId":42,"favorite":true,"liked":true}}}
 ```
 
 Pause a running scan job:

@@ -56,6 +56,8 @@ type Series struct {
 	CollectionType string `json:"collectionType"`
 	PrimaryType    string `json:"primaryType"`
 	BookCount      int64  `json:"bookCount"`
+	Favorite       bool   `json:"favorite"`
+	Liked          bool   `json:"liked"`
 }
 
 type Book struct {
@@ -89,6 +91,11 @@ type BookPrivateState struct {
 	Rating   int      `json:"rating"`
 	Tags     []string `json:"tags"`
 	Summary  string   `json:"summary"`
+}
+
+type CollectionPrivateState struct {
+	Favorite bool `json:"favorite"`
+	Liked    bool `json:"liked"`
 }
 
 type ClientPreferences struct {

@@ -267,6 +267,36 @@ func TestServerCallsCollectionVolumesTool(t *testing.T) {
 	}
 }
 
+func TestServerCallsSaveCollectionStateTool(t *testing.T) {
+	var gotMethod string
+	var gotPath string
+	var gotBody string
+	server := New("http://foliospace.test", "")
+	server.httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		gotMethod = r.Method
+		gotPath = r.URL.RequestURI()
+		body, _ := io.ReadAll(r.Body)
+		gotBody = string(body)
+		return jsonResponse(`{"id":42,"favorite":true,"liked":true}`), nil
+	})}
+
+	response := server.Handle(context.Background(), toolCall(t, "foliospace.save_collection_state", map[string]any{
+		"collectionId": 42,
+		"profileId":    3,
+		"favorite":     true,
+		"liked":        true,
+	}))
+	if response.Error != nil {
+		t.Fatalf("save_collection_state error = %#v", response.Error)
+	}
+	if gotMethod != "PUT" || gotPath != "/api/collections/42/private-state?profileId=3" {
+		t.Fatalf("call = %s %s, want collection private-state PUT", gotMethod, gotPath)
+	}
+	if strings.Contains(gotBody, "collectionId") || strings.Contains(gotBody, "profileId") || !strings.Contains(gotBody, `"favorite":true`) || !strings.Contains(gotBody, `"liked":true`) {
+		t.Fatalf("body = %q, want only collection state flags", gotBody)
+	}
+}
+
 func TestServerCallsJobControlTools(t *testing.T) {
 	var calls []string
 	server := New("http://foliospace.test", "")

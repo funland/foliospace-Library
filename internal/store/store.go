@@ -258,6 +258,10 @@ func (s *Store) UpsertSeries(libraryID int64, title string, directoryPath string
 }
 
 func (s *Store) SeriesByID(id int64) (domain.Series, error) {
+	return s.SeriesByIDForProfile(id, defaultProfileID)
+}
+
+func (s *Store) SeriesByIDForProfile(id int64, profileID int64) (domain.Series, error) {
 	row := s.db.QueryRow(`SELECT s.id, s.library_id, s.title,
 			COALESCE(NULLIF(s.directory_path, ''), ''),
 			s.collection_type,
@@ -272,10 +276,22 @@ func (s *Store) SeriesByID(id int64) (domain.Series, error) {
 		LEFT JOIN books b ON b.series_id = s.id
 		WHERE s.id = ?
 		GROUP BY s.id, s.library_id, s.title, l.asset_type`, id)
-	return scanSeries(row)
+	series, err := scanSeries(row)
+	if err != nil {
+		return domain.Series{}, err
+	}
+	items, err := s.applyCollectionPrivateStates(profileID, []domain.Series{series})
+	if err != nil {
+		return domain.Series{}, err
+	}
+	return items[0], nil
 }
 
 func (s *Store) ListSeries() ([]domain.Series, error) {
+	return s.ListSeriesForProfile(defaultProfileID)
+}
+
+func (s *Store) ListSeriesForProfile(profileID int64) ([]domain.Series, error) {
 	rows, err := s.db.Query(`SELECT s.id, s.library_id, s.title,
 			COALESCE(NULLIF(s.directory_path, ''), MIN(CASE
 				WHEN f.rel_path IS NULL THEN ''
@@ -308,7 +324,10 @@ func (s *Store) ListSeries() ([]domain.Series, error) {
 		}
 		out = append(out, series)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return s.applyCollectionPrivateStates(profileID, out)
 }
 
 func (s *Store) ListGamePlatformCollections() ([]domain.Series, error) {
@@ -357,6 +376,87 @@ func (s *Store) DeleteEmptySeries(libraryID int64) error {
 		WHERE library_id = ?
 		AND id NOT IN (SELECT DISTINCT series_id FROM books)`, libraryID)
 	return err
+}
+
+func (s *Store) CollectionPrivateStateForProfile(seriesID int64, profileID int64) (domain.CollectionPrivateState, error) {
+	profileID, err := s.ResolveProfileID(profileID)
+	if err != nil {
+		return domain.CollectionPrivateState{}, err
+	}
+	var favorite int
+	var liked int
+	err = s.db.QueryRow(`SELECT favorite, liked FROM collection_private_states WHERE profile_id = ? AND series_id = ?`, profileID, seriesID).Scan(&favorite, &liked)
+	if err == sql.ErrNoRows {
+		return domain.CollectionPrivateState{}, nil
+	}
+	if err != nil {
+		return domain.CollectionPrivateState{}, err
+	}
+	return domain.CollectionPrivateState{Favorite: favorite != 0, Liked: liked != 0}, nil
+}
+
+func (s *Store) UpdateCollectionPrivateStateForProfile(seriesID int64, profileID int64, state domain.CollectionPrivateState) error {
+	profileID, err := s.ResolveProfileID(profileID)
+	if err != nil {
+		return err
+	}
+	if _, err := s.SeriesByID(seriesID); err != nil {
+		return err
+	}
+	favorite := 0
+	if state.Favorite {
+		favorite = 1
+	}
+	liked := 0
+	if state.Liked {
+		liked = 1
+	}
+	_, err = s.db.Exec(`INSERT INTO collection_private_states(profile_id, series_id, favorite, liked)
+		VALUES(?, ?, ?, ?)
+		ON CONFLICT(profile_id, series_id) DO UPDATE SET favorite = excluded.favorite,
+			liked = excluded.liked,
+			updated_at = CURRENT_TIMESTAMP`, profileID, seriesID, favorite, liked)
+	return err
+}
+
+func (s *Store) applyCollectionPrivateStates(profileID int64, items []domain.Series) ([]domain.Series, error) {
+	if len(items) == 0 {
+		return items, nil
+	}
+	profileID, err := s.ResolveProfileID(profileID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.Query(`SELECT series_id, favorite, liked FROM collection_private_states WHERE profile_id = ?`, profileID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	type state struct {
+		favorite bool
+		liked    bool
+	}
+	states := make(map[int64]state)
+	for rows.Next() {
+		var seriesID int64
+		var favorite int
+		var liked int
+		if err := rows.Scan(&seriesID, &favorite, &liked); err != nil {
+			return nil, err
+		}
+		states[seriesID] = state{favorite: favorite != 0, liked: liked != 0}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i := range items {
+		if itemState, ok := states[items[i].ID]; ok {
+			items[i].Favorite = itemState.favorite
+			items[i].Liked = itemState.liked
+		}
+	}
+	return items, nil
 }
 
 func (s *Store) DeleteSkippedDirectoryEntries(libraryID int64, names []string) (int64, error) {

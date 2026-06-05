@@ -655,10 +655,16 @@ button:hover {
   gap: 12px;
 }
 
+.collectionCardShell {
+  position: relative;
+  min-width: 0;
+}
+
 .collectionCard {
   display: grid;
   align-content: start;
   gap: 6px;
+  width: 100%;
   min-width: 0;
   border-color: transparent;
   background: transparent;
@@ -729,6 +735,38 @@ button:hover {
   font-size: 11px;
   font-style: normal;
   font-weight: 700;
+}
+
+.collectionActions {
+  position: absolute;
+  z-index: 3;
+  top: 7px;
+  right: 7px;
+  display: flex;
+  gap: 5px;
+}
+
+.collectionAction {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 999px;
+  background: rgba(31, 42, 46, 0.62);
+  color: rgba(255, 255, 255, 0.86);
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+  box-shadow: 0 6px 12px rgba(31, 42, 46, 0.18);
+}
+
+.collectionAction:hover,
+.collectionAction:focus-visible,
+.collectionAction.active {
+  border-color: #ffffff;
+  background: #337f92;
+  color: #ffffff;
 }
 
 .collectionThumb {
@@ -822,6 +860,35 @@ button:hover {
   color: #ffffff;
   font-size: 12px;
   padding: 5px 9px;
+}
+
+.favoritesPage {
+  display: grid;
+  gap: 16px;
+  padding: 16px;
+}
+
+.favoritesSections {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.favoriteSection {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  padding: 16px;
+}
+
+.favoriteSection.wide {
+  grid-column: 1 / -1;
+}
+
+.favoriteSection h2 {
+  margin: 0;
+  color: #1f2a2e;
+  font-size: 16px;
 }
 
 .homeRows {
@@ -2033,8 +2100,20 @@ button.danger:hover {
 .webtoonPage {
   display: flex;
   justify-content: center;
+  align-items: flex-start;
   margin: 0 auto;
   width: 100%;
+}
+
+.webtoonPage.unloaded {
+  contain: layout paint style;
+}
+
+.webtoonPlaceholder {
+  display: block;
+  width: min(100%, 760px);
+  min-height: inherit;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.018));
 }
 
 .webtoonPage img {
@@ -2052,6 +2131,10 @@ button.danger:hover {
   }
 
   .webtoonPage img {
+    width: 100%;
+  }
+
+  .webtoonPlaceholder {
     width: 100%;
   }
 }
@@ -2671,6 +2754,15 @@ button.danger:hover {
   .collectionSections {
     overflow: visible;
     max-height: none;
+  }
+
+  .favoritesPage {
+    padding: 10px;
+  }
+
+  .favoritesSections {
+    grid-template-columns: 1fr;
+    gap: 10px;
   }
 
   .collectionGrid {

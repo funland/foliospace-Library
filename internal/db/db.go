@@ -192,6 +192,14 @@ func Migrate(conn *sql.DB) error {
 			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY(profile_id, book_id)
 		)`,
+		`CREATE TABLE IF NOT EXISTS collection_private_states (
+			profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+			series_id INTEGER NOT NULL REFERENCES series(id) ON DELETE CASCADE,
+			favorite INTEGER NOT NULL DEFAULT 0,
+			liked INTEGER NOT NULL DEFAULT 0,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY(profile_id, series_id)
+		)`,
 		`CREATE TABLE IF NOT EXISTS file_errors (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			library_id INTEGER NOT NULL,

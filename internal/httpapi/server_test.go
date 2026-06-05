@@ -2,7 +2,11 @@ package httpapi
 
 import (
 	"archive/zip"
+	"bytes"
 	"encoding/json"
+	"image"
+	"image/color"
+	"image/jpeg"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -153,6 +157,64 @@ func TestAPIIndexesAndStreamsCBZPages(t *testing.T) {
 	}
 }
 
+func TestAPIStreamsDownsampledComicPage(t *testing.T) {
+	root := t.TempDir()
+	makeImageZip(t, filepath.Join(root, "Tall", "chapter.cbz"), "001.jpg", 800, 2400)
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibrary("Test", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ts := httptest.NewServer(New(service.New(st), nil).Routes())
+	defer ts.Close()
+
+	post(t, ts.URL+"/api/libraries/"+itoa(lib.ID)+"/scan", "")
+	waitFor(t, func() bool {
+		jobs, err := st.ListScanJobs()
+		return err == nil && len(jobs) > 0 && jobs[0].Status == "completed"
+	})
+	series, err := st.ListSeries()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(series) != 1 {
+		t.Fatalf("series count = %d, want 1", len(series))
+	}
+	books, err := st.ListBooks(series[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(books) != 1 {
+		t.Fatalf("book count = %d, want 1", len(books))
+	}
+	manifestBody := get(t, ts.URL+"/api/client/books/"+itoa(books[0].ID)+"/manifest")
+	if !strings.Contains(manifestBody, `"displayUrl":"/api/books/`+itoa(books[0].ID)+`/pages/0?maxWidth=1200"`) {
+		t.Fatalf("manifest response %q is missing safe display URL", manifestBody)
+	}
+
+	resp, err := http.Get(ts.URL + "/api/books/" + itoa(books[0].ID) + "/pages/0?maxWidth=400")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.Header.Get("Content-Type") != "image/jpeg" {
+		t.Fatalf("content type = %q, want image/jpeg", resp.Header.Get("Content-Type"))
+	}
+	img, _, err := image.Decode(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := img.Bounds().Dx(); got != 400 {
+		t.Fatalf("downsampled width = %d, want 400", got)
+	}
+}
+
 func TestClientAPIHomeAndManifestsHideFilePaths(t *testing.T) {
 	root := t.TempDir()
 	makeZip(t, filepath.Join(root, "Series A", "book1.cbz"), map[string]string{"001.jpg": "image"})
@@ -213,7 +275,7 @@ func TestClientAPIHomeAndManifestsHideFilePaths(t *testing.T) {
 		return err == nil && len(jobs) > 0 && jobs[0].Status == "completed"
 	})
 
-	var cbzBookID, epubBookID int64
+	var cbzBookID, epubBookID, seriesAID int64
 	series, err := st.ListSeries()
 	if err != nil {
 		t.Fatal(err)
@@ -225,6 +287,7 @@ func TestClientAPIHomeAndManifestsHideFilePaths(t *testing.T) {
 		}
 		switch seriesItem.Title {
 		case "Series A":
+			seriesAID = seriesItem.ID
 			cbzBookID = books[0].ID
 		case "Books":
 			epubBookID = books[0].ID
@@ -234,6 +297,10 @@ func TestClientAPIHomeAndManifestsHideFilePaths(t *testing.T) {
 		t.Fatalf("indexed book ids cbz=%d epub=%d", cbzBookID, epubBookID)
 	}
 	putJSON(t, ts.URL+"/api/books/"+itoa(cbzBookID)+"/progress", `{"pageIndex":1,"progressFraction":0.5}`)
+	collectionStateBody := putJSONBody(t, ts.URL+"/api/collections/"+itoa(seriesAID)+"/private-state", `{"favorite":true,"liked":true}`)
+	if !strings.Contains(collectionStateBody, `"favorite":true`) || !strings.Contains(collectionStateBody, `"liked":true`) {
+		t.Fatalf("collection private state response %q is missing saved flags", collectionStateBody)
+	}
 
 	infoBody := get(t, ts.URL+"/api/client/info")
 	if !strings.Contains(infoBody, `"apiVersion":"v1"`) ||
@@ -255,6 +322,9 @@ func TestClientAPIHomeAndManifestsHideFilePaths(t *testing.T) {
 	}
 	if !strings.Contains(homeBody, `"continueReading"`) || !strings.Contains(homeBody, `"recentBooks"`) || !strings.Contains(homeBody, `"collections"`) {
 		t.Fatalf("client home response %q is missing expected sections", homeBody)
+	}
+	if !strings.Contains(homeBody, `"favorite":true`) || !strings.Contains(homeBody, `"liked":true`) {
+		t.Fatalf("client home response %q is missing collection private state", homeBody)
 	}
 	if !strings.Contains(homeBody, `"gameShelf"`) || !strings.Contains(homeBody, `"Super Mario World"`) || strings.Contains(homeBody, "Super Mario World (USA).sfc") {
 		t.Fatalf("client home response %q is missing safe game shelf", homeBody)
@@ -1218,6 +1288,41 @@ func makeZip(t *testing.T, path string, entries map[string]string) {
 		if _, err := entry.Write([]byte(body)); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func makeImageZip(t *testing.T, path string, entryName string, width int, height int) {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			img.Set(x, y, color.RGBA{R: uint8(x % 255), G: uint8(y % 255), B: 180, A: 255})
+		}
+	}
+	var body bytes.Buffer
+	if err := jpeg.Encode(&body, img, &jpeg.Options{Quality: 90}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer := zip.NewWriter(file)
+	entry, err := writer.Create(entryName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := entry.Write(body.Bytes()); err != nil {
+		t.Fatal(err)
 	}
 	if err := writer.Close(); err != nil {
 		t.Fatal(err)

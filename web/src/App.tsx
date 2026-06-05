@@ -1,16 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { FormEvent, MouseEvent, ReactNode, TouchEvent } from "react";
+import type { FormEvent, MouseEvent, ReactNode, SyntheticEvent, TouchEvent } from "react";
 import { GlobalWorkerOptions, getDocument } from "pdfjs-dist";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import pdfWorkerURL from "pdfjs-dist/build/pdf.worker.mjs?url";
-import { api, Book, BookPrivateState, clearAuthToken, ClientInfo, ClientPreferences, DirectoryEntry, DirectoryListing, EpubManifest, EpubTocItem, FileError, GameAsset, getActiveProfileId, getAuthToken, JobEvent, Library, Page, Profile, ScanJob, Series, setActiveProfileId as persistActiveProfileId, setAuthToken, SetupStatus, ScanSettings, VideoAsset, VideoTranscodeQueueStatus, VideoTranscodeStatus } from "./api";
+import { api, Book, BookPrivateState, clearAuthToken, ClientInfo, ClientPreferences, CollectionPrivateState, DirectoryEntry, DirectoryListing, EpubManifest, EpubTocItem, FileError, GameAsset, getActiveProfileId, getAuthToken, JobEvent, Library, Page, Profile, ScanJob, Series, setActiveProfileId as persistActiveProfileId, setAuthToken, SetupStatus, ScanSettings, VideoAsset, VideoTranscodeQueueStatus, VideoTranscodeStatus } from "./api";
 
 GlobalWorkerOptions.workerSrc = pdfWorkerURL;
 
-type View = "library" | "reader" | "games" | "videos" | "jobs" | "errors" | "about";
+type View = "library" | "favorites" | "reader" | "games" | "videos" | "jobs" | "errors" | "about";
 type ReaderPageMode = "single" | "double" | "webtoon";
 type EpubPageMode = "single" | "double";
 type EpubTheme = "light" | "sepia" | "dark";
+const WEBTOON_RENDER_RADIUS = 2;
+const WEBTOON_PLACEHOLDER_HEIGHT = 2200;
 type BookSort = "title" | "recently_added" | "last_read" | "progress" | "unread";
 type Locale = "zh" | "zht" | "en" | "ja" | "ko";
 type LibraryAssetType = "mixed" | "book" | "comic" | "game" | "video";
@@ -96,6 +98,7 @@ export function App() {
   const [pdfPageCount, setPdfPageCount] = useState(1);
   const [webtoonProgress, setWebtoonProgress] = useState(0);
   const [webtoonRestoreProgress, setWebtoonRestoreProgress] = useState<number | null>(null);
+  const [webtoonPageHeights, setWebtoonPageHeights] = useState<Record<number, number>>({});
   const [newLibraryName, setNewLibraryName] = useState("");
   const [newLibraryPath, setNewLibraryPath] = useState("");
   const [newLibraryAssetType, setNewLibraryAssetType] = useState<LibraryAssetType>("mixed");
@@ -624,6 +627,7 @@ export function App() {
   function openSeries(item: Series) {
     setStatus(`Loading ${item.title}`);
     const isSameSeries = selectedSeries?.id === item.id;
+    setView("library");
     setSelectedSeries(item);
     setQuery("");
     setBooks([]);
@@ -978,6 +982,25 @@ export function App() {
     setGlobalBooks((items) => replaceBook(items, updatedBook));
   }
 
+  function mergeCollectionState(updatedCollection: Series) {
+    setSeries((items) => replaceSeries(items, updatedCollection));
+    setSelectedSeries((current) => (current?.id === updatedCollection.id ? updatedCollection : current));
+  }
+
+  async function updateCollectionState(collection: Series, patch: Partial<CollectionPrivateState>) {
+    const nextState = {
+      favorite: patch.favorite ?? collection.favorite,
+      liked: patch.liked ?? collection.liked,
+    };
+    try {
+      const updatedCollection = await api.collectionPrivateState(collection.id, nextState);
+      mergeCollectionState(updatedCollection);
+      setStatus(t.collectionStateSaved);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : t.collectionStateFailed);
+    }
+  }
+
   async function savePrivateState() {
     if (!selectedBook) return;
     setPrivateSaving(true);
@@ -1016,7 +1039,6 @@ export function App() {
     if (readerPageMode === "webtoon") {
       setDisplayedPageIndex(pageIndex);
       setReaderLoadState("ready");
-      preloadWebtoonWindow(selectedBook.id, pageIndex, pages.length).catch(() => undefined);
       return;
     }
 
@@ -1056,6 +1078,10 @@ export function App() {
     }, 120);
     return () => window.clearTimeout(timer);
   }, [selectedBook?.id, readerPageMode, webtoonRestoreProgress, pages.length]);
+
+  useEffect(() => {
+    setWebtoonPageHeights({});
+  }, [selectedBook?.id, readerPageMode]);
 
   useEffect(() => {
     function onFullscreenChange() {
@@ -1110,8 +1136,12 @@ export function App() {
     };
   }, [view, selectedBook, pageIndex, pages.length, pdfPageCount, readerPageMode, epubPagePosition, epubPageCount]);
 
+  function comicPageDisplayPath(bookID: number, page: Page | undefined, index: number) {
+    return page?.displayUrl || page?.url || `/api/books/${bookID}/pages/${index}?maxWidth=1200`;
+  }
+
   function preloadPage(bookID: number, index: number) {
-    const src = authenticatedResourcePath(`/api/books/${bookID}/pages/${index}`);
+    const src = authenticatedResourcePath(comicPageDisplayPath(bookID, pages[index], index));
     if (imageCache.current.has(src)) {
       return Promise.resolve();
     }
@@ -1135,13 +1165,6 @@ export function App() {
   function preloadVisiblePages(bookID: number, index: number, total: number, mode: ReaderPageMode) {
     const visible = visiblePageIndexes(index, total, mode);
     return Promise.all(visible.map((next) => preloadPage(bookID, next)));
-  }
-
-  function preloadWebtoonWindow(bookID: number, index: number, total: number) {
-    const start = Math.max(0, index - 1);
-    const end = Math.min(total - 1, index + 4);
-    const targets = Array.from({ length: end - start + 1 }, (_, offset) => start + offset);
-    return Promise.all(targets.map((next) => preloadPage(bookID, next)));
   }
 
   function prefetchNeighborPages(bookID: number, index: number, total: number, mode: ReaderPageMode) {
@@ -1234,6 +1257,14 @@ export function App() {
       setPageIndex((value) => (value === current ? value : current));
       setDisplayedPageIndex((value) => (value === current ? value : current));
     }
+  }
+
+  function handleWebtoonImageLoad(event: SyntheticEvent<HTMLImageElement>, page: Page) {
+    const height = Math.ceil(event.currentTarget.getBoundingClientRect().height);
+    if (height > 0) {
+      setWebtoonPageHeights((items) => (items[page.index] === height ? items : { ...items, [page.index]: height }));
+    }
+    updateWebtoonPosition();
   }
 
   function jumpToEpubChapter(item: EpubTocItem) {
@@ -1339,6 +1370,8 @@ export function App() {
     }
     return sections.filter((section) => section.items.length > 0);
   }, [filteredSeries, libraries, t]);
+  const favoriteCollections = useMemo(() => series.filter((item) => item.favorite), [series]);
+  const likedCollections = useMemo(() => series.filter((item) => item.liked), [series]);
 
   useEffect(() => {
     const node = collectionSectionsRef.current;
@@ -1369,6 +1402,9 @@ export function App() {
         <div className="brand">FolioSpace Library</div>
         <button className={view === "library" ? "active" : ""} onClick={returnToLibrary}>
           {t.library}
+        </button>
+        <button className={view === "favorites" ? "active" : ""} onClick={() => setView("favorites")}>
+          {t.favorites}
         </button>
         <button className={view === "reader" ? "active" : ""} onClick={() => setView("reader")}>
           {t.reader}
@@ -1702,23 +1738,14 @@ export function App() {
                     <h2>{section.title}</h2>
                     <div className="collectionGrid">
                       {section.items.map((item) => (
-                        <button
-                          className={selectedSeries?.id === item.id ? "collectionCard selected" : "collectionCard"}
+                        <CollectionCard
                           key={item.id}
-                          onClick={() => openSeries(item)}
-                          onMouseDown={(event) => event.preventDefault()}
-                          title={item.title}
-                        >
-                          <span className={item.collectionType === "game_platform" ? "collectionThumb game" : "collectionThumb"}>
-                            {item.collectionType !== "game_platform" && (
-                              <CollectionCover seriesID={item.id} />
-                            )}
-                            <span className="collectionInitials">{collectionInitials(item.title)}</span>
-                          </span>
-                          <strong>{item.title}</strong>
-                          <small>{item.directoryPath || "."}</small>
-                          <em>{collectionCountLabel(item)}</em>
-                        </button>
+                          item={item}
+                          selected={selectedSeries?.id === item.id}
+                          labels={t}
+                          onOpen={openSeries}
+                          onStateChange={updateCollectionState}
+                        />
                       ))}
                     </div>
                   </section>
@@ -1785,6 +1812,90 @@ export function App() {
               )}
             </section>
           </div>
+        )}
+
+        {view === "favorites" && (
+          <section className="favoritesPage">
+            <div className="catalogHeader">
+              <div>
+                <h1>{t.favorites}</h1>
+                <small>{t.favoriteSubtitle}</small>
+              </div>
+              <span>{t.catalogLoadedCount(favoriteCollections.length + favoriteBooks.length, favoriteCollections.length + likedCollections.length + favoriteBooks.length)}</span>
+            </div>
+
+            <div className="favoritesSections">
+              <section className="panel favoriteSection">
+                <h2>{t.favoriteCollections}</h2>
+                {favoriteCollections.length > 0 ? (
+                  <div className="collectionGrid">
+                    {favoriteCollections.map((item) => (
+                      <CollectionCard
+                        key={`favorite-collection-${item.id}`}
+                        item={item}
+                        selected={selectedSeries?.id === item.id}
+                        labels={t}
+                        onOpen={openSeries}
+                        onStateChange={updateCollectionState}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="coverEmpty compact">
+                    <strong>{t.noFavorites}</strong>
+                    <small>{t.chooseCollectionHint}</small>
+                  </div>
+                )}
+              </section>
+
+              <section className="panel favoriteSection">
+                <h2>{t.likedCollections}</h2>
+                {likedCollections.length > 0 ? (
+                  <div className="collectionGrid">
+                    {likedCollections.map((item) => (
+                      <CollectionCard
+                        key={`liked-collection-${item.id}`}
+                        item={item}
+                        selected={selectedSeries?.id === item.id}
+                        labels={t}
+                        onOpen={openSeries}
+                        onStateChange={updateCollectionState}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="coverEmpty compact">
+                    <strong>{t.noFavorites}</strong>
+                    <small>{t.chooseCollectionHint}</small>
+                  </div>
+                )}
+              </section>
+
+              <section className="panel favoriteSection wide">
+                <h2>{t.favoriteBooks}</h2>
+                {favoriteBooks.length > 0 ? (
+                  <div className="books">
+                    {favoriteBooks.map((book) => (
+                      <button className="book" key={`favorite-book-${book.id}`} onClick={() => openBook(book)} title={book.title}>
+                        <span className="coverFrame">
+                          <BookCover book={book} />
+                          <span className="coverBadge">{book.format.toUpperCase()}</span>
+                        </span>
+                        <strong>{book.title}</strong>
+                        {book.creator && <small className="bookCreator">{book.creator}</small>}
+                        <small>{privateShelfMeta(book, t)}</small>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="coverEmpty compact">
+                    <strong>{t.noFavorites}</strong>
+                    <small>{t.favoriteSubtitle}</small>
+                  </div>
+                )}
+              </section>
+            </div>
+          </section>
         )}
 
         {view === "games" && (
@@ -2147,24 +2258,37 @@ export function App() {
                     />
                   ) : useWebtoonReader ? (
                     <div ref={webtoonRef} className="webtoonReader" onScroll={updateWebtoonPosition} aria-live="polite">
-                      {pages.map((page) => (
-                        <div className="webtoonPage" data-page-index={page.index} key={`${selectedBook.id}-${page.index}`}>
-                          <img
-                            src={authenticatedResourcePath(`/api/books/${selectedBook.id}/pages/${page.index}`)}
-                            alt={page.name}
-                            draggable={false}
-                            loading={Math.abs(page.index - pageIndex) <= 3 ? "eager" : "lazy"}
-                            onLoad={updateWebtoonPosition}
-                          />
-                        </div>
-                      ))}
+                      {pages.map((page) => {
+                        const shouldRenderImage = Math.abs(page.index - pageIndex) <= WEBTOON_RENDER_RADIUS;
+                        const measuredHeight = webtoonPageHeights[page.index] || WEBTOON_PLACEHOLDER_HEIGHT;
+                        return (
+                          <div
+                            className={shouldRenderImage ? "webtoonPage" : "webtoonPage unloaded"}
+                            data-page-index={page.index}
+                            key={`${selectedBook.id}-${page.index}`}
+                            style={{ minHeight: measuredHeight }}
+                          >
+                            {shouldRenderImage ? (
+                              <img
+                                src={authenticatedResourcePath(comicPageDisplayPath(selectedBook.id, page, page.index))}
+                                alt={page.name}
+                                draggable={false}
+                                loading="eager"
+                                onLoad={(event) => handleWebtoonImageLoad(event, page)}
+                              />
+                            ) : (
+                              <span className="webtoonPlaceholder" aria-hidden="true" />
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   ) : (
                     <div className="pageSpread" aria-live="polite">
                       {visiblePageIndexes(displayedPageIndex, pages.length, readerPageMode).map((visibleIndex) => (
                         <img
                           key={`${selectedBook.id}-${visibleIndex}`}
-                          src={authenticatedResourcePath(`/api/books/${selectedBook.id}/pages/${visibleIndex}`)}
+                          src={authenticatedResourcePath(comicPageDisplayPath(selectedBook.id, pages[visibleIndex], visibleIndex))}
                           alt={pages[visibleIndex]?.name ?? ""}
                           draggable={false}
                         />
@@ -2494,6 +2618,61 @@ function BookShelf({
             </span>
           </button>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function CollectionCard({
+  item,
+  selected,
+  labels,
+  onOpen,
+  onStateChange,
+}: {
+  item: Series;
+  selected: boolean;
+  labels: Translation;
+  onOpen: (item: Series) => void;
+  onStateChange: (item: Series, patch: Partial<CollectionPrivateState>) => void;
+}) {
+  return (
+    <div className="collectionCardShell">
+      <button
+        className={selected ? "collectionCard selected" : "collectionCard"}
+        onClick={() => onOpen(item)}
+        onMouseDown={(event) => event.preventDefault()}
+        title={item.title}
+      >
+        <span className={item.collectionType === "game_platform" ? "collectionThumb game" : "collectionThumb"}>
+          {item.collectionType !== "game_platform" && (
+            <CollectionCover seriesID={item.id} />
+          )}
+          <span className="collectionInitials">{collectionInitials(item.title)}</span>
+        </span>
+        <strong>{item.title}</strong>
+        <small>{item.directoryPath || "."}</small>
+        <em>{collectionCountLabel(item)}</em>
+      </button>
+      <div className="collectionActions">
+        <button
+          type="button"
+          className={item.favorite ? "collectionAction active" : "collectionAction"}
+          onClick={() => onStateChange(item, { favorite: !item.favorite })}
+          title={labels.collectionFavorite}
+          aria-label={labels.collectionFavorite}
+        >
+          ★
+        </button>
+        <button
+          type="button"
+          className={item.liked ? "collectionAction active" : "collectionAction"}
+          onClick={() => onStateChange(item, { liked: !item.liked })}
+          title={labels.collectionLike}
+          aria-label={labels.collectionLike}
+        >
+          ♥
+        </button>
       </div>
     </div>
   );
@@ -3296,6 +3475,10 @@ const translations = {
     recentlyAddedTitle: "最近添加",
     continueSubtitle: "点击后直接回到上次阅读位置",
     favoriteSubtitle: "你的私人收藏",
+    favoriteCollections: "收藏的作品集",
+    likedCollections: "点赞的作品集",
+    favoriteBooks: "收藏的书",
+    noFavorites: "还没有收藏",
     wantSubtitle: "稍后再读",
     gameShelf: "游戏库",
     gameShelfSubtitle: "本地 ROM 与 ROM set",
@@ -3354,6 +3537,10 @@ const translations = {
     noDirectories: "没有可进入的子目录",
     close: "关闭",
     collections: "作品集",
+    collectionFavorite: "收藏作品集",
+    collectionLike: "点赞作品集",
+    collectionStateSaved: "作品集状态已保存",
+    collectionStateFailed: "作品集状态保存失败",
     volumeWall: "封面墙",
     selectCollection: "选择一个作品集浏览单行本",
     sort: "排序",
@@ -3466,6 +3653,10 @@ const translations = {
     recentlyAddedTitle: "最近新增",
     continueSubtitle: "點擊後直接回到上次閱讀位置",
     favoriteSubtitle: "你的私人收藏",
+    favoriteCollections: "收藏的作品集",
+    likedCollections: "讚好的作品集",
+    favoriteBooks: "收藏的書",
+    noFavorites: "還沒有收藏",
     wantSubtitle: "稍後再讀",
     gameShelf: "遊戲庫",
     gameShelfSubtitle: "本地 ROM 與 ROM set",
@@ -3524,6 +3715,10 @@ const translations = {
     noDirectories: "沒有可進入的子目錄",
     close: "關閉",
     collections: "作品集",
+    collectionFavorite: "收藏作品集",
+    collectionLike: "讚好作品集",
+    collectionStateSaved: "作品集狀態已儲存",
+    collectionStateFailed: "作品集狀態儲存失敗",
     volumeWall: "封面牆",
     selectCollection: "選擇一個作品集瀏覽單行本",
     sort: "排序",
@@ -3636,6 +3831,10 @@ const translations = {
     recentlyAddedTitle: "Recently Added",
     continueSubtitle: "One click resumes at your saved page",
     favoriteSubtitle: "Private picks",
+    favoriteCollections: "Favorite collections",
+    likedCollections: "Liked collections",
+    favoriteBooks: "Favorite books",
+    noFavorites: "No favorites yet",
     wantSubtitle: "Queued for later",
     gameShelf: "Game Shelf",
     gameShelfSubtitle: "Local ROMs and ROM sets",
@@ -3694,6 +3893,10 @@ const translations = {
     noDirectories: "No child directories",
     close: "Close",
     collections: "Collections",
+    collectionFavorite: "Favorite collection",
+    collectionLike: "Like collection",
+    collectionStateSaved: "Collection state saved",
+    collectionStateFailed: "Failed to save collection state",
     volumeWall: "Volume Wall",
     selectCollection: "Select a collection to browse its single volumes",
     sort: "Sort",
@@ -3806,6 +4009,10 @@ const translations = {
     recentlyAddedTitle: "最近追加",
     continueSubtitle: "保存した位置からすぐ再開",
     favoriteSubtitle: "お気に入り",
+    favoriteCollections: "お気に入りのコレクション",
+    likedCollections: "いいねしたコレクション",
+    favoriteBooks: "お気に入りの本",
+    noFavorites: "お気に入りはまだありません",
     wantSubtitle: "あとで読む",
     gameShelf: "ゲーム棚",
     gameShelfSubtitle: "ローカル ROM と ROM set",
@@ -3864,6 +4071,10 @@ const translations = {
     noDirectories: "子ディレクトリがありません",
     close: "閉じる",
     collections: "コレクション",
+    collectionFavorite: "コレクションをお気に入りにする",
+    collectionLike: "コレクションにいいね",
+    collectionStateSaved: "コレクションの状態を保存しました",
+    collectionStateFailed: "コレクションの状態を保存できませんでした",
     volumeWall: "カバー一覧",
     selectCollection: "コレクションを選んで単巻を表示",
     sort: "並び替え",
@@ -3976,6 +4187,10 @@ const translations = {
     recentlyAddedTitle: "최근 추가",
     continueSubtitle: "저장된 위치에서 바로 이어서 읽기",
     favoriteSubtitle: "개인 즐겨찾기",
+    favoriteCollections: "즐겨찾기 컬렉션",
+    likedCollections: "좋아요 컬렉션",
+    favoriteBooks: "즐겨찾기 도서",
+    noFavorites: "아직 즐겨찾기가 없습니다",
     wantSubtitle: "나중에 읽기",
     gameShelf: "게임 선반",
     gameShelfSubtitle: "로컬 ROM 및 ROM set",
@@ -4034,6 +4249,10 @@ const translations = {
     noDirectories: "하위 디렉터리가 없습니다",
     close: "닫기",
     collections: "컬렉션",
+    collectionFavorite: "컬렉션 즐겨찾기",
+    collectionLike: "컬렉션 좋아요",
+    collectionStateSaved: "컬렉션 상태가 저장됨",
+    collectionStateFailed: "컬렉션 상태 저장 실패",
     volumeWall: "커버 월",
     selectCollection: "컬렉션을 선택해 단행본을 봅니다",
     sort: "정렬",
@@ -4348,6 +4567,10 @@ function normalizeDraftTags(tags: string[]) {
 
 function replaceBook(items: Book[], updatedBook: Book) {
   return items.map((book) => (book.id === updatedBook.id ? updatedBook : book));
+}
+
+function replaceSeries(items: Series[], updatedSeries: Series) {
+  return items.map((series) => (series.id === updatedSeries.id ? updatedSeries : series));
 }
 
 function mergeShelfBook(items: Book[], updatedBook: Book, include: (book: Book) => boolean) {
