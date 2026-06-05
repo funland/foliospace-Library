@@ -132,6 +132,122 @@ func TestStorePersistsClientPreferences(t *testing.T) {
 	}
 }
 
+func TestStoreManagesThumbnailJobs(t *testing.T) {
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	s := New(conn)
+	lib, err := s.CreateLibrary("Comics", "/library")
+	if err != nil {
+		t.Fatal(err)
+	}
+	series, err := s.UpsertSeries(lib.ID, "Series A", "Series A")
+	if err != nil {
+		t.Fatal(err)
+	}
+	book, err := s.UpsertBook(series.ID, "Book 1", "cbz")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := s.EnqueueThumbnailJob(domain.ThumbnailJobInput{
+		BookID:   book.ID,
+		Size:     "small",
+		CacheKey: "book-1-v1-small",
+		Priority: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	duplicate, err := s.EnqueueThumbnailJob(domain.ThumbnailJobInput{
+		BookID:   book.ID,
+		Size:     "small",
+		CacheKey: "book-1-v1-small",
+		Priority: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if duplicate.ID != first.ID {
+		t.Fatalf("duplicate job id = %d, want %d", duplicate.ID, first.ID)
+	}
+	high, err := s.EnqueueThumbnailJob(domain.ThumbnailJobInput{
+		BookID:   book.ID,
+		Size:     "medium",
+		CacheKey: "book-1-v1-medium",
+		Priority: 100,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	status, err := s.ThumbnailQueueStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Queued != 2 || status.Running != 0 || status.Ready != 0 || status.Failed != 0 {
+		t.Fatalf("status after enqueue = %#v, want two queued jobs", status)
+	}
+
+	claimed, ok, err := s.ClaimNextThumbnailJob()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("claim returned no job")
+	}
+	if claimed.ID != high.ID || claimed.Status != "running" {
+		t.Fatalf("claimed = %#v, want high priority running job %#v", claimed, high)
+	}
+	if err := s.CompleteThumbnailJob(claimed.ID, "/cache/high.jpg", "image/jpeg", 320, 440, 12345); err != nil {
+		t.Fatal(err)
+	}
+	requeued, err := s.EnqueueThumbnailJob(domain.ThumbnailJobInput{
+		BookID:   book.ID,
+		Size:     "medium",
+		CacheKey: "book-1-v1-medium",
+		Priority: 100,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requeued.ID != high.ID || requeued.Status != "queued" {
+		t.Fatalf("requeued ready job = %#v, want same job queued again", requeued)
+	}
+	if err := s.CompleteThumbnailJob(requeued.ID, "/cache/high.jpg", "image/jpeg", 320, 440, 12345); err != nil {
+		t.Fatal(err)
+	}
+
+	claimed, ok, err = s.ClaimNextThumbnailJob()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || claimed.ID != first.ID {
+		t.Fatalf("second claimed = %#v ok=%v, want first job", claimed, ok)
+	}
+	if err := s.FailThumbnailJob(claimed.ID, "decode failed"); err != nil {
+		t.Fatal(err)
+	}
+
+	cancelled, err := s.CancelQueuedThumbnailJobs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cancelled != 0 {
+		t.Fatalf("cancelled = %d, want no queued jobs", cancelled)
+	}
+	status, err = s.ThumbnailQueueStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Ready != 1 || status.Failed != 1 || status.Queued != 0 || status.Running != 0 {
+		t.Fatalf("final status = %#v, want ready=1 failed=1", status)
+	}
+}
+
 func TestStoreCreatesDefaultProfileAndIsolatesProfileState(t *testing.T) {
 	conn, err := db.Open(t.TempDir())
 	if err != nil {

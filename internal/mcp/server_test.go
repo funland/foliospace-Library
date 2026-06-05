@@ -242,6 +242,41 @@ func TestServerCallsPrivateShelfTools(t *testing.T) {
 	}
 }
 
+func TestServerOmitsProfileQueryForLegacyToolCalls(t *testing.T) {
+	var calls []string
+	var bodies []string
+	server := New("http://foliospace.test", "")
+	server.httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls = append(calls, r.Method+" "+r.URL.RequestURI())
+		if r.Body != nil {
+			data, _ := io.ReadAll(r.Body)
+			bodies = append(bodies, string(data))
+		}
+		return jsonResponse(`{"ok":true}`), nil
+	})}
+
+	for _, call := range []Request{
+		toolCall(t, "foliospace.home", nil),
+		toolCall(t, "foliospace.get_progress", map[string]any{"bookId": 7}),
+		toolCall(t, "foliospace.save_progress", map[string]any{"bookId": 7, "pageIndex": 3, "progressFraction": 0.5}),
+		toolCall(t, "foliospace.list_collection_volumes", map[string]any{"collectionId": 42, "limit": 20}),
+		toolCall(t, "foliospace.list_favorites", map[string]any{"limit": 5}),
+	} {
+		response := server.Handle(context.Background(), call)
+		if response.Error != nil {
+			t.Fatalf("legacy profile-free tool call error = %#v", response.Error)
+		}
+	}
+
+	want := "GET /api/client/home?limit=12\nGET /api/books/7/progress\nPUT /api/books/7/progress\nGET /api/collections/42/volumes?limit=20\nGET /api/client/books/favorites?limit=5"
+	if got := strings.Join(calls, "\n"); got != want {
+		t.Fatalf("calls = %q, want profile-free legacy calls %q", got, want)
+	}
+	if strings.Contains(strings.Join(bodies, "\n"), "profileId") || strings.Contains(strings.Join(calls, "\n"), "profileId") {
+		t.Fatalf("legacy calls unexpectedly included profileId; calls=%#v bodies=%#v", calls, bodies)
+	}
+}
+
 func TestServerCallsCollectionVolumesTool(t *testing.T) {
 	var gotPath string
 	server := New("http://foliospace.test", "")

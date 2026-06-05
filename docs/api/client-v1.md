@@ -7,7 +7,7 @@ This document describes the stable HTTP surface intended for native clients such
 Use the NAS or test server address as the base URL:
 
 ```text
-http://192.168.10.155:18080
+http://your-nas-ip:8080
 ```
 
 All examples below use relative paths.
@@ -211,6 +211,31 @@ This endpoint reports container paths, not host/NAS paths. Docker volume mapping
 11. Open a game with `GET /api/client/games/{gameId}/manifest`, then use `fileUrl` only through the service.
 12. Open a video with `GET /api/client/videos/{videoId}/manifest`, then use `fileUrl` for direct/Range playback or `hlsUrl` when `playbackMode` is `hls`.
 
+## Covers, Thumbnails, And Cache Compatibility
+
+Clients should treat every returned `coverUrl`, `thumbnailUrl`, page URL, EPUB resource URL, game `fileUrl`, and video URL as an opaque service URL. Do not strip query parameters or rebuild the URL from the book id. When auth is enabled, native clients should send the bearer token on the request that loads the image or media bytes. Browser surfaces that must append token auth to an existing URL should append with `&` when the URL already contains `?`.
+
+Book cover and thumbnail URLs may include a client cache-busting query value such as:
+
+```text
+/api/books/42/cover?v=v1-cover-refresh-3
+/api/books/42/thumbnail?size=small&v=v1-cover-refresh-3
+```
+
+That query value is for browser and client cache invalidation only. It is separate from the thumbnail cache algorithm, which remains `v1`. Older clients and integrations can still use the pre-existing routes:
+
+```text
+/api/books/42/cover
+/api/books/42/thumbnail?size=small
+/api/books/42/thumbnail?size=small&v=v1
+```
+
+The thumbnail endpoint is a read-through cache. When a JPEG thumbnail is ready, it returns the cached image with private browser caching and an ETag. On a cache miss, the request queues thumbnail generation and returns the best backward-compatible image immediately: the original cover/page image when available, a stale compatible thumbnail when useful, or the built-in generic cover. Fallback responses are marked `no-store` and include `X-FolioSpace-Thumbnail-Fallback` so clients can retry later without caching an intermediate state forever.
+
+PDF covers and PDF thumbnail sources are generated from the first rendered page with `pdftoppm`. The official container image includes `poppler-utils` for that renderer. If rendering is temporarily unavailable or fails, the HTTP response can still fall back to the built-in PDF/generic cover, but the failed PDF thumbnail job is not stored as a ready cache entry; later requests can retry and replace the fallback once rendering works. This is backward-compatible at the API level because the resource remains an image URL, but clients should not hard-code one content type for PDF covers; a PDF cover can now be `image/jpeg` instead of the older SVG placeholder.
+
+Legacy REST endpoints keep their existing fields and response shapes. Some book responses now include an additive `thumbnailUrl` and `thumbnailStatus` to help the web UI and older integrations pick up the refreshed cache version without changing the endpoint they call. The client-safe `/api/client/*` facade still omits local NAS paths such as `filePath`, `rootPath`, and `directoryPath`.
+
 ## Client Endpoints
 
 ### `GET /api/client/info`
@@ -379,12 +404,17 @@ Response:
       "collectionType": "directory",
       "primaryType": "book",
       "bookCount": 12,
+      "coverBookId": 42,
+      "thumbnailStatus": "pending",
+      "thumbnailUrl": "/api/books/42/thumbnail?size=small&v=v1-cover-refresh-3",
       "favorite": true,
       "liked": false
     }
   ]
 }
 ```
+
+Collection `coverBookId`, `thumbnailStatus`, and `thumbnailUrl` are additive optional fields. Clients can use them to render collection covers from the first response without calling the collection volumes endpoint first. Older servers may omit them, so clients should keep a local fallback for missing values.
 
 The client DTO intentionally omits local NAS paths such as `filePath`, `rootPath`, and `directoryPath`.
 
@@ -896,7 +926,7 @@ The native home screen can start from `/api/client/home`, but collection browsin
 
 ### `GET /api/collections`
 
-Lists collections. Responses include profile-scoped `favorite` and `liked` flags when a profile is selected with `X-FolioSpace-Profile-Id` or `profileId`.
+Lists collections. Directory collections include `libraryId` and `directoryPath` for legacy web UI flows. When a representative book is available, the response also includes optional `coverBookId`, `thumbnailStatus`, and `thumbnailUrl` fields matching the collection fields returned by `/api/client/home`. Responses also include profile-scoped `favorite` and `liked` flags when a profile is selected with `X-FolioSpace-Profile-Id` or `profileId`.
 
 ### `PUT /api/collections/{collectionId}/private-state`
 

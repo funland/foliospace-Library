@@ -56,6 +56,7 @@ type Series struct {
 	CollectionType string `json:"collectionType"`
 	PrimaryType    string `json:"primaryType"`
 	BookCount      int64  `json:"bookCount"`
+	CoverBookID    int64  `json:"coverBookId,omitempty"`
 	Favorite       bool   `json:"favorite"`
 	Liked          bool   `json:"liked"`
 }
@@ -71,6 +72,8 @@ type Book struct {
 	Format           string    `json:"format"`
 	PageCount        int       `json:"pageCount"`
 	CoverStatus      string    `json:"coverStatus"`
+	ThumbnailStatus  string    `json:"thumbnailStatus"`
+	ThumbnailURL     string    `json:"thumbnailUrl,omitempty"`
 	Analyzed         bool      `json:"analyzed"`
 	FilePath         string    `json:"filePath,omitempty"`
 	AddedAt          time.Time `json:"addedAt"`
@@ -258,6 +261,78 @@ type ScanJob struct {
 	ReclassifiedFiles    int       `json:"reclassifiedFiles"`
 	StartedAt            time.Time `json:"startedAt"`
 	FinishedAt           time.Time `json:"finishedAt,omitempty"`
+}
+
+type ThumbnailJobInput struct {
+	BookID   int64
+	Size     string
+	CacheKey string
+	Priority int
+}
+
+type ThumbnailJob struct {
+	ID           int64     `json:"id"`
+	BookID       int64     `json:"bookId"`
+	BookTitle    string    `json:"bookTitle,omitempty"`
+	Size         string    `json:"size"`
+	Status       string    `json:"status"`
+	Priority     int       `json:"priority"`
+	CacheKey     string    `json:"cacheKey"`
+	CachePath    string    `json:"cachePath,omitempty"`
+	ContentType  string    `json:"contentType,omitempty"`
+	Width        int       `json:"width,omitempty"`
+	Height       int       `json:"height,omitempty"`
+	ByteSize     int64     `json:"byteSize,omitempty"`
+	ErrorMessage string    `json:"errorMessage,omitempty"`
+	CreatedAt    time.Time `json:"createdAt"`
+	UpdatedAt    time.Time `json:"updatedAt"`
+	StartedAt    time.Time `json:"startedAt,omitempty"`
+	FinishedAt   time.Time `json:"finishedAt,omitempty"`
+}
+
+type ThumbnailCacheEntry struct {
+	BookID    int64
+	Size      string
+	CacheKey  string
+	CachePath string
+	ByteSize  int64
+}
+
+type ThumbnailCacheStatus struct {
+	Files            int     `json:"files"`
+	Bytes            int64   `json:"bytes"`
+	ReadyFiles       int     `json:"readyFiles"`
+	ReadyBytes       int64   `json:"readyBytes"`
+	MissingFiles     int     `json:"missingFiles"`
+	StaleFiles       int     `json:"staleFiles"`
+	StaleBytes       int64   `json:"staleBytes"`
+	OrphanFiles      int     `json:"orphanFiles"`
+	OrphanBytes      int64   `json:"orphanBytes"`
+	AlgorithmVersion string  `json:"algorithmVersion"`
+	SmallWidth       int     `json:"smallWidth"`
+	MediumWidth      int     `json:"mediumWidth"`
+	TargetAspect     float64 `json:"targetAspect"`
+}
+
+type ThumbnailCacheCleanupResult struct {
+	DeletedFiles int   `json:"deletedFiles"`
+	DeletedBytes int64 `json:"deletedBytes"`
+	FailedFiles  int   `json:"failedFiles"`
+}
+
+type ThumbnailQueueStatus struct {
+	Status        string               `json:"status"`
+	Queued        int                  `json:"queued"`
+	Running       int                  `json:"running"`
+	Ready         int                  `json:"ready"`
+	Failed        int                  `json:"failed"`
+	Cancelled     int                  `json:"cancelled"`
+	Processed     int                  `json:"processed"`
+	ActiveJob     *ThumbnailJob        `json:"activeJob,omitempty"`
+	LastError     string               `json:"lastError,omitempty"`
+	Paused        bool                 `json:"paused"`
+	WorkerEnabled bool                 `json:"workerEnabled"`
+	Cache         ThumbnailCacheStatus `json:"cache"`
 }
 
 type JobEvent struct {

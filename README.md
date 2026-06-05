@@ -1,5 +1,9 @@
 # FolioSpace Library
 
+[Website](https://foliospace.app/) · [Docker Hub](https://hub.docker.com/r/funland/foliospace-library) · [Client API](docs/api/client-v1.md) · [MCP](docs/mcp/usage.md)
+
+![FolioSpace Library hero](docs/screenshots/hero.png)
+
 FolioSpace Library is a personal digital asset library that runs on a NAS, Docker host, or local server. It provides a unified indexing layer and stable client service layer for Apple-device experiences across reading, games, spatial media, documents, photos, videos, and related audio collections.
 
 It is not trying to become a complete Plex, Jellyfin, or Immich replacement. The first priority is personal asset indexing: scanning, identifying, covers/thumbnails, classification, search, favorites, recent access, progress, and private state. Dedicated clients such as a reader app, GameEMU, and Vision Pro experiences own the actual consumption UI.
@@ -7,6 +11,24 @@ It is not trying to become a complete Plex, Jellyfin, or Immich replacement. The
 The current implementation still starts from the FolioSpace Reader codebase and keeps the existing reading MVP operational while the model evolves toward `Asset` / `LibraryItem`.
 
 Current release branch: `0.91`.
+
+## Screenshots
+
+![Unified home](docs/screenshots/home.png)
+
+![Reader mode](docs/screenshots/reader.png)
+
+![NAS and API](docs/screenshots/nas-api.png)
+
+![Game and video libraries](docs/screenshots/game-video.png)
+
+## License
+
+Copyright (C) 2026 funland co.,Ltd.
+
+The server and web application source in this repository is released under the GNU Affero General Public License v3.0. See [`LICENSE`](LICENSE).
+
+FolioSpace Library indexes user-owned local files only. It does not distribute books, comics, ROMs, movies, or other media content.
 
 ## Runtime Layout
 
@@ -70,7 +92,7 @@ Detailed client integration docs are in [`docs/api/client-v1.md`](docs/api/clien
 - `GET/PUT /api/settings/scan`: scan worker settings for NAS devices with different CPU and memory budgets.
 - `GET /api/client/search`, `/api/client/books/favorites`, and `/api/client/books/private-status/:status`: private-state-aware discovery shelves.
 
-Client API book and collection responses omit local NAS file paths.
+Client API book and collection responses omit local NAS file paths. Returned cover, thumbnail, page, EPUB, game, and video URLs are opaque service URLs; clients should preserve query parameters because FolioSpace uses them for cache-compatible media refreshes while keeping older routes valid.
 
 ## Compact Mobile Reader
 
@@ -176,11 +198,3 @@ Near-term expansion priority:
 2. Add game asset indexing for local ROMs and ROM sets.
 3. Add spatial photo / spatial video indexing.
 4. Move data model language from Book/Series toward Asset/LibraryItem after the first non-reading asset type is real.
-
-## Git Remote
-
-The project remote is:
-
-```bash
-git remote add origin http://192.168.10.158:8418/funland/FolioSpaceReader.git
-```

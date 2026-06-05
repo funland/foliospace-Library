@@ -101,9 +101,11 @@ func readEPUBManifest(files []*zip.File) (domain.EPUBManifest, error) {
 		opfDir = ""
 	}
 	itemsByID := map[string]epubManifestItem{}
+	itemsByHref := map[string]epubManifestItem{}
 	for _, item := range pkg.Manifest.Items {
 		item.Href = resolveEPUBHref(opfDir, item.Href)
 		itemsByID[item.ID] = item
+		itemsByHref[item.Href] = item
 	}
 
 	coverID := ""
@@ -121,6 +123,9 @@ func readEPUBManifest(files []*zip.File) (domain.EPUBManifest, error) {
 		if coverHref == "" && strings.Contains(item.Properties, "cover-image") {
 			coverHref = item.Href
 		}
+	}
+	if coverHref == "" {
+		coverHref = epubGuideCoverHref(files, opfDir, pkg, itemsByHref)
 	}
 
 	spine := make([]domain.EPUBSpineItem, 0, len(pkg.Spine.Itemrefs))
@@ -145,6 +150,40 @@ func readEPUBManifest(files []*zip.File) (domain.EPUBManifest, error) {
 		Spine:       spine,
 		TOC:         epubTOC(files, opfDir, pkg, spine, itemsByID),
 	}, nil
+}
+
+func epubGuideCoverHref(files []*zip.File, opfDir string, pkg epubPackage, itemsByHref map[string]epubManifestItem) string {
+	for _, ref := range pkg.Guide.References {
+		if !strings.EqualFold(strings.TrimSpace(ref.Type), "cover") || strings.TrimSpace(ref.Href) == "" {
+			continue
+		}
+		href := resolveEPUBHref(opfDir, ref.Href)
+		if epubResourceIsImage(files, href, itemsByHref) {
+			return href
+		}
+	}
+	return ""
+}
+
+func epubResourceIsImage(files []*zip.File, href string, itemsByHref map[string]epubManifestItem) bool {
+	cleanHref := cleanEPUBPath(href)
+	if cleanHref == "" || !epubZipEntryExists(files, cleanHref) {
+		return false
+	}
+	if item, ok := itemsByHref[cleanHref]; ok && strings.TrimSpace(item.MediaType) != "" {
+		return strings.HasPrefix(strings.ToLower(item.MediaType), "image/")
+	}
+	return strings.HasPrefix(strings.ToLower(epubContentType(cleanHref)), "image/")
+}
+
+func epubZipEntryExists(files []*zip.File, name string) bool {
+	cleanName := cleanEPUBPath(name)
+	for _, file := range files {
+		if cleanEPUBPath(file.Name) == cleanName && !file.FileInfo().IsDir() {
+			return true
+		}
+	}
+	return false
 }
 
 func epubTOC(files []*zip.File, opfDir string, pkg epubPackage, spine []domain.EPUBSpineItem, itemsByID map[string]epubManifestItem) []domain.EPUBTOCItem {
@@ -346,6 +385,7 @@ type epubPackage struct {
 	Metadata epubMetadata `xml:"metadata"`
 	Manifest epubManifest `xml:"manifest"`
 	Spine    epubSpine    `xml:"spine"`
+	Guide    epubGuide    `xml:"guide"`
 }
 
 type epubMetadata struct {
@@ -369,6 +409,15 @@ type epubManifestItem struct {
 	Href       string `xml:"href,attr"`
 	MediaType  string `xml:"media-type,attr"`
 	Properties string `xml:"properties,attr"`
+}
+
+type epubGuide struct {
+	References []epubGuideReference `xml:"reference"`
+}
+
+type epubGuideReference struct {
+	Type string `xml:"type,attr"`
+	Href string `xml:"href,attr"`
 }
 
 type epubSpine struct {

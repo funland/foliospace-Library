@@ -3,7 +3,7 @@ import type { FormEvent, MouseEvent, ReactNode, SyntheticEvent, TouchEvent } fro
 import { GlobalWorkerOptions, getDocument } from "pdfjs-dist";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import pdfWorkerURL from "pdfjs-dist/build/pdf.worker.mjs?url";
-import { api, Book, BookPrivateState, clearAuthToken, ClientInfo, ClientPreferences, CollectionPrivateState, DirectoryEntry, DirectoryListing, EpubManifest, EpubTocItem, FileError, GameAsset, getActiveProfileId, getAuthToken, JobEvent, Library, Page, Profile, ScanJob, Series, setActiveProfileId as persistActiveProfileId, setAuthToken, SetupStatus, ScanSettings, VideoAsset, VideoTranscodeQueueStatus, VideoTranscodeStatus } from "./api";
+import { api, Book, BookPrivateState, clearAuthToken, ClientInfo, ClientPreferences, CollectionPrivateState, DirectoryEntry, DirectoryListing, EpubManifest, EpubTocItem, FileError, GameAsset, getActiveProfileId, getAuthToken, JobEvent, Library, Page, Profile, ScanJob, Series, setActiveProfileId as persistActiveProfileId, setAuthToken, SetupStatus, ScanSettings, ThumbnailWorkerStatus, VideoAsset, VideoTranscodeQueueStatus, VideoTranscodeStatus } from "./api";
 
 GlobalWorkerOptions.workerSrc = pdfWorkerURL;
 
@@ -16,7 +16,7 @@ const WEBTOON_PLACEHOLDER_HEIGHT = 2200;
 type BookSort = "title" | "recently_added" | "last_read" | "progress" | "unread";
 type Locale = "zh" | "zht" | "en" | "ja" | "ko";
 type LibraryAssetType = "mixed" | "book" | "comic" | "game" | "video";
-const bookPageSize = 60;
+const bookPageSize = 30;
 const catalogPageSize = 200;
 
 export function App() {
@@ -45,6 +45,8 @@ export function App() {
   const [videoTranscodeQueueStatus, setVideoTranscodeQueueStatus] = useState<VideoTranscodeQueueStatus | null>(null);
   const [videoPlaybackReloadKey, setVideoPlaybackReloadKey] = useState(0);
   const [jobs, setJobs] = useState<ScanJob[]>([]);
+  const [thumbnailWorkerStatus, setThumbnailWorkerStatus] = useState<ThumbnailWorkerStatus | null>(null);
+  const [thumbnailWorkerBusy, setThumbnailWorkerBusy] = useState(false);
   const [errors, setErrors] = useState<FileError[]>([]);
   const [jobEvents, setJobEvents] = useState<JobEvent[]>([]);
   const [jobErrors, setJobErrors] = useState<FileError[]>([]);
@@ -155,13 +157,14 @@ export function App() {
       } else {
         persistActiveProfileId("");
       }
-      const [preferences, info, nextScanSettings, nextLibraries, nextSeries, nextJobs, nextErrors, nextContinueBooks, nextRecentBooks, nextFavoriteBooks, nextWantBooks, nextGameShelf, nextVideoShelf] = await Promise.all([
+      const [preferences, info, nextScanSettings, nextLibraries, nextSeries, nextJobs, nextThumbnailWorkerStatus, nextErrors, nextContinueBooks, nextRecentBooks, nextFavoriteBooks, nextWantBooks, nextGameShelf, nextVideoShelf] = await Promise.all([
         api.clientPreferences(),
         api.clientInfo(),
         api.scanSettings(),
         api.libraries(),
         api.series(),
         api.jobs(),
+        api.thumbnailWorkerStatus(),
         api.errors(),
         api.continueReading(),
         api.recentBooks(),
@@ -178,6 +181,7 @@ export function App() {
       setLibraries(arrayOrEmpty(nextLibraries));
       setSeries(arrayOrEmpty(nextSeries));
       setJobs(arrayOrEmpty(nextJobs));
+      setThumbnailWorkerStatus(nextThumbnailWorkerStatus);
       setErrors(arrayOrEmpty(nextErrors));
       setContinueBooks(arrayOrEmpty(nextContinueBooks));
       setRecentBooks(arrayOrEmpty(nextRecentBooks));
@@ -538,6 +542,36 @@ export function App() {
     } catch (error) {
       handleAPIError(error);
     } finally {
+      setActiveTask(null);
+    }
+  }
+
+  async function refreshThumbnailWorkerStatus() {
+    try {
+      setThumbnailWorkerStatus(await api.thumbnailWorkerStatus());
+    } catch (error) {
+      handleAPIError(error);
+    }
+  }
+
+  async function controlThumbnailWorker(action: "pause" | "resume" | "cancel" | "cleanupOrphans") {
+    setThumbnailWorkerBusy(true);
+    setActiveTask(`${action} thumbnail worker`);
+    try {
+      const nextStatus =
+        action === "pause"
+          ? await api.pauseThumbnailWorker()
+          : action === "resume"
+            ? await api.resumeThumbnailWorker()
+            : action === "cancel"
+              ? await api.cancelThumbnailJobs()
+              : await api.cleanupThumbnailOrphans();
+      setThumbnailWorkerStatus(nextStatus);
+      setStatus(`Thumbnail worker: ${nextStatus.status}`);
+    } catch (error) {
+      handleAPIError(error);
+    } finally {
+      setThumbnailWorkerBusy(false);
       setActiveTask(null);
     }
   }
@@ -914,11 +948,30 @@ export function App() {
           void loadBooksPage(selectedSeries, books.length, false);
         }
       },
-      { rootMargin: "600px 0px" },
+      { rootMargin: "220px 0px" },
     );
     observer.observe(node);
     return () => observer.disconnect();
   }, [bookHasMore, bookListLoading, books.length, loadBooksPage, selectedSeries]);
+
+  useEffect(() => {
+    if (view !== "jobs" || authRequired) return;
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const nextStatus = await api.thumbnailWorkerStatus();
+        if (!cancelled) setThumbnailWorkerStatus(nextStatus);
+      } catch (error) {
+        if (!cancelled) setStatus(error instanceof Error ? error.message : "Failed to load thumbnail worker");
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(refresh, 2500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [authRequired, view]);
 
   async function openBook(book: Book) {
     setActiveTask(`Opening ${book.title}`);
@@ -1395,6 +1448,7 @@ export function App() {
   const readerClassName = selectedBook
     ? `reader ${selectedBookReaderClass}${useWebtoonReader ? " webtoonMode" : ""}${readerFullscreen ? " immersiveMode" : ""}`
     : "reader";
+  const visibleContinueBooks = continueBooks.slice(0, 4);
 
   return (
     <main className={view === "reader" ? "app readerMode" : "app"}>
@@ -1653,16 +1707,17 @@ export function App() {
               </div>
             </section>
 
-            {(continueBooks.length > 0 || favoriteBooks.length > 0 || wantBooks.length > 0 || gameShelf.length > 0 || videoShelf.length > 0 || recentBooks.length > 0) && (
+            {(visibleContinueBooks.length > 0 || favoriteBooks.length > 0 || wantBooks.length > 0 || gameShelf.length > 0 || videoShelf.length > 0 || recentBooks.length > 0) && (
               <section className="homeRows quickShelfPanel panel wide" aria-label="Reading shortcuts">
                 <div className="quickShelfColumn">
-                  {continueBooks.length > 0 && (
+                  {visibleContinueBooks.length > 0 && (
                     <BookShelf
                       title={t.continueReading}
                       subtitle={t.continueSubtitle}
-                      books={continueBooks.slice(0, 4)}
+                      books={visibleContinueBooks}
                       onOpen={openBook}
                       meta={(book) => continueMeta(book, t)}
+                      largeCovers={visibleContinueBooks.length < 4}
                       progress
                     />
                   )}
@@ -2343,6 +2398,60 @@ export function App() {
                   {scanSettingsSaving ? t.saving : t.save}
                 </button>
               </div>
+              <div className="thumbnailWorkerPanel">
+                <div className="thumbnailWorkerHeader">
+                  <div>
+                    <strong>{t.thumbnailWorker}</strong>
+                    <small>{t.thumbnailWorkerHint}</small>
+                  </div>
+                  <span className={`workerBadge ${thumbnailWorkerStatus?.status || "idle"}`}>{thumbnailWorkerStatus?.status || "idle"}</span>
+                </div>
+                <div className="thumbnailStats">
+                  <span>{t.thumbnailQueued}<strong>{thumbnailWorkerStatus?.queued ?? 0}</strong></span>
+                  <span>{t.thumbnailRunning}<strong>{thumbnailWorkerStatus?.running ?? 0}</strong></span>
+                  <span>{t.thumbnailReady}<strong>{thumbnailWorkerStatus?.ready ?? 0}</strong></span>
+                  <span>{t.thumbnailFailed}<strong>{thumbnailWorkerStatus?.failed ?? 0}</strong></span>
+                  <span>{t.thumbnailCancelled}<strong>{thumbnailWorkerStatus?.cancelled ?? 0}</strong></span>
+                </div>
+                {thumbnailWorkerStatus?.cache && (
+                  <div className="thumbnailCachePanel">
+                    <div className="thumbnailCacheHeader">
+                      <strong>{t.thumbnailCache}</strong>
+                      <small>
+                        {t.thumbnailCacheHint(
+                          thumbnailWorkerStatus.cache.algorithmVersion,
+                          thumbnailWorkerStatus.cache.smallWidth,
+                          thumbnailWorkerStatus.cache.mediumWidth,
+                        )}
+                      </small>
+                    </div>
+                    <div className="thumbnailStats">
+                      <span>{t.thumbnailCacheFiles}<strong>{thumbnailWorkerStatus.cache.files}</strong></span>
+                      <span>{t.thumbnailCacheSize}<strong>{formatBytes(thumbnailWorkerStatus.cache.bytes)}</strong></span>
+                      <span>{t.thumbnailCacheReady}<strong>{thumbnailWorkerStatus.cache.readyFiles}</strong></span>
+                      <span>{t.thumbnailCacheMissing}<strong>{thumbnailWorkerStatus.cache.missingFiles}</strong></span>
+                      <span>{t.thumbnailCacheStale}<strong>{thumbnailWorkerStatus.cache.staleFiles}</strong></span>
+                      <span>{t.thumbnailCacheOrphans}<strong>{thumbnailWorkerStatus.cache.orphanFiles}</strong></span>
+                    </div>
+                  </div>
+                )}
+                {thumbnailWorkerStatus?.activeJob?.bookTitle && (
+                  <small className="thumbnailActive">
+                    {t.thumbnailActive}: {thumbnailWorkerStatus.activeJob.bookTitle} · {thumbnailWorkerStatus.activeJob.size}
+                  </small>
+                )}
+                {thumbnailWorkerStatus?.lastError && <small className="thumbnailError">{thumbnailWorkerStatus.lastError}</small>}
+                <div className="jobActions">
+                  {thumbnailWorkerStatus?.paused ? (
+                    <button onClick={() => controlThumbnailWorker("resume")} disabled={thumbnailWorkerBusy}>{t.resume}</button>
+                  ) : (
+                    <button onClick={() => controlThumbnailWorker("pause")} disabled={thumbnailWorkerBusy}>{t.pause}</button>
+                  )}
+                  <button className="danger" onClick={() => controlThumbnailWorker("cancel")} disabled={thumbnailWorkerBusy || !thumbnailWorkerStatus?.queued}>{t.cancel}</button>
+                  <button onClick={() => controlThumbnailWorker("cleanupOrphans")} disabled={thumbnailWorkerBusy || !thumbnailWorkerStatus?.cache?.orphanFiles}>{t.cleanupThumbnailOrphans}</button>
+                  <button onClick={refreshThumbnailWorkerStatus} disabled={thumbnailWorkerBusy}>{t.refreshThumbnailWorker}</button>
+                </div>
+              </div>
               {jobs.map((job) => (
                 <button className="jobRow" key={job.id} onClick={() => openJob(job)}>
                   <strong>Job #{job.id}</strong>
@@ -2518,22 +2627,34 @@ export function App() {
   );
 }
 
-function CollectionCover({ seriesID }: { seriesID: number }) {
+function CollectionCover({ series }: { series: Series }) {
   const rootRef = useRef<HTMLSpanElement | null>(null);
-  const [coverBookID, setCoverBookID] = useState<number | null>(null);
+  const [thumbnail, setThumbnail] = useState<{ url: string; status: string } | null>(
+    series.thumbnailUrl ? { url: series.thumbnailUrl, status: series.thumbnailStatus || "pending" } : null,
+  );
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
+    setThumbnail(series.thumbnailUrl ? { url: series.thumbnailUrl, status: series.thumbnailStatus || "pending" } : null);
+    setFailed(false);
+  }, [series.thumbnailStatus, series.thumbnailUrl]);
+
+  useEffect(() => {
+    if (series.thumbnailUrl) return;
     const node = rootRef.current;
-    if (!node || coverBookID || failed) return;
+    if (!node || thumbnail || failed) return;
 
     let cancelled = false;
     const load = async () => {
       try {
-        const page = await api.booksPage(seriesID, { limit: 1, offset: 0, sort: "title" });
+        const page = await api.booksPage(series.id, { limit: 1, offset: 0, sort: "title" });
         if (!cancelled) {
-          setCoverBookID(page.items[0]?.id ?? null);
-          setFailed(page.items.length === 0);
+          const book = page.items[0];
+          setThumbnail(book ? {
+            url: book.thumbnailUrl || `/api/books/${book.id}/thumbnail?size=small`,
+            status: book.thumbnailStatus || "pending",
+          } : null);
+          setFailed(!book);
         }
       } catch {
         if (!cancelled) setFailed(true);
@@ -2561,13 +2682,14 @@ function CollectionCover({ seriesID }: { seriesID: number }) {
       cancelled = true;
       observer.disconnect();
     };
-  }, [coverBookID, failed, seriesID]);
+  }, [failed, series.id, series.thumbnailUrl, thumbnail]);
 
   return (
     <span ref={rootRef} className="collectionCoverSlot" aria-hidden="true">
-      {coverBookID && !failed && (
-        <img
-          src={authenticatedResourcePath(`/api/books/${coverBookID}/cover`)}
+      {thumbnail && !failed && (
+        <ThumbnailImage
+          src={thumbnail.url}
+          thumbnailStatus={thumbnail.status}
           alt=""
           loading="lazy"
           onError={() => setFailed(true)}
@@ -2583,6 +2705,7 @@ function BookShelf({
   books,
   onOpen,
   meta,
+  largeCovers = false,
   progress = false,
 }: {
   title: string;
@@ -2590,6 +2713,7 @@ function BookShelf({
   books: Book[];
   onOpen: (book: Book) => void;
   meta: (book: Book) => string;
+  largeCovers?: boolean;
   progress?: boolean;
 }) {
   return (
@@ -2604,7 +2728,7 @@ function BookShelf({
         {books.map((book) => (
           <button className="shelfBook" key={`${title}-${book.id}`} onClick={() => onOpen(book)} title={book.title}>
             <span className="shelfCover">
-              <BookCover book={book} />
+              <BookCover book={book} largeCover={largeCovers} />
               <span className="coverBadge">{book.format.toUpperCase()}</span>
             </span>
             <span>
@@ -2644,9 +2768,9 @@ function CollectionCard({
         onMouseDown={(event) => event.preventDefault()}
         title={item.title}
       >
-        <span className={item.collectionType === "game_platform" ? "collectionThumb game" : "collectionThumb"}>
+        <span className={collectionThumbClass(item)}>
           {item.collectionType !== "game_platform" && (
-            <CollectionCover seriesID={item.id} />
+            <CollectionCover series={item} />
           )}
           <span className="collectionInitials">{collectionInitials(item.title)}</span>
         </span>
@@ -2678,18 +2802,128 @@ function CollectionCard({
   );
 }
 
-function BookCover({ book }: { book: Book }) {
-  if (book.format === "pdf") {
-    return (
-      <iframe
-        className="pdfCoverPreview"
-        title={`${book.title} cover`}
-        src={authenticatedResourcePath(`/api/books/${book.id}/pages/0#toolbar=0&navpanes=0&scrollbar=0&page=1&view=FitH`)}
+function BookCover({ book, largeCover = false }: { book: Book; largeCover?: boolean }) {
+  const src = book.thumbnailUrl || `/api/books/${book.id}/thumbnail?size=small`;
+  return (
+    <>
+      <ThumbnailImage
+        src={src}
+        thumbnailStatus={book.thumbnailStatus || "pending"}
+        alt=""
         loading="lazy"
       />
-    );
-  }
-  return <img src={authenticatedResourcePath(`/api/books/${book.id}/cover`)} alt="" loading="lazy" />;
+      <SourceCoverOverlay sourceCoverUrl={largeCover ? book.coverUrl || `/api/books/${book.id}/cover` : undefined} />
+    </>
+  );
+}
+
+const thumbnailFallbackImage = "/bookshelf-bg-v2.jpg";
+
+function SourceCoverOverlay({ sourceCoverUrl }: { sourceCoverUrl?: string }) {
+  const [sourceCoverLoaded, setSourceCoverLoaded] = useState(false);
+  const [sourceCoverFailed, setSourceCoverFailed] = useState(false);
+
+  useEffect(() => {
+    setSourceCoverLoaded(false);
+    setSourceCoverFailed(false);
+  }, [sourceCoverUrl]);
+
+  if (!sourceCoverUrl || sourceCoverFailed) return null;
+
+  return (
+    <img
+      className={`sourceCoverImage${sourceCoverLoaded ? " loaded" : ""}`}
+      src={authenticatedResourcePath(sourceCoverUrl)}
+      alt=""
+      loading="lazy"
+      data-thumbnail-status={sourceCoverLoaded ? "source-cover" : "source-cover-loading"}
+      onLoad={() => setSourceCoverLoaded(true)}
+      onError={() => setSourceCoverFailed(true)}
+    />
+  );
+}
+
+function ThumbnailImage({
+  src,
+  thumbnailStatus,
+  alt,
+  loading,
+  onError,
+}: {
+  src: string;
+  thumbnailStatus?: string;
+  alt: string;
+  loading?: "eager" | "lazy";
+  onError?: () => void;
+}) {
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const [fallbackVisible, setFallbackVisible] = useState(false);
+
+  useEffect(() => {
+    setRefreshNonce(0);
+    setFallbackVisible(false);
+  }, [src, thumbnailStatus]);
+
+  useEffect(() => {
+    if (!src || (thumbnailStatus === "ready" && !fallbackVisible)) return;
+    let cancelled = false;
+    let timer: number | null = null;
+    let attempts = 0;
+    let consecutiveErrors = 0;
+
+    const poll = async () => {
+      try {
+        const pollUrl = authenticatedResourcePath(withThumbnailRefreshParam(src, attempts + 1));
+        const response = await fetch(pollUrl, { method: "HEAD" });
+        const contentType = response.headers.get("Content-Type") || "";
+        if (!cancelled && response.ok && contentType.toLowerCase().startsWith("image/jpeg")) {
+          const fallbackKind = response.headers.get("X-FolioSpace-Thumbnail-Fallback") || "";
+          consecutiveErrors = 0;
+          setFallbackVisible(false);
+          if (!fallbackKind || attempts === 0 || fallbackVisible) {
+            setRefreshNonce((value) => value + 1);
+          }
+          if (!fallbackKind) return;
+        } else if (!cancelled && !response.ok) {
+          consecutiveErrors += 1;
+          if (consecutiveErrors >= 3) setFallbackVisible(true);
+        }
+      } catch {
+        consecutiveErrors += 1;
+        if (!cancelled && consecutiveErrors >= 3) setFallbackVisible(true);
+      }
+      attempts += 1;
+      if (!cancelled && attempts < 60) {
+        timer = window.setTimeout(poll, 1800);
+      } else if (!cancelled) {
+        setFallbackVisible(true);
+      }
+    };
+
+    timer = window.setTimeout(poll, fallbackVisible ? 200 : 1200);
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [fallbackVisible, src, thumbnailStatus]);
+
+  const resolvedSrc = refreshNonce > 0 ? withThumbnailRefreshParam(src, refreshNonce) : src;
+
+  return (
+    <img
+      src={fallbackVisible ? thumbnailFallbackImage : authenticatedResourcePath(resolvedSrc)}
+      alt={alt}
+      loading={loading}
+      data-thumbnail-status={fallbackVisible ? "fallback" : thumbnailStatus || "pending"}
+      onError={() => {
+        if (!fallbackVisible) {
+          setFallbackVisible(true);
+          return;
+        }
+        onError?.();
+      }}
+    />
+  );
 }
 
 function PdfReader({
@@ -3071,6 +3305,11 @@ function collectionCountLabel(item: Series) {
   return item.collectionType === "game_platform" ? `${item.bookCount} games` : `${item.bookCount} volumes`;
 }
 
+function collectionThumbClass(item: Series) {
+  if (item.collectionType === "game_platform") return "collectionThumb game";
+  return item.thumbnailUrl ? "collectionThumb withCover" : "collectionThumb";
+}
+
 function collectionKind(item: Series, libraries: Library[]) {
   if (item.primaryType === "book" || item.primaryType === "comic" || item.primaryType === "game" || item.primaryType === "video") {
     return item.primaryType;
@@ -3399,6 +3638,13 @@ function authenticatedResourcePath(path: string | undefined) {
   return hash ? `${signed}#${hash}` : signed;
 }
 
+function withThumbnailRefreshParam(path: string, value: number) {
+  const [base, hash = ""] = path.split("#", 2);
+  const separator = base.includes("?") ? "&" : "?";
+  const refreshed = `${base}${separator}thumbnail_refresh=${encodeURIComponent(String(value))}`;
+  return hash ? `${refreshed}#${hash}` : refreshed;
+}
+
 function compareBooks(left: Book, right: Book, sort: BookSort) {
   if (sort === "recently_added") {
     return compareDatesDesc(left.addedAt, right.addedAt) || left.title.localeCompare(right.title);
@@ -3524,6 +3770,24 @@ const translations = {
     scanWorkers: "扫描 Worker",
     scanWorkersHint: "新扫描任务使用的并发数量，NAS 建议 2-4，高性能机器可调到 8。",
     scanWorkersSaved: (count: number) => `扫描 Worker 已保存为 ${count}`,
+    thumbnailWorker: "封面缩略图 Worker",
+    thumbnailWorkerHint: "低优先级生成列表封面，不影响资源库扫描速度。",
+    thumbnailQueued: "排队",
+    thumbnailRunning: "运行",
+    thumbnailReady: "完成",
+    thumbnailFailed: "失败",
+    thumbnailCancelled: "取消",
+    thumbnailActive: "当前",
+    thumbnailCache: "缓存",
+    thumbnailCacheHint: (version: string, small: number, medium: number) => `${version} · small ${small}px / medium ${medium}px`,
+    thumbnailCacheFiles: "文件",
+    thumbnailCacheSize: "体积",
+    thumbnailCacheReady: "有效",
+    thumbnailCacheMissing: "缺失",
+    thumbnailCacheStale: "旧版",
+    thumbnailCacheOrphans: "未引用",
+    cleanupThumbnailOrphans: "清理未引用缓存",
+    refreshThumbnailWorker: "刷新",
     pause: "暂停",
     resume: "恢复",
     cancel: "取消",
@@ -3702,6 +3966,24 @@ const translations = {
     scanWorkers: "掃描 Worker",
     scanWorkersHint: "新掃描任務使用的並發數量，NAS 建議 2-4，高效能機器可調到 8。",
     scanWorkersSaved: (count: number) => `掃描 Worker 已儲存為 ${count}`,
+    thumbnailWorker: "封面縮圖 Worker",
+    thumbnailWorkerHint: "低優先級產生列表封面，不影響資源庫掃描速度。",
+    thumbnailQueued: "排隊",
+    thumbnailRunning: "執行",
+    thumbnailReady: "完成",
+    thumbnailFailed: "失敗",
+    thumbnailCancelled: "取消",
+    thumbnailActive: "目前",
+    thumbnailCache: "快取",
+    thumbnailCacheHint: (version: string, small: number, medium: number) => `${version} · small ${small}px / medium ${medium}px`,
+    thumbnailCacheFiles: "檔案",
+    thumbnailCacheSize: "體積",
+    thumbnailCacheReady: "有效",
+    thumbnailCacheMissing: "缺失",
+    thumbnailCacheStale: "舊版",
+    thumbnailCacheOrphans: "未引用",
+    cleanupThumbnailOrphans: "清理未引用快取",
+    refreshThumbnailWorker: "重新整理",
     pause: "暫停",
     resume: "恢復",
     cancel: "取消",
@@ -3880,6 +4162,24 @@ const translations = {
     scanWorkers: "Scan workers",
     scanWorkersHint: "Concurrent workers for new scan jobs. NAS defaults work well at 2-4; faster machines can use 8.",
     scanWorkersSaved: (count: number) => `Scan workers saved as ${count}`,
+    thumbnailWorker: "Cover thumbnail worker",
+    thumbnailWorkerHint: "Generates list covers at low priority without slowing library scans.",
+    thumbnailQueued: "Queued",
+    thumbnailRunning: "Running",
+    thumbnailReady: "Ready",
+    thumbnailFailed: "Failed",
+    thumbnailCancelled: "Cancelled",
+    thumbnailActive: "Active",
+    thumbnailCache: "Cache",
+    thumbnailCacheHint: (version: string, small: number, medium: number) => `${version} · small ${small}px / medium ${medium}px`,
+    thumbnailCacheFiles: "Files",
+    thumbnailCacheSize: "Size",
+    thumbnailCacheReady: "Linked",
+    thumbnailCacheMissing: "Missing",
+    thumbnailCacheStale: "Stale",
+    thumbnailCacheOrphans: "Unlinked",
+    cleanupThumbnailOrphans: "Clean unlinked cache",
+    refreshThumbnailWorker: "Refresh",
     pause: "Pause",
     resume: "Resume",
     cancel: "Cancel",
@@ -4058,6 +4358,24 @@ const translations = {
     scanWorkers: "スキャン Worker",
     scanWorkersHint: "新しいスキャンで使う並列数です。NAS は 2-4、高性能な環境では 8 まで使えます。",
     scanWorkersSaved: (count: number) => `スキャン Worker を ${count} に保存しました`,
+    thumbnailWorker: "表紙サムネイル Worker",
+    thumbnailWorkerHint: "ライブラリスキャンを遅くせず、低優先度で一覧用表紙を生成します。",
+    thumbnailQueued: "待機",
+    thumbnailRunning: "実行中",
+    thumbnailReady: "完了",
+    thumbnailFailed: "失敗",
+    thumbnailCancelled: "取消",
+    thumbnailActive: "処理中",
+    thumbnailCache: "キャッシュ",
+    thumbnailCacheHint: (version: string, small: number, medium: number) => `${version} · small ${small}px / medium ${medium}px`,
+    thumbnailCacheFiles: "ファイル",
+    thumbnailCacheSize: "サイズ",
+    thumbnailCacheReady: "有効",
+    thumbnailCacheMissing: "不足",
+    thumbnailCacheStale: "旧版",
+    thumbnailCacheOrphans: "未参照",
+    cleanupThumbnailOrphans: "未参照キャッシュを削除",
+    refreshThumbnailWorker: "更新",
     pause: "一時停止",
     resume: "再開",
     cancel: "キャンセル",
@@ -4236,6 +4554,24 @@ const translations = {
     scanWorkers: "스캔 Worker",
     scanWorkersHint: "새 스캔 작업의 동시 실행 수입니다. NAS는 2-4, 고성능 장비는 8까지 사용할 수 있습니다.",
     scanWorkersSaved: (count: number) => `스캔 Worker가 ${count}(으)로 저장됨`,
+    thumbnailWorker: "표지 썸네일 Worker",
+    thumbnailWorkerHint: "라이브러리 스캔을 늦추지 않도록 낮은 우선순위로 목록 표지를 생성합니다.",
+    thumbnailQueued: "대기",
+    thumbnailRunning: "실행",
+    thumbnailReady: "완료",
+    thumbnailFailed: "실패",
+    thumbnailCancelled: "취소",
+    thumbnailActive: "현재",
+    thumbnailCache: "캐시",
+    thumbnailCacheHint: (version: string, small: number, medium: number) => `${version} · small ${small}px / medium ${medium}px`,
+    thumbnailCacheFiles: "파일",
+    thumbnailCacheSize: "크기",
+    thumbnailCacheReady: "연결됨",
+    thumbnailCacheMissing: "누락",
+    thumbnailCacheStale: "이전",
+    thumbnailCacheOrphans: "미참조",
+    cleanupThumbnailOrphans: "미참조 캐시 정리",
+    refreshThumbnailWorker: "새로고침",
     pause: "일시정지",
     resume: "재개",
     cancel: "취소",
@@ -4668,6 +5004,19 @@ function formatDuration(seconds: number) {
   const rest = total % 60;
   if (hours > 0) return `${hours}:${String(minutes).padStart(2, "0")}:${String(rest).padStart(2, "0")}`;
   return `${minutes}:${String(rest).padStart(2, "0")}`;
+}
+
+function formatBytes(bytes: number) {
+  const value = Math.max(0, bytes || 0);
+  if (value < 1024) return `${value} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let scaled = value / 1024;
+  let unit = units[0];
+  for (let i = 1; i < units.length && scaled >= 1024; i += 1) {
+    scaled /= 1024;
+    unit = units[i];
+  }
+  return `${scaled >= 10 ? scaled.toFixed(1) : scaled.toFixed(2)} ${unit}`;
 }
 
 function libraryAssetTypeLabel(value: string | undefined, t: Translation) {

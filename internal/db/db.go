@@ -158,6 +158,26 @@ func Migrate(conn *sql.DB) error {
 			started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			finished_at TEXT NOT NULL DEFAULT ''
 		)`,
+		`CREATE TABLE IF NOT EXISTS thumbnail_jobs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+			size TEXT NOT NULL,
+			status TEXT NOT NULL,
+			priority INTEGER NOT NULL DEFAULT 0,
+			cache_key TEXT NOT NULL,
+			cache_path TEXT NOT NULL DEFAULT '',
+			content_type TEXT NOT NULL DEFAULT '',
+			width INTEGER NOT NULL DEFAULT 0,
+			height INTEGER NOT NULL DEFAULT 0,
+			byte_size INTEGER NOT NULL DEFAULT 0,
+			error_message TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			started_at TEXT NOT NULL DEFAULT '',
+			finished_at TEXT NOT NULL DEFAULT '',
+			UNIQUE(book_id, size, cache_key)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_thumbnail_jobs_status_priority ON thumbnail_jobs(status, priority DESC, id)`,
 		`CREATE TABLE IF NOT EXISTS job_events (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			job_id INTEGER NOT NULL REFERENCES scan_jobs(id) ON DELETE CASCADE,

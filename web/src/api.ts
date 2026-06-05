@@ -34,6 +34,9 @@ export type Series = {
   collectionType: "directory" | "game_platform";
   primaryType: "book" | "comic" | "game" | "video";
   bookCount: number;
+  coverBookId?: number;
+  thumbnailStatus?: string;
+  thumbnailUrl?: string;
   favorite: boolean;
   liked: boolean;
 };
@@ -49,6 +52,9 @@ export type Book = {
   format: string;
   pageCount: number;
   coverStatus: string;
+  coverUrl?: string;
+  thumbnailStatus: string;
+  thumbnailUrl: string;
   analyzed: boolean;
   filePath?: string;
   addedAt: string;
@@ -128,6 +134,57 @@ export type VideoTranscodeQueueStatus = {
   activeTitle?: string;
   segmentCount: number;
   message?: string;
+};
+
+export type ThumbnailJob = {
+  id: number;
+  bookId: number;
+  bookTitle?: string;
+  size: string;
+  status: string;
+  priority: number;
+  cacheKey: string;
+  cachePath?: string;
+  contentType?: string;
+  width?: number;
+  height?: number;
+  byteSize?: number;
+  errorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+};
+
+export type ThumbnailCacheStatus = {
+  files: number;
+  bytes: number;
+  readyFiles: number;
+  readyBytes: number;
+  missingFiles: number;
+  staleFiles: number;
+  staleBytes: number;
+  orphanFiles: number;
+  orphanBytes: number;
+  algorithmVersion: string;
+  smallWidth: number;
+  mediumWidth: number;
+  targetAspect: number;
+};
+
+export type ThumbnailWorkerStatus = {
+  status: "idle" | "queued" | "running" | "paused" | "stopped";
+  queued: number;
+  running: number;
+  ready: number;
+  failed: number;
+  cancelled: number;
+  processed: number;
+  activeJob?: ThumbnailJob;
+  lastError?: string;
+  paused: boolean;
+  workerEnabled: boolean;
+  cache: ThumbnailCacheStatus;
 };
 
 export type SearchResponse = {
@@ -415,6 +472,11 @@ export const api = {
   deleteLibrary: (libraryId: number) => request<{ ok: boolean }>(`/api/libraries/${libraryId}`, { method: "DELETE" }),
   directories: (path = "/") => request<DirectoryListing>(`/api/fs/directories?path=${encodeURIComponent(path)}`),
   scan: (libraryId: number) => request<ScanJob>(`/api/libraries/${libraryId}/scan`, { method: "POST" }),
+  thumbnailWorkerStatus: () => request<ThumbnailWorkerStatus>("/api/thumbnail-worker/status"),
+  pauseThumbnailWorker: () => request<ThumbnailWorkerStatus>("/api/thumbnail-worker/pause", { method: "POST" }),
+  resumeThumbnailWorker: () => request<ThumbnailWorkerStatus>("/api/thumbnail-worker/resume", { method: "POST" }),
+  cancelThumbnailJobs: () => request<ThumbnailWorkerStatus>("/api/thumbnail-worker/cancel", { method: "POST" }),
+  cleanupThumbnailOrphans: () => request<ThumbnailWorkerStatus>("/api/thumbnail-worker/cleanup-orphans", { method: "POST" }),
   series: () => request<Series[]>("/api/collections"),
   books: (seriesId: number) => request<Book[]>(`/api/collections/${seriesId}/volumes`),
   collectionAssets: (seriesId: number) => request<CollectionAssets>(`/api/collections/${seriesId}/assets`),

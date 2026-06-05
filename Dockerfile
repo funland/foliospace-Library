@@ -16,7 +16,7 @@ RUN CGO_ENABLED=0 go build -o /out/foliospace-library ./cmd/foliospace-reader
 
 FROM alpine:3.20
 WORKDIR /app
-RUN apk add --no-cache ffmpeg su-exec && addgroup -S foliospace && adduser -S foliospace -G foliospace
+RUN apk add --no-cache ffmpeg poppler-utils su-exec && addgroup -S foliospace && adduser -S foliospace -G foliospace
 COPY --from=go-build /out/foliospace-library /app/foliospace-library
 COPY --from=web-build /src/web/dist /app/web/dist
 COPY scripts/docker-entrypoint.sh /app/docker-entrypoint.sh

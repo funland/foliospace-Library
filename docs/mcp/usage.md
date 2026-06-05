@@ -44,7 +44,7 @@ go build -o ./bin/foliospace-mcp ./cmd/foliospace-mcp
 ## Runtime Environment
 
 ```bash
-export FOLIOSPACE_BASE_URL=http://192.168.10.155:18080
+export FOLIOSPACE_BASE_URL=http://your-nas-ip:8080
 export FOLIOSPACE_API_TOKEN=your-token-if-enabled
 ```
 
@@ -71,7 +71,7 @@ Use an absolute path for `command`.
 If you build from source instead of using the installer, set `command` to the absolute path of your local binary, for example:
 
 ```text
-/Users/deadseafu/Documents/FolioSpaceReader/bin/foliospace-mcp
+./bin/foliospace-mcp
 ```
 
 ## Agent Prompt Samples

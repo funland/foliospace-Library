@@ -250,6 +250,7 @@ func (s *Store) UpsertSeries(libraryID int64, title string, directoryPath string
 	}
 	row := s.db.QueryRow(`SELECT s.id, s.library_id, s.title, s.directory_path, s.collection_type,
 			CASE WHEN l.asset_type IN ('book', 'comic', 'game', 'video') THEN l.asset_type ELSE 'comic' END,
+			0,
 			0
 		FROM series s
 		JOIN libraries l ON l.id = s.library_id
@@ -270,7 +271,14 @@ func (s *Store) SeriesByIDForProfile(id int64, profileID int64) (domain.Series, 
 				WHEN SUM(CASE WHEN b.format IN ('epub', 'pdf') THEN 1 ELSE 0 END) > SUM(CASE WHEN b.format IN ('cbz', 'zip', 'cbr', 'rar', '7z') THEN 1 ELSE 0 END) THEN 'book'
 				ELSE 'comic'
 			END,
-			COUNT(DISTINCT b.id)
+			COUNT(DISTINCT b.id),
+			COALESCE((
+				SELECT b2.id
+				FROM books b2
+				WHERE b2.series_id = s.id
+				ORDER BY b2.title, b2.id
+				LIMIT 1
+			), 0)
 		FROM series s
 		JOIN libraries l ON l.id = s.library_id
 		LEFT JOIN books b ON b.series_id = s.id
@@ -304,7 +312,14 @@ func (s *Store) ListSeriesForProfile(profileID int64) ([]domain.Series, error) {
 				WHEN SUM(CASE WHEN b.format IN ('epub', 'pdf') THEN 1 ELSE 0 END) > SUM(CASE WHEN b.format IN ('cbz', 'zip', 'cbr', 'rar', '7z') THEN 1 ELSE 0 END) THEN 'book'
 				ELSE 'comic'
 			END,
-			COUNT(DISTINCT b.id)
+			COUNT(DISTINCT b.id),
+			COALESCE((
+				SELECT b2.id
+				FROM books b2
+				WHERE b2.series_id = s.id
+				ORDER BY b2.title, b2.id
+				LIMIT 1
+			), 0)
 		FROM series s
 		JOIN libraries l ON l.id = s.library_id
 		LEFT JOIN books b ON b.series_id = s.id
@@ -1651,6 +1666,197 @@ func (s *Store) ListScanJobs() ([]domain.ScanJob, error) {
 	return out, rows.Err()
 }
 
+func (s *Store) EnqueueThumbnailJob(input domain.ThumbnailJobInput) (domain.ThumbnailJob, error) {
+	size := normalizeThumbnailSize(input.Size)
+	cacheKey := strings.TrimSpace(input.CacheKey)
+	if cacheKey == "" {
+		return domain.ThumbnailJob{}, fmt.Errorf("thumbnail cache key is required")
+	}
+	priority := input.Priority
+	_, err := s.db.Exec(`INSERT INTO thumbnail_jobs(book_id, size, status, priority, cache_key)
+		VALUES(?, ?, 'queued', ?, ?)
+		ON CONFLICT(book_id, size, cache_key) DO UPDATE SET
+			priority = CASE WHEN excluded.priority > thumbnail_jobs.priority THEN excluded.priority ELSE thumbnail_jobs.priority END,
+			status = CASE WHEN thumbnail_jobs.status = 'running' THEN thumbnail_jobs.status ELSE 'queued' END,
+			cache_path = CASE WHEN thumbnail_jobs.status = 'running' THEN thumbnail_jobs.cache_path ELSE '' END,
+			content_type = CASE WHEN thumbnail_jobs.status = 'running' THEN thumbnail_jobs.content_type ELSE '' END,
+			width = CASE WHEN thumbnail_jobs.status = 'running' THEN thumbnail_jobs.width ELSE 0 END,
+			height = CASE WHEN thumbnail_jobs.status = 'running' THEN thumbnail_jobs.height ELSE 0 END,
+			byte_size = CASE WHEN thumbnail_jobs.status = 'running' THEN thumbnail_jobs.byte_size ELSE 0 END,
+			error_message = CASE WHEN thumbnail_jobs.status = 'running' THEN thumbnail_jobs.error_message ELSE '' END,
+			started_at = CASE WHEN thumbnail_jobs.status = 'running' THEN thumbnail_jobs.started_at ELSE '' END,
+			finished_at = CASE WHEN thumbnail_jobs.status = 'running' THEN thumbnail_jobs.finished_at ELSE '' END,
+			updated_at = CURRENT_TIMESTAMP`,
+		input.BookID, size, priority, cacheKey)
+	if err != nil {
+		return domain.ThumbnailJob{}, err
+	}
+	return s.ThumbnailJobByKey(input.BookID, size, cacheKey)
+}
+
+func (s *Store) ThumbnailJobByKey(bookID int64, size string, cacheKey string) (domain.ThumbnailJob, error) {
+	row := s.db.QueryRow(thumbnailJobSelectSQL()+` WHERE tj.book_id = ? AND tj.size = ? AND tj.cache_key = ?`, bookID, normalizeThumbnailSize(size), strings.TrimSpace(cacheKey))
+	return scanThumbnailJob(row)
+}
+
+func (s *Store) ThumbnailJobByID(id int64) (domain.ThumbnailJob, error) {
+	row := s.db.QueryRow(thumbnailJobSelectSQL()+` WHERE tj.id = ?`, id)
+	return scanThumbnailJob(row)
+}
+
+func (s *Store) ClaimNextThumbnailJob() (domain.ThumbnailJob, bool, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return domain.ThumbnailJob{}, false, err
+	}
+	defer tx.Rollback()
+
+	var id int64
+	err = tx.QueryRow(`SELECT id FROM thumbnail_jobs WHERE status = 'queued' ORDER BY priority DESC, id LIMIT 1`).Scan(&id)
+	if err == sql.ErrNoRows {
+		return domain.ThumbnailJob{}, false, tx.Commit()
+	}
+	if err != nil {
+		return domain.ThumbnailJob{}, false, err
+	}
+	if _, err := tx.Exec(`UPDATE thumbnail_jobs SET status = 'running', started_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, id); err != nil {
+		return domain.ThumbnailJob{}, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.ThumbnailJob{}, false, err
+	}
+	job, err := s.ThumbnailJobByID(id)
+	return job, true, err
+}
+
+func (s *Store) CompleteThumbnailJob(id int64, cachePath string, contentType string, width int, height int, byteSize int64) error {
+	_, err := s.db.Exec(`UPDATE thumbnail_jobs
+		SET status = 'ready', cache_path = ?, content_type = ?, width = ?, height = ?, byte_size = ?, error_message = '', finished_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?`,
+		cachePath, contentType, width, height, byteSize, id)
+	return err
+}
+
+func (s *Store) FailThumbnailJob(id int64, message string) error {
+	_, err := s.db.Exec(`UPDATE thumbnail_jobs
+		SET status = 'failed', error_message = ?, finished_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?`,
+		strings.TrimSpace(message), id)
+	return err
+}
+
+func (s *Store) CancelQueuedThumbnailJobs() (int64, error) {
+	result, err := s.db.Exec(`UPDATE thumbnail_jobs
+		SET status = 'cancelled', finished_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+		WHERE status = 'queued'`)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+func (s *Store) ResetRunningThumbnailJobs() (int64, error) {
+	result, err := s.db.Exec(`UPDATE thumbnail_jobs
+		SET status = 'queued', started_at = '', updated_at = CURRENT_TIMESTAMP
+		WHERE status = 'running'`)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+func (s *Store) ListReadyThumbnailCacheEntries() ([]domain.ThumbnailCacheEntry, error) {
+	rows, err := s.db.Query(`SELECT book_id, size, cache_key, cache_path, byte_size FROM thumbnail_jobs WHERE status = 'ready' AND cache_path <> ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]domain.ThumbnailCacheEntry, 0)
+	for rows.Next() {
+		var entry domain.ThumbnailCacheEntry
+		if err := rows.Scan(&entry.BookID, &entry.Size, &entry.CacheKey, &entry.CachePath, &entry.ByteSize); err != nil {
+			return nil, err
+		}
+		out = append(out, entry)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ThumbnailQueueStatus() (domain.ThumbnailQueueStatus, error) {
+	status := domain.ThumbnailQueueStatus{Status: "idle"}
+	rows, err := s.db.Query(`SELECT status, COUNT(*) FROM thumbnail_jobs GROUP BY status`)
+	if err != nil {
+		return status, err
+	}
+	for rows.Next() {
+		var state string
+		var count int
+		if err := rows.Scan(&state, &count); err != nil {
+			_ = rows.Close()
+			return status, err
+		}
+		switch state {
+		case "queued":
+			status.Queued = count
+		case "running":
+			status.Running = count
+		case "ready":
+			status.Ready = count
+		case "failed":
+			status.Failed = count
+		case "cancelled":
+			status.Cancelled = count
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return status, err
+	}
+	if err := rows.Err(); err != nil {
+		return status, err
+	}
+	status.Processed = status.Ready + status.Failed + status.Cancelled
+	if status.Running > 0 {
+		status.Status = "running"
+		active, err := s.activeThumbnailJob()
+		if err != nil && err != sql.ErrNoRows {
+			return status, err
+		}
+		status.ActiveJob = &active
+	} else if status.Queued > 0 {
+		status.Status = "queued"
+	}
+	lastError, err := s.lastThumbnailError()
+	if err != nil && err != sql.ErrNoRows {
+		return status, err
+	}
+	status.LastError = lastError
+	return status, nil
+}
+
+func (s *Store) activeThumbnailJob() (domain.ThumbnailJob, error) {
+	row := s.db.QueryRow(thumbnailJobSelectSQL() + ` WHERE tj.status = 'running' ORDER BY tj.started_at DESC, tj.id DESC LIMIT 1`)
+	return scanThumbnailJob(row)
+}
+
+func (s *Store) lastThumbnailError() (string, error) {
+	row := s.db.QueryRow(`SELECT error_message FROM thumbnail_jobs WHERE status = 'failed' AND error_message <> '' ORDER BY finished_at DESC, id DESC LIMIT 1`)
+	var message string
+	if err := row.Scan(&message); err != nil {
+		return "", err
+	}
+	return message, nil
+}
+
+func normalizeThumbnailSize(size string) string {
+	switch strings.ToLower(strings.TrimSpace(size)) {
+	case "medium":
+		return "medium"
+	default:
+		return "small"
+	}
+}
+
 func (s *Store) AddJobEvent(jobID int64, level string, message string) error {
 	_, err := s.db.Exec(`INSERT INTO job_events(job_id, level, message) VALUES(?, ?, ?)`, jobID, level, message)
 	return err
@@ -1834,6 +2040,7 @@ func scanSeries(row scanner) (domain.Series, error) {
 		&series.CollectionType,
 		&series.PrimaryType,
 		&series.BookCount,
+		&series.CoverBookID,
 	); err != nil {
 		return series, err
 	}
@@ -1848,6 +2055,47 @@ func normalizeCollectionPrimaryType(value string) string {
 	default:
 		return "comic"
 	}
+}
+
+func thumbnailJobSelectSQL() string {
+	return `SELECT tj.id, tj.book_id, COALESCE(b.title, ''), tj.size, tj.status, tj.priority, tj.cache_key, tj.cache_path, tj.content_type,
+			tj.width, tj.height, tj.byte_size, tj.error_message, tj.created_at, tj.updated_at, tj.started_at, tj.finished_at
+		FROM thumbnail_jobs tj
+		LEFT JOIN books b ON b.id = tj.book_id`
+}
+
+func scanThumbnailJob(row scanner) (domain.ThumbnailJob, error) {
+	var job domain.ThumbnailJob
+	var created string
+	var updated string
+	var started string
+	var finished string
+	if err := row.Scan(
+		&job.ID,
+		&job.BookID,
+		&job.BookTitle,
+		&job.Size,
+		&job.Status,
+		&job.Priority,
+		&job.CacheKey,
+		&job.CachePath,
+		&job.ContentType,
+		&job.Width,
+		&job.Height,
+		&job.ByteSize,
+		&job.ErrorMessage,
+		&created,
+		&updated,
+		&started,
+		&finished,
+	); err != nil {
+		return job, err
+	}
+	job.CreatedAt = parseTime(created)
+	job.UpdatedAt = parseTime(updated)
+	job.StartedAt = parseTime(started)
+	job.FinishedAt = parseTime(finished)
+	return job, nil
 }
 
 func scanBook(row scanner) (domain.Book, error) {
@@ -1884,6 +2132,9 @@ func scanBook(row scanner) (domain.Book, error) {
 		return book, err
 	}
 	book.BookType = "single_volume"
+	if book.ThumbnailStatus == "" {
+		book.ThumbnailStatus = "pending"
+	}
 	book.Analyzed = analyzed != 0
 	book.Favorite = favorite != 0
 	book.Tags = decodeTags(tags)
