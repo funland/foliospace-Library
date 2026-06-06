@@ -119,7 +119,7 @@ Check whether FolioSpace is currently transcoding a video and which item is occu
 - `foliospace.client_info`: service name, version, supported formats, and capability flags.
 - `foliospace.home`: continue reading, recent books, and collections.
 - `foliospace.search_books`: search indexed books and comics.
-- `foliospace.open_book_manifest`: open a CBZ/ZIP/EPUB/PDF client manifest by `bookId`. Manifests include `readerModes` and `defaultReaderMode` so clients can expose single-page, double-page, or webtoon/vertical-scroll controls without guessing from the extension. CBZ/ZIP page entries include `url` for the original image and `displayUrl` for a server-downsampled mobile/tablet-safe image. PDF manifests expose the opaque PDF stream URL; clients should use HTTP Range capable reads against that URL.
+- `foliospace.open_book_manifest`: open a CBZ/ZIP/EPUB/PDF client manifest by `bookId`. Manifests include `readerModes` and `defaultReaderMode` so clients can expose single-page, double-page, or webtoon/vertical-scroll controls without guessing from the extension. CBZ/ZIP page entries include `pageKey`, `url` for the original image, and `displayUrl` for a server-downsampled mobile/tablet-safe image. PDF manifests expose the opaque PDF stream URL; clients should use HTTP Range capable reads against that URL.
 - `foliospace.list_games`: list paginated client-safe ROM assets with `limit`, `offset`, `q`, `platform`, `format`, and `sort`.
 - `foliospace.open_game_manifest`: open a ROM client manifest by `gameId`.
 - `foliospace.list_videos`: list paginated client-safe video assets with `limit`, `offset`, `q`, `format`, and `sort`.
@@ -138,8 +138,8 @@ Check whether FolioSpace is currently transcoding a video and which item is occu
 - `foliospace.save_private_state`: save per-book private state.
 - `foliospace.list_favorites`: list favorite books as client-safe DTOs.
 - `foliospace.list_private_status`: list books by private status, for example `want`, `reading`, `finished`, or `dropped`.
-- `foliospace.get_progress`: read reading progress.
-- `foliospace.save_progress`: save reading progress.
+- `foliospace.get_progress`: read legacy reading progress. Structured webtoon-aware clients should use the HTTP `reading-position` API directly for exact page-key plus Y-offset anchors.
+- `foliospace.save_progress`: save legacy reading progress. For webtoon fallback compatibility, a `locator` shaped like `webtoon:<fraction>` is accepted by the HTTP API.
 - `foliospace.list_libraries`: list configured libraries for diagnostics and scan selection. This admin tool can expose configured mount paths.
 - `foliospace.list_collections`: list collections with profile-scoped favorite and liked flags.
 - `foliospace.save_collection_state`: save collection `favorite` and `liked` flags.

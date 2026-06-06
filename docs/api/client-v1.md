@@ -205,7 +205,7 @@ This endpoint reports container paths, not host/NAS paths. Docker volume mapping
 5. Open a book with `GET /api/client/books/{bookId}/manifest`.
 6. For CBZ/ZIP, load page image URLs from `pages`.
 7. For EPUB, load chapters/resources from `epub.resourceBaseUrl`.
-8. Sync progress with `GET /api/books/{bookId}/progress` and `PUT /api/books/{bookId}/progress`.
+8. Sync paged/legacy progress with `GET /api/books/{bookId}/progress` and `PUT /api/books/{bookId}/progress`. For comic webtoon mode, prefer the structured `GET /api/books/{bookId}/reading-position` and `PUT /api/books/{bookId}/reading-position/webtoon` endpoints described below.
 9. Sync private state with `GET/PUT /api/client/books/{bookId}/private-state`.
 10. Sync UI language and reader defaults with `GET/PUT /api/client/preferences`.
 11. Open a game with `GET /api/client/games/{gameId}/manifest`, then use `fileUrl` only through the service.
@@ -619,6 +619,7 @@ Returns all stable metadata needed to open one book.
     {
       "index": 0,
       "name": "001.jpg",
+      "pageKey": "archive:001.jpg",
       "url": "/api/books/42/pages/0",
       "displayUrl": "/api/books/42/pages/0?maxWidth=1200"
     }
@@ -627,6 +628,8 @@ Returns all stable metadata needed to open one book.
 ```
 
 Use `pages[index].displayUrl` for normal comic reading surfaces, especially phones, tablets, and webtoon/vertical-scroll mode. It points at a server-downsampled image that limits decoded client memory. Use `pages[index].url` when the client explicitly needs the original page bytes. Returned page URLs are relative to the same base URL and still require bearer auth when auth is enabled.
+
+`pageKey` is the stable page identity used by structured webtoon progress. For archive-backed comics it is `archive:{entry-name}` and should be preferred over numeric indexes when restoring scroll position after rescans, client changes, or device changes.
 
 #### EPUB Response
 
@@ -700,6 +703,8 @@ Every book manifest includes `readerModes` and `defaultReaderMode` so clients do
 - `single`: one page at a time.
 - `double`: two-page spread where the client has enough screen space.
 - `webtoon`: vertical continuous scrolling for long-strip comics or PDF/image documents.
+
+For CBZ/ZIP comics, clients should keep mode-specific progress separate. `single` and `double` can continue to use the legacy page-based progress endpoint. `webtoon` should use `webtoon-position-v1`, whose true position is a content anchor inside one page image rather than a global `scrollTop` value.
 
 Current defaults are conservative:
 
@@ -883,7 +888,7 @@ Resource paths should be URL-encoded by path segment.
 
 ### `GET /api/books/{bookId}/progress`
 
-Returns current progress. If no progress exists, the server returns page `0` with progress `0`.
+Returns the current legacy progress for the active profile. If no progress exists, the server returns page `0` with progress `0`.
 
 ```json
 {
@@ -896,7 +901,7 @@ Returns current progress. If no progress exists, the server returns page `0` wit
 
 ### `PUT /api/books/{bookId}/progress`
 
-Saves progress.
+Saves legacy progress for the active profile.
 
 Request:
 
@@ -916,9 +921,144 @@ Response:
 }
 ```
 
-For CBZ/ZIP/PDF, `pageIndex` is the page array index and `locator` can be empty. In Webtoon/vertical-scroll mode, clients may store `locator` as `webtoon:<fraction>` where `<fraction>` is the scroll progress from `0` to `1`.
+For CBZ/ZIP/PDF single-page and double-page modes, `pageIndex` is the page array index and `locator` can be empty. For EPUB, use `pageIndex` as the spine index and use `locator` for the current EPUB resource href or a future CFI-like locator. `progressFraction` is clamped by the server to `0...1`.
 
-For EPUB, use `pageIndex` as the spine index and use `locator` for the current EPUB resource href or a future CFI-like locator. `progressFraction` is clamped by the server to `0...1`.
+Old webtoon clients may still use this route with `locator: "webtoon:<fraction>"`. New clients should prefer the structured webtoon endpoints below. The server keeps backward compatibility by syncing each saved structured webtoon position into this legacy record as:
+
+```json
+{
+  "pageIndex": 159,
+  "locator": "webtoon:0.224685",
+  "progressFraction": 0.224685
+}
+```
+
+This means old clients, shelves, continue-reading, MCP `get_progress`, and integrations that only know `/progress` continue to see a usable page index and percent.
+
+### `GET /api/books/{bookId}/reading-position`
+
+Returns mode-specific structured reading positions for the active profile.
+
+```json
+{
+  "bookId": 5772,
+  "positions": {
+    "webtoon": {
+      "bookId": 5772,
+      "readerMode": "webtoon",
+      "schema": "webtoon-position-v1",
+      "pageIndex": 159,
+      "pageKey": "archive:0160_14_09.webp",
+      "pageYOffsetRatio": 0.431245,
+      "viewportAnchorRatio": 0.28,
+      "documentProgress": 0.224685,
+      "pageCount": 1235,
+      "contentSignature": "optional",
+      "updatedAt": "2026-06-06T04:36:53Z"
+    }
+  }
+}
+```
+
+If no structured position exists, `positions` is empty. Unknown future reader modes may appear as additional keys, so clients should ignore modes they do not understand.
+
+### `PUT /api/books/{bookId}/reading-position/webtoon`
+
+Saves a structured comic webtoon position for the active profile. The only supported schema today is `webtoon-position-v1`.
+
+Request:
+
+```json
+{
+  "schema": "webtoon-position-v1",
+  "pageIndex": 159,
+  "pageKey": "archive:0160_14_09.webp",
+  "pageYOffsetRatio": 0.431245,
+  "viewportAnchorRatio": 0.28,
+  "documentProgress": 0.224685,
+  "pageCount": 1235,
+  "contentSignature": "optional"
+}
+```
+
+Response:
+
+```json
+{
+  "bookId": 5772,
+  "readerMode": "webtoon",
+  "schema": "webtoon-position-v1",
+  "pageIndex": 159,
+  "pageKey": "archive:0160_14_09.webp",
+  "pageYOffsetRatio": 0.431245,
+  "viewportAnchorRatio": 0.28,
+  "documentProgress": 0.224685,
+  "pageCount": 1235,
+  "contentSignature": "optional",
+  "updatedAt": "2026-06-06T04:36:53Z"
+}
+```
+
+Server normalization:
+
+- Empty `schema` defaults to `webtoon-position-v1`.
+- Unsupported schemas return `400`.
+- Negative `pageIndex` and `pageCount` are normalized to `0`.
+- `pageYOffsetRatio`, `viewportAnchorRatio`, and `documentProgress` are clamped to `0...1`.
+- Missing or non-positive `viewportAnchorRatio` defaults to `0.28`.
+- Saving a webtoon position also updates legacy `/progress` with `locator: "webtoon:<documentProgress>"`.
+
+#### `webtoon-position-v1`
+
+The semantic position is:
+
+```text
+fixed viewport anchor -> one page image -> normalized Y offset inside that image
+```
+
+The core fields are:
+
+- `pageKey`: stable page identity. Prefer `pages[].pageKey` from the manifest. Fall back to `archive:{name}` or `index:{pageIndex}` only when necessary.
+- `pageYOffsetRatio`: where the viewport anchor lands inside the target image, normalized to `0...1`.
+- `viewportAnchorRatio`: where the anchor lives inside the viewport. The web client uses `0.28`.
+- `documentProgress`: display/sort percentage for shelves and legacy clients. It is not the authoritative restore coordinate.
+- `pageIndex`: fast lookup fallback when `pageKey` cannot be matched.
+- `pageCount`: page count at save time, useful for detecting rescans or changed archives.
+- `contentSignature`: optional client/server extension field for future content-change detection.
+
+Recommended save algorithm for native clients:
+
+1. Define `anchorY = scrollTop + viewportHeight * 0.28`.
+2. Find the page image containing `anchorY`.
+3. Save `pageKey` from the manifest and `pageYOffsetRatio = (anchorY - pageTop) / pageDisplayedHeight`.
+4. Clamp `pageYOffsetRatio` to `0...1`.
+5. Calculate `documentProgress` from logical page heights when available: `naturalHeight / naturalWidth` for each page.
+6. If full logical heights are not available, do not overwrite a known good percentage with placeholder-height math. Keep the previous `documentProgress` or update it conservatively from the page/offset delta.
+7. Debounce normal saves. Flush once on app exit, book close, or mode switch that changes the actual reading position.
+
+Recommended restore algorithm:
+
+1. Read `GET /api/books/{bookId}/reading-position`.
+2. For webtoon mode, find `positions.webtoon`.
+3. Locate the target page by `pageKey`; if missing, fall back to `pageIndex`; if out of range, estimate from `documentProgress`.
+4. Wait until the target image has a real displayed height. Cached images may already be complete even if an image load callback does not fire.
+5. Scroll to `pageTop + pageDisplayedHeight * pageYOffsetRatio - viewportHeight * viewportAnchorRatio`.
+6. Ignore programmatic scroll and image-load layout events while restoring.
+7. Only save after explicit user interaction, such as wheel, touch, pointer, keyboard page movement, or slider movement.
+
+Mode switching rules:
+
+- Switching between `single`, `double`, and `webtoon` is a view/layout change, not necessarily a new reading position.
+- When entering webtoon mode from paged mode, create or reuse a webtoon anchor for the current `pageIndex`, restore to that anchor, then accept user scroll events.
+- Do not immediately rewrite `/progress` during a mode-only switch. Save only after the user changes pages or scrolls.
+- Keep webtoon position independent from single/double page position so changing reader modes does not corrupt the long-strip anchor.
+
+Backward compatibility rules:
+
+- Old clients can keep using `GET/PUT /api/books/{bookId}/progress`.
+- New webtoon clients should use `GET /api/books/{bookId}/reading-position` and `PUT /api/books/{bookId}/reading-position/webtoon`.
+- If `PUT /api/books/{bookId}/reading-position/webtoon` returns `404` or `405` against an older server, clients should fall back to `PUT /api/books/{bookId}/progress` with `locator: "webtoon:<documentProgress>"`.
+- If `GET /api/books/{bookId}/reading-position` is unavailable, clients can fall back to legacy `GET /api/books/{bookId}/progress`; when `locator` starts with `webtoon:`, parse the fraction as display progress and estimate a starting page from it.
 
 ## Optional Collection Browsing
 
@@ -1105,7 +1245,7 @@ Good MCP tools:
 - `foliospace.get_private_state` and `foliospace.save_private_state`: inspect or update status, favorite, rating, tags, and notes.
 - `foliospace.list_favorites` and `foliospace.list_private_status`: browse private shelves such as favorites and want-to-read.
 - `foliospace.get_preferences` and `foliospace.save_preferences`: inspect or update UI language and reader defaults.
-- `foliospace.get_progress` and `foliospace.save_progress`: inspect or update reading progress.
+- `foliospace.get_progress` and `foliospace.save_progress`: inspect or update legacy reading progress. Webtoon-aware native clients should use the HTTP `reading-position` API directly for exact page-key plus Y-offset anchors.
 - `foliospace.list_libraries`: list configured libraries for diagnostics and scan selection.
 - `foliospace.list_collections`, `foliospace.save_collection_state`, `foliospace.list_collection_volumes`, and `foliospace.list_collection_assets`: browse the indexed library and save profile-scoped collection favorite/liked flags.
 - `foliospace.scan_library`: start a scan for a configured library. Optional `path` scans one subdirectory or file inside the library root.
