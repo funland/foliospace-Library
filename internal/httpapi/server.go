@@ -775,6 +775,7 @@ func (s *Server) clientBookManifest(bookID int64, profileID int64) (clientBookMa
 			CoverHref:       manifest.CoverHref,
 			Spine:           manifest.Spine,
 			TOC:             manifest.TOC,
+			TOCTree:         manifest.TOCTree,
 			ResourceBaseURL: fmt.Sprintf("/api/books/%d/epub/resources/", book.ID),
 			CoverURL:        clientCoverURL(book.ID),
 		}
@@ -1757,6 +1758,7 @@ type clientEPUBOpenInfo struct {
 	CoverHref       string                 `json:"coverHref"`
 	Spine           []domain.EPUBSpineItem `json:"spine"`
 	TOC             []domain.EPUBTOCItem   `json:"toc"`
+	TOCTree         []domain.EPUBTOCItem   `json:"tocTree,omitempty"`
 	ResourceBaseURL string                 `json:"resourceBaseUrl"`
 	CoverURL        string                 `json:"coverUrl"`
 }

@@ -142,13 +142,16 @@ func readEPUBManifest(files []*zip.File) (domain.EPUBManifest, error) {
 		})
 	}
 
+	tocTree := epubTOCTree(files, opfDir, pkg, spine, itemsByID)
+
 	return domain.EPUBManifest{
 		Title:       strings.TrimSpace(pkg.Metadata.Title),
 		Creator:     strings.TrimSpace(pkg.Metadata.Creator),
 		Description: strings.TrimSpace(pkg.Metadata.Description),
 		CoverHref:   coverHref,
 		Spine:       spine,
-		TOC:         epubTOC(files, opfDir, pkg, spine, itemsByID),
+		TOC:         flattenEPUBTOC(tocTree),
+		TOCTree:     tocTree,
 	}, nil
 }
 
@@ -186,7 +189,7 @@ func epubZipEntryExists(files []*zip.File, name string) bool {
 	return false
 }
 
-func epubTOC(files []*zip.File, opfDir string, pkg epubPackage, spine []domain.EPUBSpineItem, itemsByID map[string]epubManifestItem) []domain.EPUBTOCItem {
+func epubTOCTree(files []*zip.File, opfDir string, pkg epubPackage, spine []domain.EPUBSpineItem, itemsByID map[string]epubManifestItem) []domain.EPUBTOCItem {
 	hrefToIndex := map[string]int{}
 	for _, item := range spine {
 		hrefToIndex[stripEPUBFragment(item.Href)] = item.Index
@@ -199,7 +202,7 @@ func epubTOC(files []*zip.File, opfDir string, pkg epubPackage, spine []domain.E
 		navPath := resolveEPUBHref(opfDir, item.Href)
 		body, err := readZipText(files, navPath)
 		if err == nil {
-			return parseEPUBNavTOC(body, path.Dir(navPath), hrefToIndex)
+			return expandEPUBTOCFromContentsPages(files, parseEPUBNavTOCTree(body, path.Dir(navPath), hrefToIndex), hrefToIndex)
 		}
 	}
 
@@ -207,99 +210,449 @@ func epubTOC(files []*zip.File, opfDir string, pkg epubPackage, spine []domain.E
 		if item, ok := itemsByID[pkg.Spine.Toc]; ok {
 			body, err := readZipText(files, item.Href)
 			if err == nil {
-				return parseEPUBNCXTOC(body, path.Dir(item.Href), hrefToIndex)
+				return expandEPUBTOCFromContentsPages(files, parseEPUBNCXTOCTree(body, path.Dir(item.Href), hrefToIndex), hrefToIndex)
 			}
 		}
 	}
 	return nil
 }
 
-func parseEPUBNavTOC(body string, baseDir string, hrefToIndex map[string]int) []domain.EPUBTOCItem {
-	decoder := xml.NewDecoder(strings.NewReader(body))
+func parseEPUBNavTOCTree(body string, baseDir string, hrefToIndex map[string]int) []domain.EPUBTOCItem {
+	root, err := parseEPUBXMLTree(body)
+	if err != nil {
+		return nil
+	}
+	nav := findEPUBTOCNav(root)
+	if nav == nil {
+		return nil
+	}
+	list := firstEPUBChild(nav, "ol")
+	if list == nil {
+		return nil
+	}
+	return parseEPUBNavList(list, baseDir, hrefToIndex)
+}
+
+func parseEPUBNavList(list *epubXMLNode, baseDir string, hrefToIndex map[string]int) []domain.EPUBTOCItem {
 	var out []domain.EPUBTOCItem
-	var activeHref string
-	var activeText strings.Builder
-	for {
-		token, err := decoder.Token()
-		if err != nil {
-			break
-		}
-		switch value := token.(type) {
-		case xml.StartElement:
-			if value.Name.Local != "a" {
-				continue
-			}
-			activeHref = ""
-			activeText.Reset()
-			for _, attr := range value.Attr {
-				if attr.Name.Local == "href" {
-					activeHref = resolveEPUBHref(baseDir, attr.Value)
-				}
-			}
-		case xml.CharData:
-			if activeHref != "" {
-				activeText.Write([]byte(value))
-			}
-		case xml.EndElement:
-			if value.Name.Local != "a" || activeHref == "" {
-				continue
-			}
-			label := strings.TrimSpace(activeText.String())
-			if label == "" {
-				label = activeHref
-			}
-			if index, ok := hrefToIndex[stripEPUBFragment(activeHref)]; ok {
-				out = append(out, domain.EPUBTOCItem{Label: label, Href: activeHref, Index: index})
-			}
-			activeHref = ""
-			activeText.Reset()
+	for _, child := range directEPUBChildren(list, "li") {
+		if item, ok := parseEPUBNavListItem(child, baseDir, hrefToIndex); ok {
+			out = append(out, item)
 		}
 	}
 	return out
 }
 
-func parseEPUBNCXTOC(body string, baseDir string, hrefToIndex map[string]int) []domain.EPUBTOCItem {
-	decoder := xml.NewDecoder(strings.NewReader(body))
+func parseEPUBNavListItem(item *epubXMLNode, baseDir string, hrefToIndex map[string]int) (domain.EPUBTOCItem, bool) {
+	link := firstEPUBChild(item, "a")
+	labelNode := link
+	href := ""
+	if link != nil {
+		href = resolveEPUBHref(baseDir, epubXMLAttr(link, "href"))
+	} else if span := firstEPUBChild(item, "span"); span != nil {
+		labelNode = span
+	}
+
+	var children []domain.EPUBTOCItem
+	for _, list := range directEPUBChildren(item, "ol") {
+		children = append(children, parseEPUBNavList(list, baseDir, hrefToIndex)...)
+	}
+
+	label := strings.TrimSpace(epubXMLText(labelNode))
+	if label == "" {
+		label = href
+	}
+	index := epubTOCIndex(href, hrefToIndex, children)
+	if label == "" && href == "" && len(children) == 0 {
+		return domain.EPUBTOCItem{}, false
+	}
+	if index < 0 && len(children) == 0 {
+		return domain.EPUBTOCItem{}, false
+	}
+	return domain.EPUBTOCItem{Label: label, Href: href, Index: index, Children: children}, true
+}
+
+func parseEPUBNCXTOCTree(body string, baseDir string, hrefToIndex map[string]int) []domain.EPUBTOCItem {
+	root, err := parseEPUBXMLTree(body)
+	if err != nil {
+		return nil
+	}
+	navMap := findEPUBDescendant(root, "navMap")
+	if navMap == nil {
+		return nil
+	}
 	var out []domain.EPUBTOCItem
-	var inText bool
-	var label strings.Builder
-	for {
-		token, err := decoder.Token()
-		if err != nil {
-			break
-		}
-		switch value := token.(type) {
-		case xml.StartElement:
-			if value.Name.Local == "text" {
-				inText = true
-				label.Reset()
-			}
-			if value.Name.Local == "content" {
-				for _, attr := range value.Attr {
-					if attr.Name.Local != "src" {
-						continue
-					}
-					href := resolveEPUBHref(baseDir, attr.Value)
-					if index, ok := hrefToIndex[stripEPUBFragment(href)]; ok {
-						text := strings.TrimSpace(label.String())
-						if text == "" {
-							text = href
-						}
-						out = append(out, domain.EPUBTOCItem{Label: text, Href: href, Index: index})
-					}
-				}
-			}
-		case xml.CharData:
-			if inText {
-				label.Write([]byte(value))
-			}
-		case xml.EndElement:
-			if value.Name.Local == "text" {
-				inText = false
-			}
+	for _, point := range directEPUBChildren(navMap, "navPoint") {
+		if item, ok := parseEPUBNCXNavPoint(point, baseDir, hrefToIndex); ok {
+			out = append(out, item)
 		}
 	}
 	return out
+}
+
+func parseEPUBNCXNavPoint(point *epubXMLNode, baseDir string, hrefToIndex map[string]int) (domain.EPUBTOCItem, bool) {
+	href := ""
+	if content := firstEPUBChild(point, "content"); content != nil {
+		href = resolveEPUBHref(baseDir, epubXMLAttr(content, "src"))
+	}
+	label := ""
+	if navLabel := firstEPUBChild(point, "navLabel"); navLabel != nil {
+		label = strings.TrimSpace(epubXMLText(firstEPUBChild(navLabel, "text")))
+	}
+	if label == "" {
+		label = href
+	}
+
+	var children []domain.EPUBTOCItem
+	for _, child := range directEPUBChildren(point, "navPoint") {
+		if item, ok := parseEPUBNCXNavPoint(child, baseDir, hrefToIndex); ok {
+			children = append(children, item)
+		}
+	}
+
+	index := epubTOCIndex(href, hrefToIndex, children)
+	if label == "" && href == "" && len(children) == 0 {
+		return domain.EPUBTOCItem{}, false
+	}
+	if index < 0 && len(children) == 0 {
+		return domain.EPUBTOCItem{}, false
+	}
+	return domain.EPUBTOCItem{Label: label, Href: href, Index: index, Children: children}, true
+}
+
+func expandEPUBTOCFromContentsPages(files []*zip.File, items []domain.EPUBTOCItem, hrefToIndex map[string]int) []domain.EPUBTOCItem {
+	if len(items) == 0 {
+		return items
+	}
+	return expandEPUBTOCItemsFromContentsPages(files, items, items, hrefToIndex, map[string]bool{})
+}
+
+func expandEPUBTOCItemsFromContentsPages(files []*zip.File, items []domain.EPUBTOCItem, rootItems []domain.EPUBTOCItem, hrefToIndex map[string]int, ancestorHrefs map[string]bool) []domain.EPUBTOCItem {
+	out := make([]domain.EPUBTOCItem, 0, len(items))
+	for _, item := range items {
+		spineHref := stripEPUBFragment(item.Href)
+		nextAncestors := copyEPUBStringBoolMap(ancestorHrefs)
+		if spineHref != "" {
+			nextAncestors[spineHref] = true
+		}
+		if len(item.Children) > 0 {
+			item.Children = expandEPUBTOCItemsFromContentsPages(files, item.Children, rootItems, hrefToIndex, nextAncestors)
+			out = append(out, item)
+			continue
+		}
+		if spineHref == "" || ancestorHrefs[spineHref] {
+			out = append(out, item)
+			continue
+		}
+		body, err := readZipText(files, spineHref)
+		if err != nil {
+			out = append(out, item)
+			continue
+		}
+		generated := extractEPUBGeneratedTOCChildren(body, spineHref, item.Href, hrefToIndex)
+		if len(generated) < 2 || epubGeneratedTOCChildrenRedundant(rootItems, generated) {
+			out = append(out, item)
+			continue
+		}
+		item.Children = generated
+		out = append(out, item)
+	}
+	return out
+}
+
+func extractEPUBGeneratedTOCChildren(body string, baseHref string, parentTarget string, hrefToIndex map[string]int) []domain.EPUBTOCItem {
+	root, err := parseEPUBXMLTree(body)
+	if err != nil {
+		return nil
+	}
+	baseDir := path.Dir(stripEPUBFragment(baseHref))
+	if baseDir == "." {
+		baseDir = ""
+	}
+	seen := map[string]bool{}
+	var out []domain.EPUBTOCItem
+	var visit func(*epubXMLNode)
+	visit = func(node *epubXMLNode) {
+		if node == nil {
+			return
+		}
+		if isEPUBGeneratedTOCContainer(node) {
+			for index, child := range node.Children {
+				if child.Name != "a" {
+					continue
+				}
+				href := resolveEPUBHref(baseDir, epubXMLAttr(child, "href"))
+				spineIndex, ok := hrefToIndex[stripEPUBFragment(href)]
+				if !ok {
+					continue
+				}
+				label := normalizeEPUBGeneratedTOCText(strings.TrimSpace(epubXMLText(child)) + " " + epubFollowingTextUntilLink(node.Children[index+1:]))
+				if shouldIgnoreEPUBGeneratedTOCEntry(label, href, parentTarget) || seen[href] {
+					continue
+				}
+				seen[href] = true
+				out = append(out, domain.EPUBTOCItem{Label: label, Href: href, Index: spineIndex})
+			}
+		}
+		for _, child := range node.Children {
+			visit(child)
+		}
+	}
+	visit(root)
+	return out
+}
+
+func flattenEPUBTOC(items []domain.EPUBTOCItem) []domain.EPUBTOCItem {
+	var out []domain.EPUBTOCItem
+	var visit func([]domain.EPUBTOCItem)
+	visit = func(entries []domain.EPUBTOCItem) {
+		for _, item := range entries {
+			if item.Href != "" && item.Index >= 0 {
+				flat := item
+				flat.Children = nil
+				out = append(out, flat)
+			}
+			if len(item.Children) > 0 {
+				visit(item.Children)
+			}
+		}
+	}
+	visit(items)
+	return out
+}
+
+func epubTOCIndex(href string, hrefToIndex map[string]int, children []domain.EPUBTOCItem) int {
+	if href != "" {
+		if index, ok := hrefToIndex[stripEPUBFragment(href)]; ok {
+			return index
+		}
+	}
+	for _, child := range children {
+		if child.Index >= 0 {
+			return child.Index
+		}
+	}
+	return -1
+}
+
+func epubGeneratedTOCChildrenRedundant(items []domain.EPUBTOCItem, generated []domain.EPUBTOCItem) bool {
+	if len(generated) == 0 {
+		return false
+	}
+	targets := map[string]bool{}
+	var visit func([]domain.EPUBTOCItem)
+	visit = func(entries []domain.EPUBTOCItem) {
+		for _, item := range entries {
+			if item.Href != "" {
+				targets[item.Href] = true
+			}
+			if len(item.Children) > 0 {
+				visit(item.Children)
+			}
+		}
+	}
+	visit(items)
+	for _, child := range generated {
+		if child.Href == "" || !targets[child.Href] {
+			return false
+		}
+	}
+	return true
+}
+
+func normalizeEPUBGeneratedTOCText(text string) string {
+	parts := strings.Fields(text)
+	return strings.TrimSpace(strings.Join(parts, " "))
+}
+
+func shouldIgnoreEPUBGeneratedTOCEntry(label string, target string, parentTarget string) bool {
+	if label == "" || target == "" {
+		return true
+	}
+	normalizedLabel := strings.ToLower(label)
+	normalizedParentTarget := stripEPUBFragment(parentTarget)
+	normalizedTarget := stripEPUBFragment(target)
+	if target == parentTarget || (normalizedTarget == normalizedParentTarget && !strings.Contains(target, "#")) {
+		return true
+	}
+	return normalizedLabel == "contents" ||
+		normalizedLabel == "table of contents" ||
+		strings.Contains(normalizedLabel, "back to main contents") ||
+		strings.Contains(normalizedLabel, "back to contents") ||
+		strings.Contains(normalizedLabel, "main contents")
+}
+
+func isEPUBGeneratedTOCContainer(node *epubXMLNode) bool {
+	switch node.Name {
+	case "body", "div", "li", "p":
+		return true
+	default:
+		return false
+	}
+}
+
+func epubFollowingTextUntilLink(nodes []*epubXMLNode) string {
+	var builder strings.Builder
+	for _, node := range nodes {
+		if epubNodeContainsLink(node) {
+			break
+		}
+		text := strings.TrimSpace(epubXMLText(node))
+		if text != "" {
+			if builder.Len() > 0 {
+				builder.WriteByte(' ')
+			}
+			builder.WriteString(text)
+		}
+	}
+	return builder.String()
+}
+
+func epubNodeContainsLink(node *epubXMLNode) bool {
+	if node == nil {
+		return false
+	}
+	if node.Name == "a" {
+		return true
+	}
+	for _, child := range node.Children {
+		if epubNodeContainsLink(child) {
+			return true
+		}
+	}
+	return false
+}
+
+func copyEPUBStringBoolMap(value map[string]bool) map[string]bool {
+	out := make(map[string]bool, len(value))
+	for key, item := range value {
+		out[key] = item
+	}
+	return out
+}
+
+type epubXMLNode struct {
+	Name     string
+	Attrs    map[string]string
+	Text     string
+	Children []*epubXMLNode
+}
+
+func parseEPUBXMLTree(body string) (*epubXMLNode, error) {
+	decoder := xml.NewDecoder(strings.NewReader(body))
+	root := &epubXMLNode{Name: "#document", Attrs: map[string]string{}}
+	stack := []*epubXMLNode{root}
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		switch value := token.(type) {
+		case xml.StartElement:
+			node := &epubXMLNode{Name: value.Name.Local, Attrs: map[string]string{}}
+			for _, attr := range value.Attr {
+				node.Attrs[strings.ToLower(attr.Name.Local)] = attr.Value
+			}
+			parent := stack[len(stack)-1]
+			parent.Children = append(parent.Children, node)
+			stack = append(stack, node)
+		case xml.CharData:
+			stack[len(stack)-1].Text += string(value)
+		case xml.EndElement:
+			if len(stack) > 1 {
+				stack = stack[:len(stack)-1]
+			}
+		}
+	}
+	return root, nil
+}
+
+func findEPUBTOCNav(root *epubXMLNode) *epubXMLNode {
+	var firstNav *epubXMLNode
+	var visit func(*epubXMLNode) *epubXMLNode
+	visit = func(node *epubXMLNode) *epubXMLNode {
+		if node == nil {
+			return nil
+		}
+		if node.Name == "nav" {
+			if firstNav == nil {
+				firstNav = node
+			}
+			if strings.Contains(strings.ToLower(epubXMLAttr(node, "type")), "toc") {
+				return node
+			}
+		}
+		for _, child := range node.Children {
+			if match := visit(child); match != nil {
+				return match
+			}
+		}
+		return nil
+	}
+	if match := visit(root); match != nil {
+		return match
+	}
+	return firstNav
+}
+
+func findEPUBDescendant(node *epubXMLNode, name string) *epubXMLNode {
+	if node == nil {
+		return nil
+	}
+	if node.Name == name {
+		return node
+	}
+	for _, child := range node.Children {
+		if match := findEPUBDescendant(child, name); match != nil {
+			return match
+		}
+	}
+	return nil
+}
+
+func firstEPUBChild(node *epubXMLNode, name string) *epubXMLNode {
+	for _, child := range node.Children {
+		if child.Name == name {
+			return child
+		}
+	}
+	return nil
+}
+
+func directEPUBChildren(node *epubXMLNode, name string) []*epubXMLNode {
+	var out []*epubXMLNode
+	if node == nil {
+		return out
+	}
+	for _, child := range node.Children {
+		if child.Name == name {
+			out = append(out, child)
+		}
+	}
+	return out
+}
+
+func epubXMLAttr(node *epubXMLNode, name string) string {
+	if node == nil || node.Attrs == nil {
+		return ""
+	}
+	return strings.TrimSpace(node.Attrs[strings.ToLower(name)])
+}
+
+func epubXMLText(node *epubXMLNode) string {
+	if node == nil {
+		return ""
+	}
+	var builder strings.Builder
+	builder.WriteString(node.Text)
+	for _, child := range node.Children {
+		builder.WriteByte(' ')
+		builder.WriteString(epubXMLText(child))
+	}
+	return strings.Join(strings.Fields(builder.String()), " ")
 }
 
 func stripEPUBFragment(value string) string {
