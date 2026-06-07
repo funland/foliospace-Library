@@ -26,6 +26,7 @@ const WEBTOON_PLACEHOLDER_HEIGHT = 2200;
 const PDF_WEBTOON_RENDER_RADIUS = 2;
 const PDF_WEBTOON_PLACEHOLDER_HEIGHT = 1600;
 const PDF_WEBTOON_MAX_CANVAS_PIXELS = 6_000_000;
+const PDF_WEBTOON_VISIBLE_PAGE_TARGET = 3;
 type BookSort = "title" | "recently_added" | "last_read" | "progress" | "unread";
 type Locale = "zh" | "zht" | "en" | "ja" | "ko";
 type LibraryAssetType = "mixed" | "book" | "comic" | "game" | "video";
@@ -3263,8 +3264,9 @@ function PdfReader({
             const baseViewport = page.getViewport({ scale: 1 });
             const rawDpr = Math.max(1, window.devicePixelRatio || 1);
             const dpr = isWebtoonMode ? 1 : rawDpr;
+            const webtoonTargetHeight = Math.max(180, (slotHeight - 24) / PDF_WEBTOON_VISIBLE_PAGE_TARGET);
             const cssScale = isWebtoonMode
-              ? slotWidth / baseViewport.width
+              ? Math.min(slotWidth / baseViewport.width, webtoonTargetHeight / baseViewport.height)
               : Math.min(slotWidth / baseViewport.width, slotHeight / baseViewport.height);
             const desiredRenderScale = cssScale * dpr;
             const maxRenderScale = isWebtoonMode

@@ -171,6 +171,7 @@ test("PDF webtoon rendering caps canvas memory and releases offscreen canvases",
 
   assert.ok(appSource.includes("const PDF_WEBTOON_RENDER_RADIUS = 2;"), "PDF webtoon should render the current page plus two neighbors on each side");
   assert.ok(appSource.includes("const PDF_WEBTOON_MAX_CANVAS_PIXELS = 6_000_000;"), "PDF webtoon canvases should have a hard pixel budget");
+  assert.ok(appSource.includes("const PDF_WEBTOON_VISIBLE_PAGE_TARGET = 3;"), "PDF webtoon should target about three visible pages in the viewport");
   assert.match(
     appSource,
     /const dpr = isWebtoonMode \? 1 : rawDpr;/,
@@ -180,6 +181,11 @@ test("PDF webtoon rendering caps canvas memory and releases offscreen canvases",
     appSource,
     /Math\.sqrt\(PDF_WEBTOON_MAX_CANVAS_PIXELS \/ Math\.max\(1, baseViewport\.width \* baseViewport\.height\)\)/,
     "PDF webtoon render scale should be capped from page area",
+  );
+  assert.match(
+    appSource,
+    /Math\.min\(slotWidth \/ baseViewport\.width, webtoonTargetHeight \/ baseViewport\.height\)/,
+    "PDF webtoon CSS scale should shrink pages enough for a multi-page viewport",
   );
   assert.match(
     appSource,
