@@ -32,9 +32,11 @@ import {
   createBrowserTtsClient,
   createEpubTtsQueue,
   extractEpubTtsBlocks,
+  extractEpubTtsBlocksFromSelectionStart,
   idleEpubTtsState,
   type BrowserTtsVoice,
   type EpubTtsActiveSegment,
+  type EpubTtsChunk,
   type EpubTtsQueueState,
 } from "./epub-tts";
 
@@ -53,10 +55,16 @@ type ReaderImageSize = { width: number; height: number };
 type EpubNavigationTarget = { href: string; token: number };
 type EpubFastPageTurn = (delta: number) => number | null;
 type EpubTtsDocumentContext = { doc: Document; pagePosition: number; pageWidth: number; spineItemId: string };
+type EpubTtsSelectionSnapshot = { doc: Document; isReleased: boolean; range: Range; spineItemId: string; text: string; updatedAt: number };
 type EpubTtsSettings = { rate: number; voiceId: string; volume: number };
+type EpubTtsAutoContinueRequest = { bookId: number; pageIndex: number; spineItemId: string };
+type EpubTtsStartOptions = { autoContinue?: boolean; context?: EpubTtsDocumentContext; ignoreSelection?: boolean; pagePosition?: number };
 type EpubTtsQueue = ReturnType<typeof createEpubTtsQueue>;
 type BrowserTtsClient = ReturnType<typeof createBrowserTtsClient>;
 const EPUB_WHEEL_PAGE_TURN_INTERVAL_MS = 420;
+const EPUB_TTS_RECENT_SELECTION_MS = 8000;
+const EPUB_TTS_AUTO_CONTINUE_RETRY_INTERVAL_MS = 100;
+const EPUB_TTS_AUTO_CONTINUE_RETRY_LIMIT = 300;
 const bookPageSize = 30;
 const catalogPageSize = 200;
 
@@ -147,6 +155,7 @@ export function App() {
   const [epubTtsSettingsOpen, setEpubTtsSettingsOpen] = useState(false);
   const [epubTtsSettings, setEpubTtsSettings] = useState<EpubTtsSettings>(readLocalEpubTtsSettings);
   const [epubTtsVoices, setEpubTtsVoices] = useState<BrowserTtsVoice[]>([]);
+  const [epubTtsSelectionText, setEpubTtsSelectionText] = useState("");
   const [pdfPageCount, setPdfPageCount] = useState(1);
   const [webtoonProgress, setWebtoonProgress] = useState(0);
   const [webtoonPosition, setWebtoonPosition] = useState<WebtoonPosition | null>(null);
@@ -191,12 +200,24 @@ export function App() {
   const epubTtsClientRef = useRef<BrowserTtsClient | null>(null);
   const epubTtsDocRef = useRef<EpubTtsDocumentContext | null>(null);
   const epubTtsQueueRef = useRef<EpubTtsQueue | null>(null);
+  const epubTtsSelectionRef = useRef<EpubTtsSelectionSnapshot | null>(null);
+  const epubTtsRecentSelectionRef = useRef<EpubTtsSelectionSnapshot | null>(null);
+  const epubTtsPendingStartSelectionRef = useRef<EpubTtsSelectionSnapshot | null>(null);
+  const epubTtsAutoContinueRef = useRef<EpubTtsAutoContinueRequest | null>(null);
+  const epubTtsReaderStateRef = useRef({ epubManifest, pageIndex, selectedBook });
+  const epubTtsSessionActiveRef = useRef(false);
+  const epubTtsChunksRef = useRef<EpubTtsChunk[]>([]);
+  const epubTtsAdvanceInFlightRef = useRef(false);
+  const epubTtsAutoContinueTimerRef = useRef<number | null>(null);
+  const epubTtsAutoContinueAttemptRef = useRef(0);
   const epubTtsSpineRef = useRef("");
   const webtoonRestoring = useRef(false);
   const webtoonUserActivated = useRef(false);
   const webtoonUserScrollUntil = useRef(0);
   const suppressPagedProgressSave = useRef(false);
   const preferencesLoaded = useRef(false);
+
+  epubTtsReaderStateRef.current = { epubManifest, pageIndex, selectedBook };
 
   const registerEpubFastPageTurn = useCallback((turn: EpubFastPageTurn | null) => {
     epubFastPageTurnRef.current = turn;
@@ -248,7 +269,74 @@ export function App() {
     }
   }
 
+  function clearEpubTtsContinuousSession() {
+    cancelEpubTtsAutoContinueRetry();
+    epubTtsAutoContinueRef.current = null;
+    epubTtsSessionActiveRef.current = false;
+    epubTtsChunksRef.current = [];
+    epubTtsAdvanceInFlightRef.current = false;
+  }
+
+  function cancelEpubTtsAutoContinueRetry() {
+    if (epubTtsAutoContinueTimerRef.current !== null) {
+      window.clearTimeout(epubTtsAutoContinueTimerRef.current);
+      epubTtsAutoContinueTimerRef.current = null;
+    }
+    epubTtsAutoContinueAttemptRef.current = 0;
+  }
+
+  function startPendingEpubTtsAutoContinue(context: EpubTtsDocumentContext) {
+    const pendingAutoContinue = epubTtsAutoContinueRef.current;
+    const { selectedBook } = epubTtsReaderStateRef.current;
+    if (
+      !pendingAutoContinue ||
+      !selectedBook ||
+      selectedBook.id !== pendingAutoContinue.bookId ||
+      selectedBook.format !== "epub" ||
+      pendingAutoContinue.spineItemId !== context.spineItemId
+    ) {
+      return false;
+    }
+
+    void startEpubTts({ autoContinue: true, context, ignoreSelection: true, pagePosition: 0 });
+    return true;
+  }
+
+  function scheduleEpubTtsAutoContinueStart() {
+    if (!epubTtsAutoContinueRef.current || epubTtsAutoContinueTimerRef.current !== null) return;
+    const attemptStart = () => {
+      epubTtsAutoContinueTimerRef.current = null;
+      const pendingAutoContinue = epubTtsAutoContinueRef.current;
+      if (!pendingAutoContinue) {
+        epubTtsAutoContinueAttemptRef.current = 0;
+        return;
+      }
+
+      const context = epubTtsDocRef.current;
+      const { selectedBook } = epubTtsReaderStateRef.current;
+      if (!selectedBook || selectedBook.id !== pendingAutoContinue.bookId || selectedBook.format !== "epub") {
+        clearEpubTtsContinuousSession();
+        return;
+      }
+      if (
+        context &&
+        pendingAutoContinue.spineItemId === context.spineItemId
+      ) {
+        if (startPendingEpubTtsAutoContinue(context)) return;
+      }
+
+      epubTtsAutoContinueAttemptRef.current += 1;
+      if (epubTtsAutoContinueAttemptRef.current >= EPUB_TTS_AUTO_CONTINUE_RETRY_LIMIT) {
+        clearEpubTtsContinuousSession();
+        return;
+      }
+      epubTtsAutoContinueTimerRef.current = window.setTimeout(attemptStart, EPUB_TTS_AUTO_CONTINUE_RETRY_INTERVAL_MS);
+    };
+    epubTtsAutoContinueTimerRef.current = window.setTimeout(attemptStart, 0);
+  }
+
   function stopEpubTts() {
+    clearEpubTtsContinuousSession();
     epubTtsQueueRef.current?.stop();
     epubTtsSpineRef.current = "";
     const doc = epubTtsDocRef.current?.doc;
@@ -256,11 +344,125 @@ export function App() {
     setEpubTtsState(idleEpubTtsState());
   }
 
+  function advanceEpubTtsToNextSpine() {
+    if (epubTtsAdvanceInFlightRef.current) return;
+    const { epubManifest, pageIndex, selectedBook } = epubTtsReaderStateRef.current;
+    if (!selectedBook || selectedBook.format !== "epub" || !epubManifest) {
+      clearEpubTtsContinuousSession();
+      return;
+    }
+    const currentSpineItemId = epubTtsDocRef.current?.spineItemId || epubManifest.spine[pageIndex]?.href || "";
+    const currentSpineIndex = epubManifest.spine.findIndex((item) => item.href === currentSpineItemId);
+    const nextIndex = (currentSpineIndex >= 0 ? currentSpineIndex : pageIndex) + 1;
+    const nextSpineItem = epubManifest.spine[nextIndex];
+    if (!nextSpineItem) {
+      clearEpubTtsContinuousSession();
+      return;
+    }
+
+    epubTtsAdvanceInFlightRef.current = true;
+    epubTtsChunksRef.current = [];
+    epubTtsSpineRef.current = "";
+    epubTtsAutoContinueRef.current = {
+      bookId: selectedBook.id,
+      pageIndex: nextIndex,
+      spineItemId: nextSpineItem.href,
+    };
+    resetEpubTtsSelectionState();
+    epubUserActivated.current = true;
+    updateEpubPosition(null);
+    setEpubNavigationTarget(null);
+    setEpubPagePosition(0);
+    setEpubPageCount(1);
+    setDisplayedPageIndex(nextIndex);
+    setReaderLoadState("loading");
+    setPageIndex(nextIndex);
+    scheduleEpubTtsAutoContinueStart();
+  }
+
   function handleEpubTtsDocumentReady(context: EpubTtsDocumentContext) {
+    const pendingAutoContinue = epubTtsAutoContinueRef.current;
+    const expectedAutoContinueBook = epubTtsReaderStateRef.current.selectedBook;
+    const isExpectedAutoContinue = Boolean(
+      pendingAutoContinue &&
+      expectedAutoContinueBook?.id === pendingAutoContinue.bookId &&
+      pendingAutoContinue.spineItemId === context.spineItemId
+    );
+    const currentTtsSpineItemId = epubTtsReaderStateRef.current.epubManifest?.spine[epubTtsReaderStateRef.current.pageIndex]?.href ?? "";
+    if (currentTtsSpineItemId && context.spineItemId !== currentTtsSpineItemId && !isExpectedAutoContinue) return;
+    const previousContext = epubTtsDocRef.current;
     epubTtsDocRef.current = context;
-    if (epubTtsSpineRef.current && epubTtsSpineRef.current !== context.spineItemId) {
+    if (previousContext && (previousContext.doc !== context.doc || previousContext.spineItemId !== context.spineItemId)) {
+      resetEpubTtsSelectionState();
+    }
+    if (epubTtsSpineRef.current && epubTtsSpineRef.current !== context.spineItemId && !isExpectedAutoContinue) {
       stopEpubTts();
     }
+    if (
+      isExpectedAutoContinue
+    ) {
+      startPendingEpubTtsAutoContinue(context);
+    }
+  }
+
+  function handleEpubTtsSelectionChange(selection: EpubTtsSelectionSnapshot | null) {
+    const text = selection?.text.trim() ?? "";
+    if (!text) {
+      epubTtsSelectionRef.current = null;
+      if (!epubTtsPendingStartSelectionRef.current) {
+        epubTtsRecentSelectionRef.current = null;
+      }
+      setEpubTtsSelectionText("");
+      return;
+    }
+    epubTtsSelectionRef.current = text ? selection : null;
+    setEpubTtsSelectionText(text);
+    if (selection?.isReleased && text) {
+      epubTtsRecentSelectionRef.current = selection;
+    }
+  }
+
+  function prepareEpubTtsSelectionStart() {
+    const context = epubTtsDocRef.current;
+    const liveSelection = context ? epubTtsSelectionSnapshotFromDocument(context.doc, context.spineItemId, true) : null;
+    const currentSelection = liveSelection ?? epubTtsSelectionRef.current ?? recentEpubTtsSelection();
+    epubTtsPendingStartSelectionRef.current = currentSelection;
+    if (liveSelection) {
+      handleEpubTtsSelectionChange(liveSelection);
+    }
+  }
+
+  function resolveEpubTtsStartSelection(context: EpubTtsDocumentContext) {
+    const liveSelection = epubTtsSelectionSnapshotFromDocument(context.doc, context.spineItemId, true);
+    const selectionSnapshot =
+      liveSelection ??
+      epubTtsPendingStartSelectionRef.current ??
+      epubTtsSelectionRef.current ??
+      recentEpubTtsSelection();
+    epubTtsPendingStartSelectionRef.current = null;
+    if (!selectionSnapshot?.text.trim()) return null;
+    if (selectionSnapshot.doc !== context.doc || selectionSnapshot.spineItemId !== context.spineItemId) return null;
+    if (Date.now() - selectionSnapshot.updatedAt > EPUB_TTS_RECENT_SELECTION_MS) return null;
+    return selectionSnapshot;
+  }
+
+  function recentEpubTtsSelection() {
+    const selection = epubTtsRecentSelectionRef.current;
+    if (!selection || Date.now() - selection.updatedAt > EPUB_TTS_RECENT_SELECTION_MS) return null;
+    return selection;
+  }
+
+  function clearEpubTtsSelectionSnapshot(selection: EpubTtsSelectionSnapshot | null) {
+    if (!selection) return;
+    selection.doc.defaultView?.getSelection()?.removeAllRanges();
+    resetEpubTtsSelectionState();
+  }
+
+  function resetEpubTtsSelectionState() {
+    epubTtsSelectionRef.current = null;
+    epubTtsRecentSelectionRef.current = null;
+    epubTtsPendingStartSelectionRef.current = null;
+    setEpubTtsSelectionText("");
   }
 
   async function loadEpubTtsVoices() {
@@ -283,42 +485,81 @@ export function App() {
     });
   }
 
-  async function startEpubTts() {
-    if (!selectedBook || selectedBook.format !== "epub") return;
-    const context = epubTtsDocRef.current;
+  async function startEpubTts(options: EpubTtsStartOptions = {}) {
+    const ttsBook = options.autoContinue ? epubTtsReaderStateRef.current.selectedBook : selectedBook;
+    if (!ttsBook || ttsBook.format !== "epub") return;
+    if (!options.ignoreSelection && !options.autoContinue) {
+      clearEpubTtsContinuousSession();
+    }
+    const context = options.context ?? epubTtsDocRef.current;
     if (!context?.doc) {
+      if (options.autoContinue) {
+        clearEpubTtsContinuousSession();
+      }
       setEpubTtsState({ ...idleEpubTtsState(), status: "error" });
       setStatus(t.ttsUnavailable);
       return;
     }
 
+    const selectionSnapshot = options.ignoreSelection ? null : resolveEpubTtsStartSelection(context);
+    const selectionBlocks = selectionSnapshot
+      ? extractEpubTtsBlocksFromSelectionStart(
+          selectionSnapshot.doc,
+          selectionSnapshot.spineItemId,
+          selectionSnapshot.range,
+        )
+      : [];
+    const usingSelectionStart = selectionBlocks.length > 0;
+    const blocks = usingSelectionStart ? selectionBlocks : extractEpubTtsBlocks(context.doc, context.spineItemId, {
+      pagePosition: options.pagePosition ?? epubPagePosition,
+      pageWidth: context.pageWidth,
+    });
     const chunks = chunkEpubTtsBlocks(
-      extractEpubTtsBlocks(context.doc, context.spineItemId, {
-        pagePosition: epubPagePosition,
-        pageWidth: context.pageWidth,
-      }),
+      blocks,
       { preserveBlockBoundaries: true },
     );
     if (!chunks.length) {
+      if (options.autoContinue) {
+        setEpubTtsState(idleEpubTtsState());
+        epubTtsAutoContinueAttemptRef.current += 1;
+        if (epubTtsAutoContinueAttemptRef.current >= EPUB_TTS_AUTO_CONTINUE_RETRY_LIMIT) {
+          clearEpubTtsContinuousSession();
+          return;
+        }
+        scheduleEpubTtsAutoContinueStart();
+        return;
+      }
       setEpubTtsState({ ...idleEpubTtsState(), status: "error" });
       setStatus(t.ttsNoText);
       return;
     }
 
     try {
+      if (options.autoContinue) {
+        cancelEpubTtsAutoContinueRetry();
+        epubTtsAutoContinueRef.current = null;
+      }
       const queue = ensureEpubTtsQueue();
       const voices = epubTtsVoices.length > 0 ? epubTtsVoices : await loadEpubTtsVoices();
+      epubTtsSessionActiveRef.current = true;
+      epubTtsChunksRef.current = chunks;
+      epubTtsAdvanceInFlightRef.current = false;
       epubTtsSpineRef.current = context.spineItemId;
+      if (usingSelectionStart) {
+        clearEpubTtsSelectionSnapshot(selectionSnapshot);
+      }
       await queue.start({
         chunks,
         request: {
           initialMarkerFallbackMs: 350,
           rate: epubTtsSettings.rate,
+          skipCancel: Boolean(options.autoContinue),
           voiceId: epubTtsSettings.voiceId || (voices?.[0]?.id ?? ""),
           volume: epubTtsSettings.volume,
         },
       });
     } catch (error) {
+      clearEpubTtsContinuousSession();
       epubTtsSpineRef.current = "";
       setEpubTtsState({ ...idleEpubTtsState(), status: "error" });
       setStatus(error instanceof Error ? error.message : t.ttsUnavailable);
@@ -332,6 +573,18 @@ export function App() {
   function resumeEpubTts() {
     void epubTtsQueueRef.current?.resume();
   }
+
+  useEffect(() => {
+    if (
+      epubTtsState.status !== "idle" ||
+      !epubTtsSessionActiveRef.current ||
+      epubTtsAdvanceInFlightRef.current ||
+      !epubTtsChunksRef.current.length
+    ) {
+      return;
+    }
+    advanceEpubTtsToNextSpine();
+  }, [epubTtsState.status]);
 
   useEffect(() => {
     if (!epubTtsSettingsOpen || selectedBook?.format !== "epub") return;
@@ -2558,7 +2811,9 @@ export function App() {
                         onResume={resumeEpubTts}
                         onSettingsToggle={() => setEpubTtsSettingsOpen((value) => !value)}
                         onStart={() => void startEpubTts()}
+                        onStartPointerDown={prepareEpubTtsSelectionStart}
                         onStop={stopEpubTts}
+                        selectionActive={Boolean(epubTtsSelectionText.trim())}
                         settingsOpen={epubTtsSettingsOpen}
                         status={epubTtsState.status}
                       />
@@ -2632,6 +2887,11 @@ export function App() {
                     {t.exitFullscreen}
                   </button>
                 )}
+                {readerFullscreen && selectedBook.format === "epub" && epubManifest && (
+                  <div className="readerFullscreenContents">
+                    <button aria-expanded={epubTocOpen} onClick={() => setEpubTocOpen((value) => !value)}>{t.contents}</button>
+                  </div>
+                )}
                 {readerFullscreen && selectedBook.format === "epub" && (
                   <div className="readerFullscreenTts">
                     <EpubTtsControls
@@ -2641,7 +2901,9 @@ export function App() {
                       onResume={resumeEpubTts}
                       onSettingsToggle={() => setEpubTtsSettingsOpen((value) => !value)}
                       onStart={() => void startEpubTts()}
+                      onStartPointerDown={prepareEpubTtsSelectionStart}
                       onStop={stopEpubTts}
+                      selectionActive={Boolean(epubTtsSelectionText.trim())}
                       settingsOpen={epubTtsSettingsOpen}
                       status={epubTtsState.status}
                     />
@@ -2765,6 +3027,7 @@ export function App() {
                         ttsSegment={epubTtsActiveSegment}
                         onFastPageTurnReady={registerEpubFastPageTurn}
                         onTtsDocumentReady={handleEpubTtsDocumentReady}
+                        onTtsSelectionChange={handleEpubTtsSelectionChange}
                         onPageTurn={(delta) => {
                           if (delta < 0) {
                             goReaderPrevious();
@@ -3475,7 +3738,9 @@ function EpubTtsControls({
   onResume,
   onSettingsToggle,
   onStart,
+  onStartPointerDown,
   onStop,
+  selectionActive = false,
   settingsOpen,
   status,
 }: {
@@ -3485,7 +3750,9 @@ function EpubTtsControls({
   onResume: () => void;
   onSettingsToggle: () => void;
   onStart: () => void;
+  onStartPointerDown?: () => void;
   onStop: () => void;
+  selectionActive?: boolean;
   settingsOpen: boolean;
   status: EpubTtsQueueState["status"];
 }) {
@@ -3496,7 +3763,11 @@ function EpubTtsControls({
 
   return (
     <div className="epubTtsControls" role="group" aria-label={labels.ttsControls}>
-      {canStart && <button onClick={onStart}>{labels.ttsStart}</button>}
+      {canStart && (
+        <button onPointerDown={onStartPointerDown} onClick={onStart}>
+          {selectionActive ? labels.ttsStartSelection : labels.ttsStart}
+        </button>
+      )}
       {isPlaying && <button onClick={onPause} disabled={status === "loading"}>{labels.ttsPause}</button>}
       {isPaused && <button onClick={onResume}>{labels.ttsResume}</button>}
       {(isPlaying || isPaused) && <button onClick={onStop}>{labels.ttsStop}</button>}
@@ -4026,6 +4297,7 @@ function EpubFrame({
   ttsSegment,
   onFastPageTurnReady,
   onTtsDocumentReady,
+  onTtsSelectionChange,
   onPageTurn,
   onNavigate,
   onMetrics,
@@ -4043,6 +4315,7 @@ function EpubFrame({
   ttsSegment: EpubTtsActiveSegment | null;
   onFastPageTurnReady: (turn: EpubFastPageTurn | null) => void;
   onTtsDocumentReady: (context: EpubTtsDocumentContext) => void;
+  onTtsSelectionChange: (selection: EpubTtsSelectionSnapshot | null) => void;
   onPageTurn: (delta: number) => void;
   onNavigate: (href: string, label?: string) => void;
   onMetrics: (pageCount: number, pagePosition: number) => void;
@@ -4052,11 +4325,13 @@ function EpubFrame({
   const layoutMetricsRef = useRef<{ pageWidth: number; pageCount: number; spineHref: string } | null>(null);
   const pagePositionRef = useRef(pagePosition);
   const onPageTurnRef = useRef(onPageTurn);
+  const onTtsSelectionChangeRef = useRef(onTtsSelectionChange);
   const positionAnchorRef = useRef<EpubPosition | null>(positionAnchor);
   const lastWheelPageTurnAtRef = useRef(0);
   const frameInputCleanupRef = useRef<{ doc: Document; cleanup: () => void } | null>(null);
   const spineItem = manifest?.spine[pageIndex] ?? null;
   onPageTurnRef.current = onPageTurn;
+  onTtsSelectionChangeRef.current = onTtsSelectionChange;
   positionAnchorRef.current = positionAnchor;
 
   useLayoutEffect(() => {
@@ -4185,13 +4460,28 @@ function EpubFrame({
       onPageTurnRef.current(dominantDelta > 0 ? 1 : -1);
     };
 
+    const publishSelection = (isReleased: boolean) => {
+      if (!spineItem) return;
+      onTtsSelectionChangeRef.current(epubTtsSelectionSnapshotFromDocument(doc, spineItem.href, isReleased));
+    };
+
+    const onSelectionChange = () => publishSelection(false);
+    const onPointerUp = () => publishSelection(true);
+    const onTouchEnd = () => publishSelection(true);
+
     doc.addEventListener("keydown", onFrameKeyDown);
     doc.addEventListener("wheel", onFrameWheel, { passive: false });
+    doc.addEventListener("selectionchange", onSelectionChange);
+    doc.addEventListener("pointerup", onPointerUp);
+    doc.addEventListener("touchend", onTouchEnd);
     frameInputCleanupRef.current = {
       doc,
       cleanup: () => {
         doc.removeEventListener("keydown", onFrameKeyDown);
         doc.removeEventListener("wheel", onFrameWheel);
+        doc.removeEventListener("selectionchange", onSelectionChange);
+        doc.removeEventListener("pointerup", onPointerUp);
+        doc.removeEventListener("touchend", onTouchEnd);
       },
     };
   }
@@ -4417,36 +4707,84 @@ function EpubTocTree({ items, pageIndex, manifest, target, onSelect, depth = 0 }
   return (
     <div className={depth === 0 ? "epubTocTree" : "epubTocChildren"} role={depth === 0 ? "tree" : "group"}>
       {items.map((item, index) => {
-        const children = item.children ?? [];
-        const selfActive = epubTocItemSelfActive(item, pageIndex, manifest, target);
-        const childActive = !selfActive && epubTocItemHasActiveDescendant(item, pageIndex, manifest, target);
-        const canNavigate = Boolean(item.href) && item.index >= 0;
-
         return (
-          <div className="epubTocItem" key={`${depth}-${index}-${item.index}-${item.href || item.label}`}>
-            <button
-              aria-current={selfActive ? "page" : undefined}
-              className={selfActive ? "active" : childActive ? "containsActive" : ""}
-              disabled={!canNavigate}
-              onClick={() => canNavigate && onSelect(item)}
-              role="treeitem"
-              style={{ paddingLeft: 12 + depth * 16 }}
-            >
-              <span className="epubTocLabel">{item.label}</span>
-            </button>
-            {children.length > 0 && (
-              <EpubTocTree
-                depth={depth + 1}
-                items={children}
-                pageIndex={pageIndex}
-                manifest={manifest}
-                target={target}
-                onSelect={onSelect}
-              />
-            )}
-          </div>
+          <EpubTocBranch
+            depth={depth}
+            item={item}
+            itemCount={items.length}
+            key={`${depth}-${index}-${item.index}-${item.href || item.label}`}
+            manifest={manifest}
+            onSelect={onSelect}
+            pageIndex={pageIndex}
+            target={target}
+          />
         );
       })}
+    </div>
+  );
+}
+
+type EpubTocBranchProps = Omit<EpubTocTreeProps, "items"> & {
+  item: EpubTocItem;
+  itemCount: number;
+};
+
+function EpubTocBranch({ depth = 0, item, itemCount, manifest, onSelect, pageIndex, target }: EpubTocBranchProps) {
+  const children = item.children ?? [];
+  const hasChildren = children.length > 0;
+  const selfActive = epubTocItemSelfActive(item, pageIndex, manifest, target);
+  const childActive = !selfActive && epubTocItemHasActiveDescendant(item, pageIndex, manifest, target);
+  const canNavigate = Boolean(item.href) && item.index >= 0;
+  const defaultExpanded = epubTocItemDefaultExpanded({
+    childActive,
+    childCount: children.length,
+    depth,
+    hasChildren,
+    itemCount,
+    selfActive,
+  });
+  const [expanded, setExpanded] = useState(defaultExpanded);
+
+  useEffect(() => {
+    if (defaultExpanded) setExpanded(true);
+  }, [defaultExpanded]);
+
+  return (
+    <div className={`epubTocItem${hasChildren ? " hasChildren" : ""}${expanded ? " expanded" : ""}`}>
+      <div className="epubTocRow" style={{ paddingLeft: 8 + depth * 16 }}>
+        {hasChildren ? (
+          <button
+            aria-label={`${expanded ? "Collapse" : "Expand"} ${item.label}`}
+            className="epubTocToggle"
+            onClick={() => setExpanded((value) => !value)}
+            type="button"
+          />
+        ) : (
+          <span className="epubTocToggleSpacer" aria-hidden="true" />
+        )}
+        <button
+          aria-current={selfActive ? "page" : undefined}
+          aria-expanded={hasChildren ? expanded : undefined}
+          className={`epubTocNav${selfActive ? " active" : childActive ? " containsActive" : ""}`}
+          disabled={!canNavigate}
+          onClick={() => canNavigate && onSelect(item)}
+          role="treeitem"
+          type="button"
+        >
+          <span className="epubTocLabel">{item.label}</span>
+          {hasChildren && <span className="epubTocChildCount">{children.length}</span>}
+        </button>
+      </div>
+      {children.length > 0 && expanded && (
+        <EpubTocTree
+          depth={depth + 1}
+          items={children}
+          pageIndex={pageIndex}
+          manifest={manifest}
+          target={target}
+          onSelect={onSelect}
+        />
+      )}
     </div>
   );
 }
@@ -4483,10 +4821,33 @@ function epubDisplayTocItems(manifest: EpubManifest): EpubTocItem[] {
   }));
 }
 
+function epubTocItemDefaultExpanded({
+  childActive,
+  childCount,
+  depth,
+  hasChildren,
+  itemCount,
+  selfActive,
+}: {
+  childActive: boolean;
+  childCount: number;
+  depth: number;
+  hasChildren: boolean;
+  itemCount: number;
+  selfActive: boolean;
+}) {
+  if (!hasChildren) return false;
+  if (depth === 0 && itemCount <= 2) return true;
+  if (depth === 0 && itemCount >= 8 && childCount > 12) return false;
+  if (selfActive || childActive) return true;
+  return false;
+}
+
 function epubTocItemSelfActive(item: EpubTocItem, pageIndex: number, manifest: EpubManifest, target: EpubNavigationTarget | null) {
   if (target) return item.href === target.href;
   const spineHref = manifest.spine[pageIndex]?.href ?? "";
-  return item.href === spineHref;
+  const hasChildren = (item.children ?? []).length > 0;
+  return item.href === spineHref || (hasChildren && stripEPUBFragment(item.href) === spineHref);
 }
 
 function epubTocItemHasActiveDescendant(item: EpubTocItem, pageIndex: number, manifest: EpubManifest, target: EpubNavigationTarget | null): boolean {
@@ -4907,6 +5268,22 @@ function epubEventTargetIsEditable(target: EventTarget | null) {
   return Boolean(element?.closest?.("input, textarea, select, button, [contenteditable='true'], [contenteditable='']"));
 }
 
+function epubTtsSelectionSnapshotFromDocument(doc: Document, spineItemId: string, isReleased: boolean): EpubTtsSelectionSnapshot | null {
+  const selection = doc.defaultView?.getSelection?.();
+  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return null;
+  const range = selection.getRangeAt(0);
+  const text = normalizeEPUBText(range.toString());
+  if (!text) return null;
+  return {
+    doc,
+    isReleased,
+    range: range.cloneRange(),
+    spineItemId,
+    text,
+    updatedAt: Date.now(),
+  };
+}
+
 function resolveEpubHrefIndex(manifest: EpubManifest, value: string, fallbackIndex = 0) {
   const href = stripEPUBFragment(value);
   const exact = manifest.spine.find((spineItem) => stripEPUBFragment(spineItem.href) === href);
@@ -5241,6 +5618,7 @@ const translations = {
     backToShelf: "返回书架",
     ttsControls: "EPUB 朗读",
     ttsStart: "朗读",
+    ttsStartSelection: "从选区朗读",
     ttsPause: "暂停",
     ttsResume: "继续",
     ttsStop: "停止",
@@ -5465,6 +5843,7 @@ const translations = {
     backToShelf: "返回書架",
     ttsControls: "EPUB 朗讀",
     ttsStart: "朗讀",
+    ttsStartSelection: "從選區朗讀",
     ttsPause: "暫停",
     ttsResume: "繼續",
     ttsStop: "停止",
@@ -5689,6 +6068,7 @@ const translations = {
     backToShelf: "Back to Shelf",
     ttsControls: "EPUB read aloud",
     ttsStart: "Read",
+    ttsStartSelection: "Read selection",
     ttsPause: "Pause",
     ttsResume: "Resume",
     ttsStop: "Stop",
@@ -5913,6 +6293,7 @@ const translations = {
     backToShelf: "棚へ戻る",
     ttsControls: "EPUB 読み上げ",
     ttsStart: "読み上げ",
+    ttsStartSelection: "選択から読み上げ",
     ttsPause: "一時停止",
     ttsResume: "再開",
     ttsStop: "停止",
@@ -6137,6 +6518,7 @@ const translations = {
     backToShelf: "서가로 돌아가기",
     ttsControls: "EPUB 읽어주기",
     ttsStart: "읽기",
+    ttsStartSelection: "선택부터 읽기",
     ttsPause: "일시정지",
     ttsResume: "계속",
     ttsStop: "정지",

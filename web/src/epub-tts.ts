@@ -20,6 +20,7 @@ export type BrowserTtsSpeakOptions = {
   onError?: (error: SpeechSynthesisErrorEvent | Event) => void;
   onStart?: () => void;
   rate: number;
+  skipCancel?: boolean;
   voiceId: string;
   volume: number;
 };
@@ -104,6 +105,7 @@ type EpubTtsQueueClient = {
 
 type EpubTtsQueueDeps = {
   client: EpubTtsQueueClient;
+  onComplete?: () => void;
   onStateChange?: (state: EpubTtsQueueState) => void;
 };
 
@@ -127,6 +129,7 @@ const ttsBlockSelector = "p, li, blockquote, h1, h2, h3, h4, h5, h6";
 const ttsBlockIDAttribute = "data-foliospace-tts-block-id";
 const ttsActiveClass = "reader-tts-active-segment";
 const initialMarkerFallbackMs = 250;
+const voiceLoadFallbackMs = 500;
 const activeTtsElements = new WeakMap<Document, Element>();
 
 function inferGender(voice: SpeechSynthesisVoice): BrowserTtsVoice["gender"] {
@@ -157,10 +160,20 @@ async function waitForVoices(speechSynthesis: SpeechSynthesisLike): Promise<Spee
   if (immediate.length) return immediate;
 
   return new Promise<SpeechSynthesisVoice[]>((resolve) => {
+    let settled = false;
     const handleVoicesChanged = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       speechSynthesis.removeEventListener("voiceschanged", handleVoicesChanged);
       resolve(speechSynthesis.getVoices());
     };
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      speechSynthesis.removeEventListener("voiceschanged", handleVoicesChanged);
+      resolve(speechSynthesis.getVoices());
+    }, voiceLoadFallbackMs);
     speechSynthesis.addEventListener("voiceschanged", handleVoicesChanged);
   });
 }
@@ -169,9 +182,19 @@ export function createBrowserTtsClient({
   speechSynthesis = globalThis.speechSynthesis as SpeechSynthesisLike | undefined,
   utteranceFactory = (text) => new SpeechSynthesisUtterance(text),
 }: BrowserTtsClientDeps = {}) {
+  let cachedVoices: SpeechSynthesisVoice[] = [];
+
   async function getSpeechVoices() {
     if (!speechSynthesis) throw new Error("speechSynthesis unavailable");
-    return waitForVoices(speechSynthesis);
+    const immediate = speechSynthesis.getVoices();
+    if (immediate.length) {
+      cachedVoices = immediate;
+      return immediate;
+    }
+    if (cachedVoices.length) return cachedVoices;
+    const voices = await waitForVoices(speechSynthesis);
+    if (voices.length) cachedVoices = voices;
+    return voices;
   }
 
   return {
@@ -205,8 +228,13 @@ export function createBrowserTtsClient({
       utterance.rate = options.rate;
       utterance.volume = options.volume;
       utterance.voice = voice;
-      speechSynthesis.cancel();
+      if (!options.skipCancel) {
+        speechSynthesis.cancel();
+      }
       speechSynthesis.speak(utterance);
+      speechSynthesis.resume();
+      setTimeout(() => speechSynthesis.resume(), 0);
+      setTimeout(() => speechSynthesis.resume(), 250);
     },
     stop() {
       speechSynthesis?.cancel();
@@ -258,28 +286,63 @@ export function extractEpubTtsBlocks(
   spineItemId: string,
   options: ExtractEpubTtsBlocksOptions = {},
 ): EpubTtsBlock[] {
-  const pageStart = typeof options.pagePosition === "number" && typeof options.pageWidth === "number"
-    ? Math.max(0, options.pagePosition * options.pageWidth - 2)
-    : 0;
-  const blocks = Array.from(doc.querySelectorAll<HTMLElement>(ttsBlockSelector));
-
-  return blocks
-    .filter((element) => {
-      if (!pageStart) return true;
-      const offsetLeft = Number((element as { offsetLeft?: number }).offsetLeft);
-      return !Number.isFinite(offsetLeft) || offsetLeft >= pageStart;
-    })
+  const hasPageWindow = typeof options.pagePosition === "number" && typeof options.pageWidth === "number";
+  const pageWidth = hasPageWindow ? Math.max(0, options.pageWidth as number) : 0;
+  const pageOrigin = hasPageWindow ? Math.max(0, (options.pagePosition as number) * pageWidth) : 0;
+  const pageStart = hasPageWindow ? Math.max(0, pageOrigin - 2) : 0;
+  const pageEnd = hasPageWindow ? pageOrigin + pageWidth + 2 : 0;
+  const blocks = Array.from(doc.querySelectorAll<HTMLElement>(ttsBlockSelector))
     .map((element, index) => {
       const result = collectElementTtsText(element);
-      if (!result.text) return null;
+      return result.text ? { element, index, result } : null;
+    })
+    .filter((entry): entry is { element: HTMLElement; index: number; result: EpubTtsTextResult } => Boolean(entry));
+  const start = hasPageWindow ? resolvePagedTtsBlockStart(blocks, pageOrigin, pageStart, pageEnd) : null;
+  const startBlockIndex = start?.blockIndex ?? 0;
+
+  return blocks
+    .slice(startBlockIndex)
+    .map(({ element, index, result }, offsetIndex) => {
       const blockId = ensureTtsBlockID(element, index);
+      const slice = offsetIndex === 0 ? ttsBlockSlice(result.text, start?.sourceStart ?? 0) : ttsBlockSlice(result.text, 0);
+      if (!slice.text) return null;
       return {
         blockId,
         locatorText: result.text,
-        sourceEnd: result.text.length,
-        sourceStart: 0,
+        sourceEnd: slice.sourceEnd,
+        sourceStart: slice.sourceStart,
         spineItemId,
-        text: result.text,
+        text: slice.text,
+      };
+    })
+    .filter((block): block is EpubTtsBlock => Boolean(block));
+}
+
+export function extractEpubTtsBlocksFromSelectionStart(
+  doc: Document,
+  spineItemId: string,
+  range: Range,
+): EpubTtsBlock[] {
+  const elements = Array.from(doc.querySelectorAll<HTMLElement>(ttsBlockSelector));
+  const startElement = ttsBlockElementForNode(range.startContainer);
+  const startIndex = startElement ? elements.indexOf(startElement) : -1;
+  if (startIndex < 0) return [];
+
+  return elements
+    .slice(startIndex)
+    .map((element, offsetIndex) => {
+      const result = collectElementTtsText(element);
+      if (!result.text) return null;
+      const blockId = ensureTtsBlockID(element, startIndex + offsetIndex);
+      const slice = offsetIndex === 0 ? ttsBlockSliceFromSelectionStart(result, range) : ttsBlockSlice(result.text, 0);
+      if (!slice.text) return null;
+      return {
+        blockId,
+        locatorText: result.text,
+        sourceEnd: slice.sourceEnd,
+        sourceStart: slice.sourceStart,
+        spineItemId,
+        text: slice.text,
       };
     })
     .filter((block): block is EpubTtsBlock => Boolean(block));
@@ -325,7 +388,7 @@ export function chunkEpubTtsBlocks(blocks: EpubTtsBlock[], options: number | Epu
   return chunks;
 }
 
-export function createEpubTtsQueue({ client, onStateChange }: EpubTtsQueueDeps) {
+export function createEpubTtsQueue({ client, onComplete, onStateChange }: EpubTtsQueueDeps) {
   let state: EpubTtsQueueState = idleEpubTtsState();
   let runId = 0;
 
@@ -379,6 +442,7 @@ export function createEpubTtsQueue({ client, onStateChange }: EpubTtsQueueDeps) 
     const chunk = chunks[index];
     if (!chunk) {
       emitState(idleEpubTtsState());
+      onComplete?.();
       return;
     }
 
@@ -389,7 +453,10 @@ export function createEpubTtsQueue({ client, onStateChange }: EpubTtsQueueDeps) 
     let initialMarkerVisible = false;
     let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
     let positiveBoundarySeen = false;
+    let chunkSettled = false;
     let zeroBoundaryWordIndex = -1;
+
+    const isActiveChunk = () => activeRunId === runId && !chunkSettled;
 
     const clearFallbackTimer = () => {
       if (!fallbackTimer) return;
@@ -415,7 +482,7 @@ export function createEpubTtsQueue({ client, onStateChange }: EpubTtsQueueDeps) 
     });
 
     const revealInitialMarker = () => {
-      if (activeRunId !== runId || initialMarkerVisible) return;
+      if (!isActiveChunk() || initialMarkerVisible) return;
       initialMarkerVisible = true;
       emitState(stateForMarker("playing", initialMarker, resolveHighlightText(chunk, initialMarker, 0)));
     };
@@ -431,7 +498,7 @@ export function createEpubTtsQueue({ client, onStateChange }: EpubTtsQueueDeps) 
       await client.speakSelection(chunk.text, {
         ...request,
         onStart: () => {
-          if (activeRunId !== runId) return;
+          if (!isActiveChunk()) return;
           if (revealInitialMarkerOnStart) {
             revealInitialMarker();
             return;
@@ -441,7 +508,7 @@ export function createEpubTtsQueue({ client, onStateChange }: EpubTtsQueueDeps) 
           fallbackTimer = setTimeout(revealInitialMarker, fallbackMs);
         },
         onBoundary: (event) => {
-          if (activeRunId !== runId || !isWordBoundaryEvent(event)) return;
+          if (!isActiveChunk() || !isWordBoundaryEvent(event)) return;
           clearFallbackTimer();
           initialMarkerVisible = true;
           const boundaryCharIndex = normalizeBoundaryCharIndex(event);
@@ -458,6 +525,8 @@ export function createEpubTtsQueue({ client, onStateChange }: EpubTtsQueueDeps) 
           emitState(stateForMarker("playing", nextMarker, resolveHighlightText(chunk, nextMarker, highlightCharIndex)));
         },
         onEnd: () => {
+          if (activeRunId !== runId || chunkSettled) return;
+          chunkSettled = true;
           clearFallbackTimer();
           const pauseAfterMs = Math.max(0, chunk.pauseAfterMs ?? 0);
           if (pauseAfterMs > 0) {
@@ -470,12 +539,18 @@ export function createEpubTtsQueue({ client, onStateChange }: EpubTtsQueueDeps) 
         },
         onError: () => {
           clearFallbackTimer();
-          if (activeRunId === runId) emitState(stateForMarker("error", initialMarker));
+          if (activeRunId === runId && !chunkSettled) {
+            chunkSettled = true;
+            emitState(stateForMarker("error", initialMarker));
+          }
         },
       });
     } catch {
       clearFallbackTimer();
-      if (activeRunId === runId) emitState(stateForMarker("error", initialMarker));
+      if (activeRunId === runId && !chunkSettled) {
+        chunkSettled = true;
+        emitState(stateForMarker("error", initialMarker));
+      }
     }
   }
 
@@ -710,6 +785,135 @@ function ensureTtsBlockID(element: HTMLElement, fallbackIndex: number) {
   const id = `epub-tts-block-${fallbackIndex}-${Math.random().toString(36).slice(2, 8)}`;
   element.setAttribute(ttsBlockIDAttribute, id);
   return id;
+}
+
+function ttsBlockElementForNode(node: Node | null) {
+  if (!node) return null;
+  const element = node.nodeType === Node.ELEMENT_NODE ? node as Element : node.parentElement;
+  return element?.closest<HTMLElement>(ttsBlockSelector) ?? null;
+}
+
+function ttsBlockSliceFromSelectionStart(result: EpubTtsTextResult, range: Range) {
+  const offset = selectionStartOffsetInTtsText(result, range);
+  return ttsBlockSlice(result.text, resolveSelectionSpokenStart(result.text, offset));
+}
+
+function selectionStartOffsetInTtsText(result: EpubTtsTextResult, range: Range) {
+  for (const position of result.positions) {
+    if (!position.node || typeof position.nodeOffset !== "number") continue;
+    try {
+      if (range.comparePoint(position.node, position.nodeOffset) >= 0) {
+        return position.normalizedOffset;
+      }
+    } catch {
+      // Ignore positions outside the range document.
+    }
+  }
+  return result.text.length;
+}
+
+function resolveSelectionSpokenStart(text: string, offset: number) {
+  let start = clamp(Math.max(0, Math.min(offset, text.length)), 0, text.length);
+  while (start > 0 && isSpokenTokenCharacter(text[start - 1] ?? "")) start -= 1;
+  return start;
+}
+
+function ttsBlockSlice(text: string, startOffset: number) {
+  const rawStart = Math.max(0, Math.min(startOffset, text.length));
+  const sliced = text.slice(rawStart);
+  const leadingTrim = sliced.length - sliced.trimStart().length;
+  const trailingTrim = sliced.length - sliced.trimEnd().length;
+  const sourceStart = rawStart + leadingTrim;
+  const sourceEnd = Math.max(sourceStart, text.length - trailingTrim);
+  return {
+    sourceEnd,
+    sourceStart,
+    text: text.slice(sourceStart, sourceEnd),
+  };
+}
+
+function resolvePagedTtsBlockStart(
+  blocks: Array<{ element: HTMLElement; index: number; result: EpubTtsTextResult }>,
+  pageOrigin: number,
+  pageStart: number,
+  pageEnd: number,
+) {
+  let fallbackBlockIndex = -1;
+  for (let blockIndex = 0; blockIndex < blocks.length; blockIndex += 1) {
+    const { element, result } = blocks[blockIndex];
+    const visibleOffset = firstVisibleTtsTextOffsetInPage(element, result, pageOrigin, pageStart, pageEnd);
+    if (visibleOffset !== null) {
+      return { blockIndex, sourceStart: visibleOffset };
+    }
+    const offsetLeft = Number((element as { offsetLeft?: number }).offsetLeft);
+    if (!Number.isFinite(offsetLeft)) {
+      return { blockIndex, sourceStart: 0 };
+    }
+    if (offsetLeft >= pageStart) {
+      return { blockIndex, sourceStart: 0 };
+    }
+    fallbackBlockIndex = blockIndex;
+  }
+  return fallbackBlockIndex >= 0 ? { blockIndex: fallbackBlockIndex, sourceStart: 0 } : null;
+}
+
+function firstVisibleTtsTextOffsetInPage(
+  element: HTMLElement,
+  result: EpubTtsTextResult,
+  pageOrigin: number,
+  pageStart: number,
+  pageEnd: number,
+) {
+  if (!elementOverlapsTtsPage(element, pageOrigin, pageStart, pageEnd)) return null;
+  for (const position of result.positions) {
+    if (!position.node || typeof position.nodeOffset !== "number") continue;
+    const rects = textPositionClientRects(position.node, position.nodeOffset);
+    if (rects.some((rect) => clientRectOverlapsTtsPage(rect, pageOrigin, pageStart, pageEnd))) {
+      return resolveSelectionSpokenStart(result.text, position.normalizedOffset);
+    }
+  }
+  return 0;
+}
+
+function elementOverlapsTtsPage(element: HTMLElement, pageOrigin: number, pageStart: number, pageEnd: number) {
+  const rects = safeClientRects(element);
+  if (rects.length > 0) {
+    return rects.some((rect) => clientRectOverlapsTtsPage(rect, pageOrigin, pageStart, pageEnd));
+  }
+  const offsetLeft = Number((element as { offsetLeft?: number }).offsetLeft);
+  const width = Number(element.offsetWidth || element.scrollWidth || element.clientWidth || 0);
+  return Number.isFinite(offsetLeft) && Number.isFinite(width) && width > 0 && offsetLeft < pageEnd && offsetLeft + width > pageStart;
+}
+
+function textPositionClientRects(node: Node, nodeOffset: number) {
+  const doc = (node as { ownerDocument?: Document }).ownerDocument;
+  const range = doc?.createRange?.();
+  const data = (node as { data?: string }).data ?? "";
+  if (!range || !data) return [];
+  try {
+    const startOffset = Math.max(0, Math.min(nodeOffset, data.length));
+    range.setStart(node, startOffset);
+    range.setEnd(node, Math.min(startOffset + 1, data.length));
+    return Array.from(range.getClientRects?.() ?? []);
+  } catch {
+    return [];
+  } finally {
+    range.detach?.();
+  }
+}
+
+function safeClientRects(element: Element) {
+  try {
+    return Array.from(element.getClientRects?.() ?? []);
+  } catch {
+    return [];
+  }
+}
+
+function clientRectOverlapsTtsPage(rect: DOMRect, pageOrigin: number, pageStart: number, pageEnd: number) {
+  const left = Number(rect.left) + pageOrigin;
+  const right = Number(rect.right) + pageOrigin;
+  return Number.isFinite(left) && Number.isFinite(right) && right > pageStart && left < pageEnd;
 }
 
 function collectElementTtsText(element: Element): EpubTtsTextResult {

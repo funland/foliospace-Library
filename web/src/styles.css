@@ -1829,12 +1829,45 @@ button.danger:hover {
   transform: scale(1.02);
 }
 
-.readerFullscreenTts {
+.readerFullscreenContents {
   position: fixed;
   top: calc(10px + env(safe-area-inset-top));
   left: 10px;
   z-index: 40;
-  max-width: min(420px, calc(100vw - 118px));
+  opacity: 0.78;
+  backdrop-filter: blur(12px);
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+
+.readerFullscreenContents:hover,
+.readerFullscreenContents:focus-within {
+  opacity: 1;
+  transform: scale(1.02);
+}
+
+.readerFullscreenContents button {
+  min-height: 30px;
+  border-color: rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  background: rgba(18, 24, 27, 0.38);
+  color: #ffffff;
+  font-size: 12px;
+  line-height: 1;
+  padding: 7px 10px;
+}
+
+.readerFullscreenContents button:hover,
+.readerFullscreenContents button:focus-visible,
+.readerFullscreenContents button[aria-expanded="true"] {
+  background: rgba(18, 24, 27, 0.84);
+}
+
+.readerFullscreenTts {
+  position: fixed;
+  top: calc(10px + env(safe-area-inset-top));
+  left: 78px;
+  z-index: 40;
+  max-width: min(420px, calc(100vw - 186px));
   opacity: 0.78;
   backdrop-filter: blur(12px);
   transition: opacity 140ms ease, background 140ms ease, transform 140ms ease;
@@ -2565,16 +2598,59 @@ button.danger:hover {
   flex-direction: column;
 }
 
+.epubTocRow {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid #eef2f3;
+}
+
 .epubToc button {
   min-height: 36px;
-  width: 100%;
   border: 0;
-  border-bottom: 1px solid #eef2f3;
   border-radius: 0;
   background: transparent;
   color: #344348;
   text-align: left;
   line-height: 1.25;
+}
+
+.epubTocToggle,
+.epubTocToggleSpacer {
+  flex: 0 0 28px;
+  width: 28px;
+}
+
+.epubTocToggle {
+  display: grid;
+  flex: 0 0 28px;
+  place-items: center;
+  width: 28px;
+  padding: 0;
+  color: #647177;
+}
+
+.epubTocToggle::before {
+  content: "";
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 6px solid currentColor;
+  transition: transform 140ms ease;
+}
+
+.epubTocItem.expanded .epubTocToggle::before {
+  transform: rotate(90deg);
+}
+
+.epubTocNav {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 10px 0 4px;
 }
 
 .epubToc button:disabled {
@@ -2591,6 +2667,23 @@ button.danger:hover {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.epubTocChildCount {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #eef3f5;
+  color: #647177;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 4px 7px;
+}
+
+.epubToc button.active .epubTocChildCount,
+.epubToc button.containsActive .epubTocChildCount {
+  background: rgba(31, 111, 130, 0.12);
+  color: #1f6f82;
 }
 
 .epubToc button.active {
