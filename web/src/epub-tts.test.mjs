@@ -708,8 +708,8 @@ test("epub tts controls are placed directly after the back-to-shelf button", asy
 
   assert.match(
     appSource,
-    /<button onClick=\{returnToLibrary\}>\{t\.backToShelf\}<\/button>\s*\{selectedBook\.format === "epub" && \(\s*<EpubTtsControls/s,
-    "EPUB TTS controls should be in the toolbar immediately after the back-to-shelf button",
+    /<button onClick=\{returnToLibrary\}>\{t\.backToShelf\}<\/button>\s*\{epubTtsFeatureEnabled && selectedBook\.format === "epub" && \(\s*<EpubTtsControls/s,
+    "enabled EPUB TTS controls should be in the toolbar immediately after the back-to-shelf button",
   );
   assert.match(
     appSource,
@@ -734,8 +734,8 @@ test("epub tts controls remain reachable in fullscreen without restoring the ful
 
   assert.match(
     appSource,
-    /\{readerFullscreen && selectedBook\.format === "epub" && \(\s*<div className="readerFullscreenTts"/s,
-    "EPUB fullscreen should expose a dedicated TTS control island while the main header is hidden",
+    /\{readerFullscreen && epubTtsFeatureEnabled && selectedBook\.format === "epub" && \(\s*<div className="readerFullscreenTts"/s,
+    "EPUB fullscreen should expose a dedicated TTS control island when TTS is enabled",
   );
   assert.match(
     styleSource,
@@ -797,6 +797,36 @@ test("epub contents remain reachable in fullscreen as a compact top-left control
     styleSource,
     /\.readerFullscreenContents button\s*\{[^}]*border-radius:\s*999px;[^}]*background:\s*rgba\(18, 24, 27, 0\.38\);/s,
     "fullscreen contents button should visually match the TTS fullscreen capsule",
+  );
+});
+
+test("epub tts controls are gated by the server capability and hidden by default", async () => {
+  const appSource = await readFile(path.join(srcDir, "App.tsx"), "utf8");
+
+  assert.match(
+    appSource,
+    /const epubTtsFeatureEnabled = Boolean\(clientInfo\?\.capabilities\?\.epubTts\);/,
+    "the Web reader should derive EPUB TTS visibility from the server capability",
+  );
+  assert.match(
+    appSource,
+    /\{epubTtsFeatureEnabled && selectedBook\.format === "epub" && \(\s*<EpubTtsControls/s,
+    "the normal reader toolbar should only render TTS controls when EPUB TTS is enabled by config",
+  );
+  assert.match(
+    appSource,
+    /\{readerFullscreen && epubTtsFeatureEnabled && selectedBook\.format === "epub" && \(\s*<div className="readerFullscreenTts"/s,
+    "fullscreen TTS controls should also be hidden unless EPUB TTS is enabled by config",
+  );
+  assert.match(
+    appSource,
+    /\{epubTtsFeatureEnabled && epubTtsSettingsOpen && \(\s*<EpubTtsSettingsPanel/s,
+    "the TTS settings panel should not render when EPUB TTS is disabled",
+  );
+  assert.match(
+    appSource,
+    /useEffect\(\(\) => \{[\s\S]*if \(epubTtsFeatureEnabled\) return;[\s\S]*stopEpubTts\(\);[\s\S]*setEpubTtsSettingsOpen\(false\);[\s\S]*\}, \[epubTtsFeatureEnabled\]\);/,
+    "turning off the server capability should stop active TTS and close its settings panel",
   );
 });
 
@@ -876,8 +906,8 @@ test("epub tts settings are hidden by default and expand as a separate reader pa
   );
   assert.match(
     appSource,
-    /\{epubTtsSettingsOpen && \(\s*<EpubTtsSettingsPanel/s,
-    "the TTS settings panel should render separately from the compact toolbar controls",
+    /\{epubTtsFeatureEnabled && epubTtsSettingsOpen && \(\s*<EpubTtsSettingsPanel/s,
+    "the TTS settings panel should render separately from the compact toolbar controls when TTS is enabled",
   );
   assert.match(
     styleSource,

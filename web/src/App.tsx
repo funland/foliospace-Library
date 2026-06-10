@@ -184,6 +184,7 @@ export function App() {
     [activeProfileId, profiles],
   );
   const activeProfileLabel = activeProfile ? profileDisplayName(activeProfile, t) : t.defaultProfile;
+  const epubTtsFeatureEnabled = Boolean(clientInfo?.capabilities?.epubTts);
   const imageCache = useRef<Set<string>>(new Set());
   const readerRef = useRef<HTMLElement | null>(null);
   const webtoonRef = useRef<HTMLDivElement | null>(null);
@@ -348,6 +349,12 @@ export function App() {
     if (doc) clearEpubTtsSegment(doc);
     setEpubTtsState(idleEpubTtsState());
   }
+
+  useEffect(() => {
+    if (epubTtsFeatureEnabled) return;
+    stopEpubTts();
+    setEpubTtsSettingsOpen(false);
+  }, [epubTtsFeatureEnabled]);
 
   function advanceEpubTtsToNextSpine() {
     if (epubTtsAdvanceInFlightRef.current) return;
@@ -2817,7 +2824,7 @@ export function App() {
                   </div>
                   <div className="readerToolbar" aria-label="Reader options">
                     <button onClick={returnToLibrary}>{t.backToShelf}</button>
-                    {selectedBook.format === "epub" && (
+                    {epubTtsFeatureEnabled && selectedBook.format === "epub" && (
                       <EpubTtsControls
                         currentText={epubTtsState.markerText || epubTtsState.currentText}
                         labels={t}
@@ -2906,7 +2913,7 @@ export function App() {
                     <button aria-expanded={epubTocOpen} onClick={() => setEpubTocOpen((value) => !value)}>{t.contents}</button>
                   </div>
                 )}
-                {readerFullscreen && selectedBook.format === "epub" && (
+                {readerFullscreen && epubTtsFeatureEnabled && selectedBook.format === "epub" && (
                   <div className="readerFullscreenTts">
                     <EpubTtsControls
                       currentText={epubTtsState.markerText || epubTtsState.currentText}
@@ -3018,7 +3025,7 @@ export function App() {
                           />
                         </div>
                       )}
-                      {epubTtsSettingsOpen && (
+                      {epubTtsFeatureEnabled && epubTtsSettingsOpen && (
                         <EpubTtsSettingsPanel
                           labels={t}
                           onChange={updateEpubTtsSettings}
@@ -3038,7 +3045,7 @@ export function App() {
                         pagePosition={epubPagePosition}
                         positionAnchor={epubPosition}
                         navigationTarget={epubNavigationTarget}
-                        ttsSegment={epubTtsActiveSegment}
+                        ttsSegment={epubTtsFeatureEnabled ? epubTtsActiveSegment : null}
                         onFastPageTurnReady={registerEpubFastPageTurn}
                         onTtsDocumentReady={handleEpubTtsDocumentReady}
                         onTtsSelectionChange={handleEpubTtsSelectionChange}

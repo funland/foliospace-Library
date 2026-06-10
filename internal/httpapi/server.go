@@ -23,7 +23,8 @@ type Server struct {
 }
 
 type Options struct {
-	APIToken string
+	APIToken      string
+	WebTTSEnabled bool
 }
 
 const authCookieName = "foliospace_api_token"
@@ -305,6 +306,7 @@ func (s *Server) handleClientInfo(w http.ResponseWriter, r *http.Request) {
 			Search:              true,
 			Preferences:         true,
 			Profiles:            true,
+			EPUBTTS:             s.options.WebTTSEnabled,
 			BearerTokenAuth:     s.authEnabled(),
 			SetupWizard:         true,
 			ScannerJobEvents:    true,
@@ -1581,6 +1583,7 @@ type clientCapabilities struct {
 	Search              bool `json:"search"`
 	Preferences         bool `json:"preferences"`
 	Profiles            bool `json:"profiles"`
+	EPUBTTS             bool `json:"epubTts"`
 	BearerTokenAuth     bool `json:"bearerTokenAuth"`
 	SetupWizard         bool `json:"setupWizard"`
 	ScannerJobEvents    bool `json:"scannerJobEvents"`

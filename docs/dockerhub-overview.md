@@ -48,9 +48,12 @@ FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games
 FOLIOSPACE_ADDR=:8080
 FOLIOSPACE_API_TOKEN=
 FOLIOSPACE_SCAN_WORKERS=2
+FOLIOSPACE_WEB_TTS_ENABLED=false
 ```
 
 If `FOLIOSPACE_API_TOKEN` is empty, the web setup page can create the first access token and stores only a SHA-256 token hash in SQLite.
+
+EPUB text-to-speech in the bundled web UI is experimental and disabled by default. Set `FOLIOSPACE_WEB_TTS_ENABLED=true` to expose the TTS controls.
 
 ## Supported Areas
 
