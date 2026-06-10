@@ -261,6 +261,7 @@ export type EpubManifest = {
   coverHref: string;
   spine: EpubSpineItem[];
   toc: EpubTocItem[];
+  tocTree?: EpubTocItem[];
 };
 
 export type EpubSpineItem = {
@@ -274,6 +275,7 @@ export type EpubTocItem = {
   label: string;
   href: string;
   index: number;
+  children?: EpubTocItem[];
 };
 
 export type ReadProgress = {

@@ -63,9 +63,12 @@ FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games
 FOLIOSPACE_ADDR=:8080
 FOLIOSPACE_API_TOKEN=
 FOLIOSPACE_SCAN_WORKERS=2
+FOLIOSPACE_WEB_TTS_ENABLED=false
 ```
 
 Set `FOLIOSPACE_API_TOKEN` to require API authentication from environment variables. If it is empty, release `0.932` can create the first access token from the web setup page and stores only a SHA-256 token hash in SQLite. Native clients can send `Authorization: Bearer <token>`. The web UI stays publicly loadable, then prompts for the access token and receives an HttpOnly cookie so covers, pages, and EPUB iframe resources can load through normal browser requests.
+
+`FOLIOSPACE_WEB_TTS_ENABLED` controls the experimental EPUB text-to-speech controls in the bundled web UI. It defaults to `false`, so deployments hide TTS unless the instance owner explicitly enables it with `FOLIOSPACE_WEB_TTS_ENABLED=true`.
 
 Authentication helpers:
 

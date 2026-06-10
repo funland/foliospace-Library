@@ -23,7 +23,8 @@ type Server struct {
 }
 
 type Options struct {
-	APIToken string
+	APIToken      string
+	WebTTSEnabled bool
 }
 
 const authCookieName = "foliospace_api_token"
@@ -305,6 +306,7 @@ func (s *Server) handleClientInfo(w http.ResponseWriter, r *http.Request) {
 			Search:              true,
 			Preferences:         true,
 			Profiles:            true,
+			EPUBTTS:             s.options.WebTTSEnabled,
 			BearerTokenAuth:     s.authEnabled(),
 			SetupWizard:         true,
 			ScannerJobEvents:    true,
@@ -777,6 +779,7 @@ func (s *Server) clientBookManifest(bookID int64, profileID int64) (clientBookMa
 			CoverHref:       manifest.CoverHref,
 			Spine:           manifest.Spine,
 			TOC:             manifest.TOC,
+			TOCTree:         manifest.TOCTree,
 			ResourceBaseURL: fmt.Sprintf("/api/books/%d/epub/resources/", book.ID),
 			CoverURL:        clientCoverURL(book.ID),
 		}
@@ -1580,6 +1583,7 @@ type clientCapabilities struct {
 	Search              bool `json:"search"`
 	Preferences         bool `json:"preferences"`
 	Profiles            bool `json:"profiles"`
+	EPUBTTS             bool `json:"epubTts"`
 	BearerTokenAuth     bool `json:"bearerTokenAuth"`
 	SetupWizard         bool `json:"setupWizard"`
 	ScannerJobEvents    bool `json:"scannerJobEvents"`
@@ -1767,6 +1771,7 @@ type clientEPUBOpenInfo struct {
 	CoverHref       string                 `json:"coverHref"`
 	Spine           []domain.EPUBSpineItem `json:"spine"`
 	TOC             []domain.EPUBTOCItem   `json:"toc"`
+	TOCTree         []domain.EPUBTOCItem   `json:"tocTree,omitempty"`
 	ResourceBaseURL string                 `json:"resourceBaseUrl"`
 	CoverURL        string                 `json:"coverUrl"`
 }
