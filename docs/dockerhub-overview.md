@@ -4,20 +4,20 @@ FolioSpace Library is a self-hosted personal digital asset library for NAS, Dock
 
 It is not a cloud media service and does not distribute books, comics, ROMs, movies, or other media content. It indexes user-owned local files and exposes stable service URLs to web and native clients without leaking real NAS paths.
 
-## 0.932 Hotfix
+## 0.95 Release
 
-Release `0.932` is a large-library scan performance hotfix:
+Release `0.95` collects the post-`0.932` reader and library-state fixes:
 
-- Full-library scans preload existing file index rows once per job instead of querying SQLite for every unchanged book.
-- Unchanged CBZ/ZIP/PDF/7z entries can fast-skip from file metadata without reopening archives or forcing page analysis.
-- Existing nested comic collections are not reclassified during normal unchanged scans, avoiding expensive churn on very large libraries.
-- Root-level legacy collection migration is still preserved for older imports.
-- This release keeps the on-demand analysis model: unchanged comics do not need page metadata populated before they can be skipped.
+- Narrow-screen cover cards now keep stable portrait frames, preventing tall or intrinsic cover images from stretching shelves and search results.
+- Collection favorite and liked state is preserved during book reclassification, so private collection state follows the active collection instead of being left on old series IDs.
+- The favorites page count now matches the visible favorite sections and no longer counts hidden empty collections.
+- Image webtoon mode no longer leaves large black gaps in compact or fullscreen layouts after viewport width changes.
+- Loaded webtoon images now size from the real image dimensions while unloaded placeholders keep scroll height stable.
 
 ## Quick Start
 
 ```bash
-docker pull funland/foliospace-library:0.932
+docker pull funland/foliospace-library:0.95
 ```
 
 ```bash
@@ -27,7 +27,7 @@ docker run -p 8080:8080 \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  funland/foliospace-library:0.932
+  funland/foliospace-library:0.95
 ```
 
 Open `http://localhost:8080`. On a fresh `/config`, FolioSpace Library starts with a setup page for the first access key and first library path.

@@ -27,7 +27,7 @@ type Options struct {
 }
 
 const authCookieName = "foliospace_api_token"
-const serviceVersion = "0.932"
+const serviceVersion = "0.95"
 
 func New(service *service.Service, static http.Handler) *Server {
 	return NewWithOptions(service, static, Options{})

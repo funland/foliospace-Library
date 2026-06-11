@@ -10,7 +10,7 @@ It is not trying to become a complete Plex, Jellyfin, or Immich replacement. The
 
 The current implementation still starts from the FolioSpace Reader codebase and keeps the existing reading MVP operational while the model evolves toward `Asset` / `LibraryItem`.
 
-Current release branch: `0.932`.
+Current release branch: `0.95`.
 
 ## Screenshots
 
@@ -65,7 +65,7 @@ FOLIOSPACE_API_TOKEN=
 FOLIOSPACE_SCAN_WORKERS=2
 ```
 
-Set `FOLIOSPACE_API_TOKEN` to require API authentication from environment variables. If it is empty, release `0.932` can create the first access token from the web setup page and stores only a SHA-256 token hash in SQLite. Native clients can send `Authorization: Bearer <token>`. The web UI stays publicly loadable, then prompts for the access token and receives an HttpOnly cookie so covers, pages, and EPUB iframe resources can load through normal browser requests.
+Set `FOLIOSPACE_API_TOKEN` to require API authentication from environment variables. If it is empty, release `0.95` can create the first access token from the web setup page and stores only a SHA-256 token hash in SQLite. Native clients can send `Authorization: Bearer <token>`. The web UI stays publicly loadable, then prompts for the access token and receives an HttpOnly cookie so covers, pages, and EPUB iframe resources can load through normal browser requests.
 
 Authentication helpers:
 
@@ -138,6 +138,16 @@ Release `0.932` is a large-library scan performance hotfix:
 - Root-level legacy collection migration is still preserved for older `Unsorted`-style imports.
 - The change keeps the on-demand analysis model: unchanged comics do not need page metadata populated before they can be skipped.
 
+## Release 0.95
+
+Release `0.95` collects the post-`0.932` reader and library-state fixes:
+
+- Narrow-screen cover cards now keep stable portrait frames, preventing tall or intrinsic cover images from stretching shelves and search results.
+- Collection favorite and liked state is preserved during book reclassification, so private collection state follows the active collection instead of being left on old series IDs.
+- The favorites page count now matches the visible favorite sections and no longer counts hidden empty collections.
+- Image webtoon mode no longer leaves large black gaps in compact or fullscreen layouts after viewport width changes.
+- Loaded webtoon images now size from the real image dimensions while unloaded placeholders keep scroll height stable.
+
 ## MCP
 
 Agent integration docs are in [`docs/mcp/usage.md`](docs/mcp/usage.md). The MCP server wraps the stable Client API for diagnostics, library lookup, manifests, favorites/private-status shelves, preferences, private reader state, progress, scan jobs, scan worker settings, job control, and collection access. Heavy media streams still use the HTTP URLs returned by the API.
@@ -151,7 +161,7 @@ curl -fsSL https://foliospace.app/install-mcp.sh | sh
 Release maintainers can build macOS/Linux MCP packages with:
 
 ```bash
-VERSION=0.932 ./scripts/build-mcp-release.sh
+VERSION=0.95 ./scripts/build-mcp-release.sh
 ```
 
 ## Product Direction
@@ -171,10 +181,10 @@ ROM support is for indexing and launching user-owned local content. FolioSpace L
 
 ## Docker
 
-Release `0.932` image tag:
+Release `0.95` image tag:
 
 ```bash
-docker pull funland/foliospace-library:0.932
+docker pull funland/foliospace-library:0.95
 ```
 
 For local verification:
@@ -193,7 +203,7 @@ docker run -p 8080:8080 \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  funland/foliospace-library:0.932
+  funland/foliospace-library:0.95
 ```
 
 Open `http://localhost:8080`. On a fresh `/config`, the setup page asks for an access key and lets you choose a container path such as `/library`, `/books`, or `/games`. If a directory is missing from the setup page, add a Docker volume mapping first; FolioSpace Library can only browse paths visible inside the container.
@@ -208,11 +218,11 @@ Docker Hub releases are built by GitHub Actions from Git tags. Configure these r
 Then create and push a version tag:
 
 ```bash
-git tag v0.932
-git push github v0.932
+git tag v0.95
+git push github v0.95
 ```
 
-The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:0.932` and `funland/foliospace-library:latest`.
+The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:0.95` and `funland/foliospace-library:latest`.
 
 ## Current MVP Support
 
