@@ -988,7 +988,10 @@ button:hover {
 .searchCover {
   position: relative;
   display: block;
+  width: 100%;
+  min-width: 0;
   overflow: hidden;
+  aspect-ratio: 3 / 4.15;
   border: 1px solid #cfd9dd;
   border-radius: 6px;
   background: #dfe7ea;
@@ -998,7 +1001,7 @@ button:hover {
 .searchCover .pdfCoverPreview {
   display: block;
   width: 100%;
-  aspect-ratio: 3 / 4.15;
+  height: 100%;
   object-fit: cover;
 }
 
@@ -1050,6 +1053,7 @@ button:hover {
 
 .shelfBook {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   align-content: start;
   gap: 8px;
   min-width: 0;
@@ -1111,7 +1115,10 @@ button:hover {
 .shelfCover {
   position: relative;
   display: block;
+  width: 100%;
+  min-width: 0;
   overflow: hidden;
+  aspect-ratio: 3 / 4.15;
   border: 1px solid #cfd9dd;
   border-radius: 8px;
   background: #dfe7ea;
@@ -1126,7 +1133,7 @@ button:hover {
 .shelfCover .pdfCoverPreview {
   display: block;
   width: 100%;
-  aspect-ratio: 3 / 4.15;
+  height: 100%;
   object-fit: cover;
 }
 
@@ -1648,6 +1655,7 @@ button.danger:hover {
 .book {
   position: relative;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   align-content: start;
   gap: 9px;
   min-width: 0;
@@ -1692,7 +1700,10 @@ button.danger:hover {
 .coverFrame {
   position: relative;
   display: block;
+  width: 100%;
+  min-width: 0;
   overflow: hidden;
+  aspect-ratio: 3 / 4.15;
   border: 1px solid #cfd9dd;
   border-radius: 8px;
   background: #dfe7ea;
@@ -1715,7 +1726,7 @@ button.danger:hover {
 .coverFrame .pdfCoverPreview {
   display: block;
   width: 100%;
-  aspect-ratio: 3 / 4.15;
+  height: 100%;
   object-fit: cover;
 }
 

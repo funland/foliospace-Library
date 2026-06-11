@@ -26,6 +26,47 @@ test("continue reading uses source covers for enlarged shelves", async () => {
   assert.ok(appSource.includes('className={`sourceCoverImage${sourceCoverLoaded ? " loaded" : ""}`}'), "large covers should render a real cover image overlay instead of relying on a hidden preload");
 });
 
+test("book cover frames keep a stable portrait ratio on narrow shelves", async () => {
+  const styleSource = await readFile(path.join(srcDir, "styles.css"), "utf8");
+
+  for (const selector of [".searchCover", ".shelfCover", ".coverFrame"]) {
+    const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    assert.match(
+      styleSource,
+      new RegExp(`${escapedSelector}\\s*\\{[^}]*aspect-ratio:\\s*3\\s*/\\s*4\\.15;`, "s"),
+      `${selector} should own the book-cover aspect ratio so tall source images cannot stretch the card`,
+    );
+    assert.match(
+      styleSource,
+      new RegExp(`${escapedSelector}\\s*\\{[^}]*width:\\s*100%;`, "s"),
+      `${selector} should fill its shelf column instead of using image intrinsic width`,
+    );
+    assert.match(
+      styleSource,
+      new RegExp(`${escapedSelector}\\s*\\{[^}]*min-width:\\s*0;`, "s"),
+      `${selector} should be allowed to shrink inside grid columns on narrow screens`,
+    );
+  }
+
+  for (const selector of [".searchCover", ".shelfCover", ".coverFrame"]) {
+    const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    assert.match(
+      styleSource,
+      new RegExp(`${escapedSelector} img,\\s*\\n${escapedSelector} \\.pdfCoverPreview\\s*\\{[^}]*height:\\s*100%;`, "s"),
+      `${selector} images should fill the fixed cover frame instead of sizing the frame from their natural ratio`,
+    );
+  }
+
+  for (const selector of [".shelfBook", ".book"]) {
+    const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    assert.match(
+      styleSource,
+      new RegExp(`${escapedSelector}\\s*\\{[^}]*grid-template-columns:\\s*minmax\\(0,\\s*1fr\\);`, "s"),
+      `${selector} should prevent an intrinsic cover width from expanding its internal grid column`,
+    );
+  }
+});
+
 test("collection covers use server-provided thumbnail fields before lazy fallback", async () => {
   const apiSource = await readFile(path.join(srcDir, "api.ts"), "utf8");
   const appSource = await readFile(path.join(srcDir, "App.tsx"), "utf8");
