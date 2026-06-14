@@ -354,7 +354,7 @@ func (s *Server) handleClientHome(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	collections, err := s.service.ListSeriesForProfile(profileID)
+	collections, err := s.service.ListSeriesForProfileLimit(profileID, queryLimit(r, 12))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return

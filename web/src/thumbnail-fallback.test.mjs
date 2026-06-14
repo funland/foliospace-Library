@@ -83,6 +83,19 @@ test("collection covers use server-provided thumbnail fields before lazy fallbac
   assert.ok(styleSource.includes(".collectionThumb.withCover"), "known collection thumbnails should use a non-bookshelf loading placeholder");
 });
 
+test("thumbnail polling accepts source image fallbacks beyond jpeg", async () => {
+  const appSource = await readFile(path.join(srcDir, "App.tsx"), "utf8");
+
+  assert.ok(
+    appSource.includes('contentType.toLowerCase().startsWith("image/")'),
+    "thumbnail polling should accept PNG/WebP source cover fallbacks instead of only JPEG thumbnails",
+  );
+  assert.ok(
+    !appSource.includes('contentType.toLowerCase().startsWith("image/jpeg")'),
+    "PNG source fallback covers should not be treated as failed thumbnails",
+  );
+});
+
 test("docker runtime includes PDF thumbnail renderer dependency", async () => {
   const dockerfile = await readFile(path.resolve(webDir, "..", "Dockerfile"), "utf8");
 

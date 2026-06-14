@@ -493,6 +493,18 @@ func (s *Service) ListSeriesForProfile(profileID int64) ([]domain.Series, error)
 	return append(series, gameCollections...), nil
 }
 
+func (s *Service) ListSeriesForProfileLimit(profileID int64, limit int) ([]domain.Series, error) {
+	series, err := s.store.ListSeriesForProfileLimit(profileID, limit)
+	if err != nil {
+		return nil, err
+	}
+	gameCollections, err := s.store.ListGamePlatformCollections()
+	if err != nil {
+		return nil, err
+	}
+	return append(series, gameCollections...), nil
+}
+
 func (s *Service) UpdateCollectionPrivateStateForProfile(seriesID int64, profileID int64, state domain.CollectionPrivateState) (domain.Series, error) {
 	profileID, err := s.store.ResolveProfileID(profileID)
 	if err != nil {

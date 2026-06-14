@@ -3174,7 +3174,7 @@ function ThumbnailImage({
         const pollUrl = authenticatedResourcePath(withThumbnailRefreshParam(src, attempts + 1));
         const response = await fetch(pollUrl, { method: "HEAD" });
         const contentType = response.headers.get("Content-Type") || "";
-        if (!cancelled && response.ok && contentType.toLowerCase().startsWith("image/jpeg")) {
+        if (!cancelled && response.ok && contentType.toLowerCase().startsWith("image/")) {
           const fallbackKind = response.headers.get("X-FolioSpace-Thumbnail-Fallback") || "";
           consecutiveErrors = 0;
           setFallbackVisible(false);

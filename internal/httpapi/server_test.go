@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -609,6 +610,38 @@ func TestCollectionsIncludeRepresentativeThumbnail(t *testing.T) {
 		home.Collections[0]["thumbnailUrl"] != "/api/books/"+itoa(book.ID)+"/thumbnail?size=small&v=v1-cover-refresh-3" ||
 		home.Collections[0]["thumbnailStatus"] != "pending" {
 		t.Fatalf("client home collections = %#v, want representative thumbnail fields", home.Collections)
+	}
+}
+
+func TestClientHomeLimitsCollections(t *testing.T) {
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibrary("Comics", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 20; i++ {
+		if _, err := st.UpsertSeries(lib.ID, fmt.Sprintf("Series %02d", i), fmt.Sprintf("Series %02d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ts := httptest.NewServer(New(service.NewWithConfig(st, t.TempDir()), nil).Routes())
+	defer ts.Close()
+
+	homeBody := get(t, ts.URL+"/api/client/home")
+	var home struct {
+		Collections []map[string]any `json:"collections"`
+	}
+	if err := json.Unmarshal([]byte(homeBody), &home); err != nil {
+		t.Fatal(err)
+	}
+	if len(home.Collections) != 12 {
+		t.Fatalf("client home collections = %d, want default shelf limit 12", len(home.Collections))
 	}
 }
 

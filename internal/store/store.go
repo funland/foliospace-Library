@@ -301,7 +301,15 @@ func (s *Store) ListSeries() ([]domain.Series, error) {
 }
 
 func (s *Store) ListSeriesForProfile(profileID int64) ([]domain.Series, error) {
-	rows, err := s.db.Query(`SELECT s.id, s.library_id, s.title,
+	return s.listSeriesForProfile(profileID, 0)
+}
+
+func (s *Store) ListSeriesForProfileLimit(profileID int64, limit int) ([]domain.Series, error) {
+	return s.listSeriesForProfile(profileID, limit)
+}
+
+func (s *Store) listSeriesForProfile(profileID int64, limit int) ([]domain.Series, error) {
+	query := `SELECT s.id, s.library_id, s.title,
 			COALESCE(NULLIF(s.directory_path, ''), MIN(CASE
 				WHEN f.rel_path IS NULL THEN ''
 				WHEN INSTR(f.rel_path, '/') = 0 THEN '.'
@@ -326,7 +334,13 @@ func (s *Store) ListSeriesForProfile(profileID int64) ([]domain.Series, error) {
 		LEFT JOIN books b ON b.series_id = s.id
 		LEFT JOIN files f ON f.book_id = b.id
 		GROUP BY s.id, s.library_id, s.title, l.asset_type
-		ORDER BY s.title`)
+		ORDER BY s.title`
+	args := []any{}
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit)
+	}
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
