@@ -4,6 +4,15 @@ FolioSpace Library is a self-hosted personal digital asset library for NAS, Dock
 
 It is not a cloud media service and does not distribute books, comics, ROMs, movies, or other media content. It indexes user-owned local files and exposes stable service URLs to web and native clients without leaking real NAS paths.
 
+## 0.961 Hotfix: Cleaner Shelves and Covers
+
+Release `0.961` is a library cleanup and cover-refresh hotfix on top of `0.96`.
+
+- ZIP/CBZ page listing now ignores macOS resource fork entries such as `__MACOSX/` and `._*`, preventing doubled page counts and broken placeholder pages in affected archives.
+- Continue Reading, Favorites, Want to Read, and recent shelves now hide stale entries when the indexed file has been deleted or changed on disk.
+- Book thumbnail cache keys were refreshed so corrected books no longer keep old generic placeholder covers after re-analysis.
+- The service, Client API, and MCP metadata now report version `0.961`.
+
 ## 0.96 Release: Fast Recent Scans
 
 Release `0.96` focuses on faster day-to-day imports for very large libraries. When you add several new comics or books to a directory with thousands of existing files, you no longer need to kick off a heavy full-library scan.
@@ -29,7 +38,7 @@ Example API request after adding new files under a large manga folder:
 ## Quick Start
 
 ```bash
-docker pull funland/foliospace-library:0.96
+docker pull funland/foliospace-library:0.961
 ```
 
 ```bash
@@ -39,7 +48,7 @@ docker run -p 8080:8080 \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  funland/foliospace-library:0.96
+  funland/foliospace-library:0.961
 ```
 
 Open `http://localhost:8080`. On a fresh `/config`, FolioSpace Library starts with a setup page for the first access key and first library path.
