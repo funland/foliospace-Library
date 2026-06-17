@@ -51,7 +51,7 @@ type Resource struct {
 	MimeType    string `json:"mimeType,omitempty"`
 }
 
-const serviceVersion = "0.961"
+const serviceVersion = "0.965"
 
 func New(baseURL string, token string) *Server {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")

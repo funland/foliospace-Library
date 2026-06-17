@@ -10,7 +10,7 @@ It is not trying to become a complete Plex, Jellyfin, or Immich replacement. The
 
 The current implementation still starts from the FolioSpace Reader codebase and keeps the existing reading MVP operational while the model evolves toward `Asset` / `LibraryItem`.
 
-Current release branch: `0.961`.
+Current release branch: `0.965`.
 
 ## Screenshots
 
@@ -65,7 +65,7 @@ FOLIOSPACE_API_TOKEN=
 FOLIOSPACE_SCAN_WORKERS=2
 ```
 
-Set `FOLIOSPACE_API_TOKEN` to require API authentication from environment variables. If it is empty, release `0.961` can create the first access token from the web setup page and stores only a SHA-256 token hash in SQLite. Native clients can send `Authorization: Bearer <token>`. The web UI stays publicly loadable, then prompts for the access token and receives an HttpOnly cookie so covers, pages, and EPUB iframe resources can load through normal browser requests.
+Set `FOLIOSPACE_API_TOKEN` to require API authentication from environment variables. If it is empty, release `0.965` can create the first access token from the web setup page and stores only a SHA-256 token hash in SQLite. Native clients can send `Authorization: Bearer <token>`. The web UI stays publicly loadable, then prompts for the access token and receives an HttpOnly cookie so covers, pages, and EPUB iframe resources can load through normal browser requests.
 
 Authentication helpers:
 
@@ -170,6 +170,16 @@ Release `0.961` is a cleanup and cover-refresh hotfix:
 - Thumbnail cache keys were refreshed so re-analyzed books do not keep old generic placeholder covers.
 - Service, Client API, and MCP metadata report version `0.961`.
 
+## Release 0.965
+
+Release `0.965` adds paginated catalog APIs for native clients:
+
+- `GET /api/client/books` returns a client-safe paginated All Books catalog with `limit`, `offset`, `q`, `sort`, `direction`, and `format`.
+- Book catalog responses include `manifestUrl` so clients can open an item directly through the stable manifest route.
+- `GET /api/collections` supports an optional paginated shape for Home / collection overview screens, including `primaryType=book` or `primaryType=comic`.
+- Legacy `GET /api/collections` without query parameters remains an array response for existing web UI compatibility.
+- `/api/client/info` advertises `bookCatalog: true` and `collectionCatalog: true`.
+
 ## MCP
 
 Agent integration docs are in [`docs/mcp/usage.md`](docs/mcp/usage.md). The MCP server wraps the stable Client API for diagnostics, library lookup, manifests, favorites/private-status shelves, preferences, private reader state, progress, scan jobs, recent-file scans, scan worker settings, job control, and collection access. Heavy media streams still use the HTTP URLs returned by the API.
@@ -183,7 +193,7 @@ curl -fsSL https://foliospace.app/install-mcp.sh | sh
 Release maintainers can build macOS/Linux MCP packages with:
 
 ```bash
-VERSION=0.961 ./scripts/build-mcp-release.sh
+VERSION=0.965 ./scripts/build-mcp-release.sh
 ```
 
 ## Product Direction
@@ -203,10 +213,10 @@ ROM support is for indexing and launching user-owned local content. FolioSpace L
 
 ## Docker
 
-Release `0.961` image tag:
+Release `0.965` image tag:
 
 ```bash
-docker pull funland/foliospace-library:0.961
+docker pull funland/foliospace-library:0.965
 ```
 
 For local verification:
@@ -225,7 +235,7 @@ docker run -p 8080:8080 \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  funland/foliospace-library:0.961
+  funland/foliospace-library:0.965
 ```
 
 Open `http://localhost:8080`. On a fresh `/config`, the setup page asks for an access key and lets you choose a container path such as `/library`, `/books`, or `/games`. If a directory is missing from the setup page, add a Docker volume mapping first; FolioSpace Library can only browse paths visible inside the container.
@@ -240,11 +250,11 @@ Docker Hub releases are built by GitHub Actions from Git tags. Configure these r
 Then create and push a version tag:
 
 ```bash
-git tag v0.961
-git push github v0.961
+git tag v0.965
+git push github v0.965
 ```
 
-The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:0.961` and `funland/foliospace-library:latest`.
+The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:0.965` and `funland/foliospace-library:latest`.
 
 ## Current MVP Support
 

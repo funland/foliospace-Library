@@ -4,6 +4,16 @@ FolioSpace Library is a self-hosted personal digital asset library for NAS, Dock
 
 It is not a cloud media service and does not distribute books, comics, ROMs, movies, or other media content. It indexes user-owned local files and exposes stable service URLs to web and native clients without leaking real NAS paths.
 
+## 0.965 Release: Client Catalog APIs
+
+Release `0.965` adds paginated catalog APIs for native iPad, iPhone, and Vision Pro clients.
+
+- `GET /api/client/books` returns a client-safe paginated All Books catalog with `limit`, `offset`, `q`, `sort`, `direction`, and `format`.
+- Book catalog responses include `manifestUrl`, cover URLs, thumbnail URLs, profile-scoped progress, favorite state, private status, tags, and ratings without exposing NAS file paths.
+- `GET /api/collections` now has an optional paginated mode with `primaryType`, `limit`, `offset`, `sort`, `direction`, and `q`.
+- Legacy `GET /api/collections` without query parameters still returns the original array shape for existing web UI compatibility.
+- `/api/client/info` advertises `bookCatalog: true` and `collectionCatalog: true` for client capability detection.
+
 ## 0.961 Hotfix: Cleaner Shelves and Covers
 
 Release `0.961` is a library cleanup and cover-refresh hotfix on top of `0.96`.
@@ -11,7 +21,7 @@ Release `0.961` is a library cleanup and cover-refresh hotfix on top of `0.96`.
 - ZIP/CBZ page listing now ignores macOS resource fork entries such as `__MACOSX/` and `._*`, preventing doubled page counts and broken placeholder pages in affected archives.
 - Continue Reading, Favorites, Want to Read, and recent shelves now hide stale entries when the indexed file has been deleted or changed on disk.
 - Book thumbnail cache keys were refreshed so corrected books no longer keep old generic placeholder covers after re-analysis.
-- The service, Client API, and MCP metadata now report version `0.961`.
+- The service, Client API, and MCP metadata report version `0.961`.
 
 ## 0.96 Release: Fast Recent Scans
 
@@ -38,7 +48,7 @@ Example API request after adding new files under a large manga folder:
 ## Quick Start
 
 ```bash
-docker pull funland/foliospace-library:0.961
+docker pull funland/foliospace-library:0.965
 ```
 
 ```bash
@@ -48,7 +58,7 @@ docker run -p 8080:8080 \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  funland/foliospace-library:0.961
+  funland/foliospace-library:0.965
 ```
 
 Open `http://localhost:8080`. On a fresh `/config`, FolioSpace Library starts with a setup page for the first access key and first library path.
