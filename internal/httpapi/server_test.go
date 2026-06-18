@@ -158,6 +158,29 @@ func TestAPIIndexesAndStreamsCBZPages(t *testing.T) {
 	}
 }
 
+func TestClientInfoReportsWebTTSCapabilityFromOptions(t *testing.T) {
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+
+	ts := httptest.NewServer(New(service.New(st), nil).Routes())
+	defer ts.Close()
+	body := get(t, ts.URL+"/api/client/info")
+	if !strings.Contains(body, `"epubTts":false`) {
+		t.Fatalf("default client info response %q does not report disabled EPUB TTS", body)
+	}
+
+	enabledTS := httptest.NewServer(NewWithOptions(service.New(st), nil, Options{WebTTSEnabled: true}).Routes())
+	defer enabledTS.Close()
+	body = get(t, enabledTS.URL+"/api/client/info")
+	if !strings.Contains(body, `"epubTts":true`) {
+		t.Fatalf("enabled client info response %q does not report enabled EPUB TTS", body)
+	}
+}
+
 func TestAPIStreamsDownsampledComicPage(t *testing.T) {
 	root := t.TempDir()
 	makeImageZip(t, filepath.Join(root, "Tall", "chapter.cbz"), "001.jpg", 800, 2400)

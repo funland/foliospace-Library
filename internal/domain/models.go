@@ -255,6 +255,7 @@ type EPUBManifest struct {
 	CoverHref   string          `json:"coverHref"`
 	Spine       []EPUBSpineItem `json:"spine"`
 	TOC         []EPUBTOCItem   `json:"toc"`
+	TOCTree     []EPUBTOCItem   `json:"tocTree,omitempty"`
 }
 
 type EPUBSpineItem struct {
@@ -265,9 +266,10 @@ type EPUBSpineItem struct {
 }
 
 type EPUBTOCItem struct {
-	Label string `json:"label"`
-	Href  string `json:"href"`
-	Index int    `json:"index"`
+	Label    string        `json:"label"`
+	Href     string        `json:"href"`
+	Index    int           `json:"index"`
+	Children []EPUBTOCItem `json:"children,omitempty"`
 }
 
 type ScanJob struct {

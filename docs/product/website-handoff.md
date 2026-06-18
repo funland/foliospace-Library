@@ -301,6 +301,7 @@ services:
       FOLIOSPACE_ADDR: :8080
       FOLIOSPACE_API_TOKEN: ""
       FOLIOSPACE_SCAN_WORKERS: "2"
+      FOLIOSPACE_WEB_TTS_ENABLED: "false"
 ```
 
 ## Environment Variables
@@ -313,6 +314,7 @@ services:
 | `FOLIOSPACE_ADDR` | `:8080` | HTTP listen address inside the container. |
 | `FOLIOSPACE_API_TOKEN` | empty | Optional environment-managed API token. If empty, first-run setup creates a DB-backed token. |
 | `FOLIOSPACE_SCAN_WORKERS` | `2` | Concurrent scan workers. Keep low on NAS devices. |
+| `FOLIOSPACE_WEB_TTS_ENABLED` | `false` | Enables experimental EPUB text-to-speech controls in the bundled web UI. |
 
 ## Auth Summary
 

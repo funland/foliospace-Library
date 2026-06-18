@@ -273,6 +273,7 @@ Response:
     "search": true,
     "preferences": true,
     "profiles": true,
+    "epubTts": false,
     "bearerTokenAuth": true,
     "setupWizard": true,
     "scannerJobEvents": true,
@@ -283,7 +284,7 @@ Response:
 }
 ```
 
-PDF clients should read the manifest through `GET /api/client/books/{bookId}/manifest`, then fetch the PDF through the opaque page URL at `GET /api/books/{bookId}/pages/0`. The server supports HTTP Range requests for that URL, so native clients can stream PDF data without exposing the NAS path. `pdfPageLayout` means clients may offer single-page and two-page spread modes on top of the same PDF stream. `pdfWebtoonLayout` and `comicWebtoonLayout` mean clients may also offer vertical continuous scrolling when a manifest includes `webtoon` in `readerModes`. `webtoonPositionSync` means the structured `reading-position/webtoon` endpoints are available. `pageImageDownsample` means archive image pages can be requested with `maxWidth` and client manifests include `displayUrl` for memory-safe mobile/tablet rendering. `compactReader` means the bundled web UI has a phone-oriented compact reader, but native clients can still implement their own layout.
+PDF clients should read the manifest through `GET /api/client/books/{bookId}/manifest`, then fetch the PDF through the opaque page URL at `GET /api/books/{bookId}/pages/0`. The server supports HTTP Range requests for that URL, so native clients can stream PDF data without exposing the NAS path. `pdfPageLayout` means clients may offer single-page and two-page spread modes on top of the same PDF stream. `pdfWebtoonLayout` and `comicWebtoonLayout` mean clients may also offer vertical continuous scrolling when a manifest includes `webtoon` in `readerModes`. `webtoonPositionSync` means the structured `reading-position/webtoon` endpoints are available. `pageImageDownsample` means archive image pages can be requested with `maxWidth` and client manifests include `displayUrl` for memory-safe mobile/tablet rendering. `compactReader` means the bundled web UI has a phone-oriented compact reader, but native clients can still implement their own layout. `epubTts` is an experimental web UI capability controlled by `FOLIOSPACE_WEB_TTS_ENABLED`; it defaults to `false`.
 
 ### `GET /api/client/preferences`
 

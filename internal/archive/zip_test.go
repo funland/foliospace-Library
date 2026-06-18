@@ -185,6 +185,81 @@ func TestReadEPUBManifestUsesEPUB2GuideCover(t *testing.T) {
 	}
 }
 
+func TestReadEPUBManifestPreservesEPUB3NestedNavigation(t *testing.T) {
+	path := makeNestedEPUB3Nav(t)
+
+	manifest, err := ReadEPUBManifest(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.TOCTree) != 1 {
+		t.Fatalf("toc tree len = %d, want 1", len(manifest.TOCTree))
+	}
+	genesis := manifest.TOCTree[0]
+	if genesis.Label != "GENESIS" || genesis.Href != "OPS/ch004.xhtml#v01000000" || genesis.Index != 0 {
+		t.Fatalf("genesis toc item = %#v", genesis)
+	}
+	if len(genesis.Children) != 2 {
+		t.Fatalf("genesis children len = %d, want 2", len(genesis.Children))
+	}
+	if genesis.Children[1].Label != "Chapter 2" || genesis.Children[1].Href != "OPS/ch004.xhtml#v01002001" || genesis.Children[1].Index != 0 {
+		t.Fatalf("chapter 2 toc item = %#v", genesis.Children[1])
+	}
+	if len(manifest.TOC) != 3 || manifest.TOC[0].Label != "GENESIS" || manifest.TOC[2].Label != "Chapter 2" {
+		t.Fatalf("flat toc = %#v, want preorder-compatible flat toc", manifest.TOC)
+	}
+}
+
+func TestReadEPUBManifestPreservesEPUB2NestedNCX(t *testing.T) {
+	path := makeNestedEPUB2NCX(t)
+
+	manifest, err := ReadEPUBManifest(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.TOCTree) != 1 {
+		t.Fatalf("toc tree len = %d, want 1", len(manifest.TOCTree))
+	}
+	novel := manifest.TOCTree[0]
+	if novel.Label != "Collected Novel" || novel.Href != "OPS/book-contents.xhtml" || novel.Index != 0 {
+		t.Fatalf("novel toc item = %#v", novel)
+	}
+	if len(novel.Children) != 2 {
+		t.Fatalf("novel children len = %d, want 2", len(novel.Children))
+	}
+	if novel.Children[0].Label != "Chapter 1. The Riverbank" || novel.Children[0].Href != "OPS/chapter-1.xhtml#chapter-1" || novel.Children[0].Index != 1 {
+		t.Fatalf("chapter 1 toc item = %#v", novel.Children[0])
+	}
+	if len(manifest.TOC) != 3 || manifest.TOC[2].Label != "Chapter 2. The Storm Cellar" {
+		t.Fatalf("flat toc = %#v, want parent and child entries", manifest.TOC)
+	}
+}
+
+func TestReadEPUBManifestExpandsEPUB2ContentsPageChapters(t *testing.T) {
+	path := makeEPUB2ContentsPageTOC(t)
+
+	manifest, err := ReadEPUBManifest(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.TOCTree) != 1 {
+		t.Fatalf("toc tree len = %d, want 1", len(manifest.TOCTree))
+	}
+	novel := manifest.TOCTree[0]
+	if novel.Label != "Collected Novel" || len(novel.Children) != 2 {
+		t.Fatalf("novel toc item = %#v, want generated chapter children", novel)
+	}
+	if novel.Children[0].Label != "CHAPTER I. The Riverbank at Dawn" || novel.Children[0].Href != "OPS/chapter-1.xhtml#c1" {
+		t.Fatalf("generated chapter 1 = %#v", novel.Children[0])
+	}
+	if novel.Children[1].Label != "CHAPTER II. The Storm Cellar" || novel.Children[1].Href != "OPS/chapter-2.xhtml#c2" {
+		t.Fatalf("generated chapter 2 = %#v", novel.Children[1])
+	}
+	if len(manifest.TOC) != 3 || manifest.TOC[1].Label != "CHAPTER I. The Riverbank at Dawn" {
+		t.Fatalf("flat toc = %#v, want generated children included", manifest.TOC)
+	}
+}
+
 func makeZip(t *testing.T, entries map[string]string) string {
 	t.Helper()
 	byteEntries := make(map[string][]byte, len(entries))
@@ -294,6 +369,146 @@ func makeEPUB2GuideCover(t *testing.T) string {
 		"OPS/cover.xhtml":             `<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="images/legacy-cover.jpg"/></body></html>`,
 		"OPS/text/chapter1.xhtml":     `<html xmlns="http://www.w3.org/1999/xhtml"><body><h1>Chapter</h1></body></html>`,
 		"OPS/images/legacy-cover.jpg": "legacy cover",
+	})
+}
+
+func makeNestedEPUB3Nav(t *testing.T) string {
+	t.Helper()
+	return makeZipAt(t, filepath.Join(t.TempDir(), "nested-nav.epub"), map[string]string{
+		"META-INF/container.xml": `<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OPS/package.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>`,
+		"OPS/package.opf": `<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Nested EPUB 3</dc:title>
+  </metadata>
+  <manifest>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+    <item id="genesis" href="ch004.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine>
+    <itemref idref="genesis"/>
+  </spine>
+</package>`,
+		"OPS/nav.xhtml": `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+  <body>
+    <nav epub:type="toc">
+      <ol>
+        <li>
+          <a href="ch004.xhtml#v01000000">GENESIS</a>
+          <ol>
+            <li><a href="ch004.xhtml#v01001001">Chapter 1</a></li>
+            <li><a href="ch004.xhtml#v01002001">Chapter 2</a></li>
+          </ol>
+        </li>
+      </ol>
+    </nav>
+  </body>
+</html>`,
+		"OPS/ch004.xhtml": `<html xmlns="http://www.w3.org/1999/xhtml"><body><h1 id="v01000000">GENESIS</h1><h2 id="v01001001">Chapter 1</h2><h2 id="v01002001">Chapter 2</h2></body></html>`,
+	})
+}
+
+func makeNestedEPUB2NCX(t *testing.T) string {
+	t.Helper()
+	return makeZipAt(t, filepath.Join(t.TempDir(), "nested-ncx.epub"), map[string]string{
+		"META-INF/container.xml": `<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OPS/package.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>`,
+		"OPS/package.opf": `<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Nested EPUB 2</dc:title>
+  </metadata>
+  <manifest>
+    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+    <item id="contents" href="book-contents.xhtml" media-type="application/xhtml+xml"/>
+    <item id="chapter1" href="chapter-1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="chapter2" href="chapter-2.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine toc="ncx">
+    <itemref idref="contents"/>
+    <itemref idref="chapter1"/>
+    <itemref idref="chapter2"/>
+  </spine>
+</package>`,
+		"OPS/toc.ncx": `<?xml version="1.0" encoding="UTF-8"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/">
+  <navMap>
+    <navPoint id="novel">
+      <navLabel><text>Collected Novel</text></navLabel>
+      <content src="book-contents.xhtml"/>
+      <navPoint id="chapter-1">
+        <navLabel><text>Chapter 1. The Riverbank</text></navLabel>
+        <content src="chapter-1.xhtml#chapter-1"/>
+      </navPoint>
+      <navPoint id="chapter-2">
+        <navLabel><text>Chapter 2. The Storm Cellar</text></navLabel>
+        <content src="chapter-2.xhtml#chapter-2"/>
+      </navPoint>
+    </navPoint>
+  </navMap>
+</ncx>`,
+		"OPS/book-contents.xhtml": `<html xmlns="http://www.w3.org/1999/xhtml"><body><h1>Collected Novel</h1></body></html>`,
+		"OPS/chapter-1.xhtml":     `<html xmlns="http://www.w3.org/1999/xhtml"><body><h1 id="chapter-1">Chapter 1</h1></body></html>`,
+		"OPS/chapter-2.xhtml":     `<html xmlns="http://www.w3.org/1999/xhtml"><body><h1 id="chapter-2">Chapter 2</h1></body></html>`,
+	})
+}
+
+func makeEPUB2ContentsPageTOC(t *testing.T) string {
+	t.Helper()
+	return makeZipAt(t, filepath.Join(t.TempDir(), "contents-page-toc.epub"), map[string]string{
+		"META-INF/container.xml": `<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OPS/package.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>`,
+		"OPS/package.opf": `<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Contents Page EPUB 2</dc:title>
+  </metadata>
+  <manifest>
+    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+    <item id="contents" href="book-contents.xhtml" media-type="application/xhtml+xml"/>
+    <item id="chapter1" href="chapter-1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="chapter2" href="chapter-2.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine toc="ncx">
+    <itemref idref="contents"/>
+    <itemref idref="chapter1"/>
+    <itemref idref="chapter2"/>
+  </spine>
+</package>`,
+		"OPS/toc.ncx": `<?xml version="1.0" encoding="UTF-8"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/">
+  <navMap>
+    <navPoint id="novel">
+      <navLabel><text>Collected Novel</text></navLabel>
+      <content src="book-contents.xhtml"/>
+    </navPoint>
+  </navMap>
+</ncx>`,
+		"OPS/book-contents.xhtml": `<html xmlns="http://www.w3.org/1999/xhtml"><body>
+  <p><a href="main-contents.xhtml">back to main contents</a></p>
+  <p>
+    <a href="chapter-1.xhtml#c1">CHAPTER I.</a>
+    <span>The Riverbank at Dawn</span>
+    <a href="chapter-2.xhtml#c2">CHAPTER II.</a>
+    <span>The Storm Cellar</span>
+  </p>
+</body></html>`,
+		"OPS/chapter-1.xhtml": `<html xmlns="http://www.w3.org/1999/xhtml"><body><h1 id="c1">Chapter 1</h1></body></html>`,
+		"OPS/chapter-2.xhtml": `<html xmlns="http://www.w3.org/1999/xhtml"><body><h1 id="c2">Chapter 2</h1></body></html>`,
 	})
 }
 
