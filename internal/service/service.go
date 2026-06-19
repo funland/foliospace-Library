@@ -15,6 +15,7 @@ import (
 	"image/jpeg"
 	_ "image/png"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -768,6 +769,12 @@ func (s *Service) OpenGameCover(id int64) (PageStream, error) {
 	if err != nil {
 		return PageStream{}, err
 	}
+	for _, candidate := range localGameCoverCandidates(game.FilePath) {
+		file, err := os.Open(candidate)
+		if err == nil {
+			return PageStream{Body: file, ContentType: localImageContentType(candidate)}, nil
+		}
+	}
 	urls := libretroBoxartCandidates(game)
 	if len(urls) == 0 {
 		return PageStream{}, fmt.Errorf("game cover source not available")
@@ -792,6 +799,41 @@ func (s *Service) OpenGameCover(id int64) (PageStream, error) {
 		}
 	}
 	return PageStream{}, fmt.Errorf("game cover not found")
+}
+
+func localGameCoverCandidates(gamePath string) []string {
+	if strings.TrimSpace(gamePath) == "" {
+		return nil
+	}
+	dir := filepath.Dir(gamePath)
+	base := strings.TrimSuffix(filepath.Base(gamePath), filepath.Ext(gamePath))
+	names := []string{
+		"boxFront.jpg",
+		"boxFront.jpeg",
+		"boxFront.png",
+		"boxFront.webp",
+		"BoxFront.jpg",
+		"BoxFront.jpeg",
+		"BoxFront.png",
+		"BoxFront.webp",
+	}
+	candidates := make([]string, 0, len(names))
+	seen := map[string]bool{}
+	for _, name := range names {
+		path := filepath.Join(dir, "media", base, name)
+		if !seen[path] {
+			seen[path] = true
+			candidates = append(candidates, path)
+		}
+	}
+	return candidates
+}
+
+func localImageContentType(path string) string {
+	if value := mime.TypeByExtension(strings.ToLower(filepath.Ext(path))); strings.HasPrefix(value, "image/") {
+		return value
+	}
+	return "image/jpeg"
 }
 
 func (s *Service) gameCoverCachePath(id int64) (string, error) {

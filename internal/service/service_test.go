@@ -215,6 +215,68 @@ func TestOpenVideoThumbnailUsesLocalSidecarImage(t *testing.T) {
 	}
 }
 
+func TestOpenGameCoverUsesLocalMediaBoxFront(t *testing.T) {
+	root := t.TempDir()
+	romPath := filepath.Join(root, "arcade", "mslug.zip")
+	coverPath := filepath.Join(root, "arcade", "media", "mslug", "boxFront.jpg")
+	if err := os.MkdirAll(filepath.Dir(romPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(romPath, []byte("rom"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(coverPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	coverBytes := []byte("local-box-front")
+	if err := os.WriteFile(coverPath, coverBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("Games", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	game, err := st.UpsertGame(domain.GameAsset{
+		LibraryID:     lib.ID,
+		Title:         "mslug",
+		Platform:      "arcade",
+		ROMSetName:    "MAME",
+		Region:        "World",
+		Format:        "zip",
+		FilePath:      romPath,
+		RelPath:       "arcade/mslug.zip",
+		Size:          3,
+		MTime:         time.Unix(10, 0),
+		CRC32:         "crc",
+		SHA1:          "sha",
+		EmulatorHint:  "arcade",
+		Compatibility: "unknown",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stream, err := NewWithConfig(st, t.TempDir()).OpenGameCover(game.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Body.Close()
+	data, err := io.ReadAll(stream.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stream.ContentType != "image/jpeg" || !bytes.Equal(data, coverBytes) {
+		t.Fatalf("stream contentType=%q data=%q, want local boxFront.jpg", stream.ContentType, string(data))
+	}
+}
+
 func TestBookThumbnailQueuesAndWorkerGeneratesCachedImage(t *testing.T) {
 	root := t.TempDir()
 	bookPath := filepath.Join(root, "Series A", "book1.cbz")

@@ -1937,12 +1937,7 @@ func clientGameItem(game domain.GameAsset) clientGame {
 }
 
 func gameCoverURL(gameID int64, platform string) string {
-	switch strings.ToLower(strings.TrimSpace(platform)) {
-	case "nes", "snes", "gb", "gbc", "gba", "genesis", "mega-drive", "megadrive":
-		return fmt.Sprintf("/api/games/%d/cover", gameID)
-	default:
-		return ""
-	}
+	return fmt.Sprintf("/api/games/%d/cover", gameID)
 }
 
 func clientGameManifest(game domain.GameAsset) clientGameManifestResponse {
