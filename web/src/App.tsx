@@ -3792,6 +3792,7 @@ function EpubFrame({
         padding: ${verticalPadding}px ${horizontalPadding}px !important;
         font-size: ${fontSize}px !important;
         line-height: 1.72 !important;
+        column-count: ${isDoublePage ? 2 : 1} !important;
         column-width: ${columnWidth}px !important;
         column-gap: ${gap}px !important;
         column-fill: auto !important;
@@ -3829,6 +3830,11 @@ function EpubFrame({
       }
       body, p, li {
         color: ${palette.text} !important;
+      }
+      body * {
+        column-count: auto !important;
+        column-width: auto !important;
+        column-gap: normal !important;
       }
       a {
         color: ${palette.link} !important;

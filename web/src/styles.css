@@ -1809,6 +1809,16 @@ button.danger:hover {
   grid-row: 1 / -1;
 }
 
+.reader.immersiveMode .pageStage.epub {
+  padding: clamp(2px, 0.45vw, 8px);
+}
+
+.reader.immersiveMode .epubFrame {
+  width: min(1760px, calc(100vw - clamp(8px, 1vw, 18px)));
+  height: min(100%, calc(100dvh - clamp(4px, 1vw, 16px)));
+  border-radius: 6px;
+}
+
 .reader.immersiveMode .webtoonReader {
   inset: 0;
   width: 100%;
@@ -2337,7 +2347,7 @@ button.danger:hover {
   position: relative;
   z-index: 1;
   display: block;
-  width: min(980px, 100%);
+  width: min(1320px, 100%);
   height: 100%;
   margin: 0 auto;
   border: 1px solid #cfd9dd;
