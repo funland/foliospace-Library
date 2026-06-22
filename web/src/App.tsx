@@ -14,6 +14,7 @@ import {
   type WebtoonPosition,
 } from "./webtoon-position";
 import { fullscreenImageFit, type ReaderImageFitMode } from "./reader-fit";
+import { resolveEpubOpenPosition, type EpubChapterOpenPosition } from "./epub-navigation";
 
 GlobalWorkerOptions.workerSrc = pdfWorkerURL;
 
@@ -153,6 +154,7 @@ export function App() {
   const bookListRequest = useRef(0);
   const swipeStart = useRef<{ x: number; y: number } | null>(null);
   const epubRestorePosition = useRef<number | null>(null);
+  const epubChapterOpenPosition = useRef<EpubChapterOpenPosition>("start");
   const webtoonRestoring = useRef(false);
   const webtoonUserActivated = useRef(false);
   const webtoonUserScrollUntil = useRef(0);
@@ -876,6 +878,7 @@ export function App() {
     webtoonUserActivated.current = false;
     webtoonUserScrollUntil.current = 0;
     suppressPagedProgressSave.current = false;
+    epubChapterOpenPosition.current = "start";
     setReaderImageSizes({});
     setEpubTocOpen(false);
     setReaderLoadState("idle");
@@ -1229,6 +1232,7 @@ export function App() {
     const totalPages = book.format === "pdf" ? pdfPageCount : pages.length;
     const clamped = Math.max(0, Math.min(nextIndex, Math.max(0, totalPages - 1)));
     if (book.format === "epub") {
+      epubChapterOpenPosition.current = "start";
       setEpubPagePosition(0);
       setEpubPageCount(1);
     }
@@ -1442,10 +1446,11 @@ export function App() {
     if (!selectedBook) return;
     if (selectedBook.format === "epub") {
       if (epubPagePosition > 0) {
+        epubChapterOpenPosition.current = "start";
         setEpubPagePosition((value) => Math.max(0, value - 1));
         return;
       }
-      setReaderPage(selectedBook, pageIndex - 1);
+      setEpubChapter(pageIndex - 1, "end");
       return;
     }
     if (readerPageMode === "webtoon" && selectedBook.format !== "pdf") {
@@ -1459,10 +1464,11 @@ export function App() {
     if (!selectedBook) return;
     if (selectedBook.format === "epub") {
       if (epubPagePosition < epubPageCount - 1) {
+        epubChapterOpenPosition.current = "start";
         setEpubPagePosition((value) => Math.min(epubPageCount - 1, value + 1));
         return;
       }
-      setReaderPage(selectedBook, pageIndex + 1);
+      setEpubChapter(pageIndex + 1);
       return;
     }
     if (readerPageMode === "webtoon" && selectedBook.format !== "pdf") {
@@ -1470,6 +1476,18 @@ export function App() {
       return;
     }
     setReaderPage(selectedBook, pageIndex + readerStep());
+  }
+
+  function setEpubChapter(nextIndex: number, openPosition: EpubChapterOpenPosition = "start") {
+    const chapterCount = epubManifest?.spine.length || pages.length;
+    if (chapterCount <= 0) return;
+    const clamped = Math.max(0, Math.min(nextIndex, chapterCount - 1));
+    if (clamped === pageIndex) return;
+    epubChapterOpenPosition.current = openPosition;
+    setEpubPagePosition(0);
+    setEpubPageCount(1);
+    setReaderLoadState("loading");
+    setPageIndex(clamped);
   }
 
   function scrollWebtoonByPage(direction: 1 | -1) {
@@ -1569,6 +1587,7 @@ export function App() {
     if (!epubManifest) return;
     const index = resolveEpubHrefIndex(epubManifest, href, fallbackIndex);
     epubRestorePosition.current = null;
+    epubChapterOpenPosition.current = "start";
     setEpubTocOpen(false);
     setEpubPagePosition(0);
     setEpubPageCount(1);
@@ -2346,6 +2365,7 @@ export function App() {
                           <button
                             className={epubPageMode === "single" ? "selected" : ""}
                             onClick={() => {
+                              epubChapterOpenPosition.current = "start";
                               setEpubPageMode("single");
                               setEpubPagePosition(0);
                             }}
@@ -2355,6 +2375,7 @@ export function App() {
                           <button
                             className={epubPageMode === "double" ? "selected" : ""}
                             onClick={() => {
+                              epubChapterOpenPosition.current = "start";
                               setEpubPageMode("double");
                               setEpubPagePosition(0);
                             }}
@@ -2529,6 +2550,14 @@ export function App() {
                             }
                             setEpubPageCount(Math.max(count, restoredPosition + 1));
                             setEpubPagePosition(Math.max(0, restoredPosition));
+                            setReaderLoadState("ready");
+                            return;
+                          }
+                          const openPosition = epubChapterOpenPosition.current;
+                          if (openPosition !== "start") {
+                            const resolvedPosition = resolveEpubOpenPosition(openPosition, count);
+                            setEpubPageCount(count);
+                            setEpubPagePosition(resolvedPosition);
                             setReaderLoadState("ready");
                             return;
                           }
@@ -3883,8 +3912,7 @@ function EpubFrame({
       key={`${book.id}-${spineItem.href}`}
       className="epubFrame"
       title={`${book.title} chapter ${pageIndex + 1}`}
-      sandbox="allow-same-origin"
-      src={authenticatedResourcePath(`/api/books/${book.id}/epub/resources/${encodeResourcePath(spineItem.href)}`)}
+      src={authenticatedResourcePath(`/api/books/${book.id}/epub/spine/${pageIndex}`)}
       onLoad={applyEpubLayout}
     />
   );
