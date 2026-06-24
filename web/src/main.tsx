@@ -23,16 +23,10 @@ class BootErrorBoundary extends React.Component<React.PropsWithChildren, { error
   }
 }
 
-async function render() {
-  const params = new URLSearchParams(window.location.search);
-  const root = ReactDOM.createRoot(document.getElementById("root") as HTMLElement);
-  const children = params.get("website") === "1" ? React.createElement((await import("./Website")).Website) : <App />;
-
-  root.render(
-    <React.StrictMode>
-      <BootErrorBoundary>{children}</BootErrorBoundary>
-    </React.StrictMode>,
-  );
-}
-
-void render();
+ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+  <React.StrictMode>
+    <BootErrorBoundary>
+      <App />
+    </BootErrorBoundary>
+  </React.StrictMode>,
+);
