@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
@@ -19,6 +20,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf16"
+	"unicode/utf8"
 
 	"foliospace-reader/internal/archive"
 	"foliospace-reader/internal/domain"
@@ -1458,13 +1461,17 @@ func readPDFMetadata(path string, fallback bookMetadata) (bookMetadata, error) {
 		return bookMetadata{}, err
 	}
 	metadata := fallback
-	if title := pdfInfoLiteral(data, "Title"); title != "" {
+	info := pdfInfoDictionary(data)
+	if len(info) == 0 {
+		info = data
+	}
+	if title := pdfInfoText(info, "Title"); title != "" {
 		metadata.Title = title
 	}
-	if author := pdfInfoLiteral(data, "Author"); author != "" {
+	if author := pdfInfoText(info, "Author"); author != "" {
 		metadata.Creator = author
 	}
-	if subject := pdfInfoLiteral(data, "Subject"); subject != "" {
+	if subject := pdfInfoText(info, "Subject"); subject != "" {
 		metadata.Description = subject
 	}
 	return metadata, nil
@@ -1499,46 +1506,280 @@ func readPDFMetadataWindow(path string) ([]byte, error) {
 	return out, nil
 }
 
-func pdfInfoLiteral(data []byte, key string) string {
-	pattern := regexp.MustCompile(`/` + regexp.QuoteMeta(key) + `\s*\((?:\\.|[^\\)])*\)`)
-	match := pattern.Find(data)
-	if len(match) == 0 {
-		return ""
+func pdfInfoDictionary(data []byte) []byte {
+	pattern := regexp.MustCompile(`/Info\s+(\d+)\s+(\d+)\s+R`)
+	matches := pattern.FindAllSubmatch(data, -1)
+	if len(matches) == 0 {
+		return nil
 	}
-	open := strings.IndexByte(string(match), '(')
-	if open < 0 || len(match) < open+2 {
-		return ""
+	match := matches[len(matches)-1]
+	objectPattern := regexp.MustCompile(`(^|[\x00\t\n\f\r ])` + regexp.QuoteMeta(string(match[1])) + `\s+` + regexp.QuoteMeta(string(match[2])) + `\s+obj\b`)
+	objectMatch := objectPattern.FindIndex(data)
+	if len(objectMatch) == 0 {
+		return nil
 	}
-	raw := string(match[open+1 : len(match)-1])
-	return strings.TrimSpace(unescapePDFLiteral(raw))
+	return extractPDFDictionary(data[objectMatch[1]:])
 }
 
-func unescapePDFLiteral(value string) string {
-	var b strings.Builder
-	for i := 0; i < len(value); i++ {
-		if value[i] != '\\' || i+1 >= len(value) {
-			b.WriteByte(value[i])
+func extractPDFDictionary(data []byte) []byte {
+	start := bytes.Index(data, []byte("<<"))
+	if start < 0 {
+		return nil
+	}
+	depth := 0
+	for i := start; i < len(data)-1; i++ {
+		switch data[i] {
+		case '(':
+			i = skipPDFLiteralString(data, i)
+		case '<':
+			if data[i+1] == '<' {
+				depth++
+				i++
+				continue
+			}
+			i = skipPDFHexString(data, i)
+		case '>':
+			if data[i+1] == '>' {
+				depth--
+				i++
+				if depth == 0 {
+					return data[start : i+1]
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func skipPDFLiteralString(data []byte, start int) int {
+	depth := 1
+	for i := start + 1; i < len(data); i++ {
+		switch data[i] {
+		case '\\':
+			if i+1 < len(data) {
+				i++
+			}
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return len(data) - 1
+}
+
+func skipPDFHexString(data []byte, start int) int {
+	for i := start + 1; i < len(data); i++ {
+		if data[i] == '>' {
+			return i
+		}
+	}
+	return len(data) - 1
+}
+
+func pdfInfoText(data []byte, key string) string {
+	name := []byte("/" + key)
+	for offset := 0; offset < len(data); {
+		index := bytes.Index(data[offset:], name)
+		if index < 0 {
+			return ""
+		}
+		index += offset
+		valueStart := index + len(name)
+		if valueStart < len(data) && !isPDFDelimiter(data[valueStart]) {
+			offset = valueStart
+			continue
+		}
+		valueStart = skipPDFWhitespace(data, valueStart)
+		var raw []byte
+		var ok bool
+		switch {
+		case valueStart < len(data) && data[valueStart] == '(':
+			raw, _, ok = parsePDFLiteralString(data, valueStart)
+		case valueStart+1 < len(data) && data[valueStart] == '<' && data[valueStart+1] != '<':
+			raw, _, ok = parsePDFHexString(data, valueStart)
+		}
+		if !ok {
+			offset = valueStart + 1
+			continue
+		}
+		return strings.TrimSpace(decodePDFTextString(raw))
+	}
+	return ""
+}
+
+func isPDFDelimiter(b byte) bool {
+	switch b {
+	case 0, '\t', '\n', '\f', '\r', ' ', '(', ')', '<', '>', '[', ']', '{', '}', '/', '%':
+		return true
+	default:
+		return false
+	}
+}
+
+func skipPDFWhitespace(data []byte, start int) int {
+	for start < len(data) {
+		switch data[start] {
+		case 0, '\t', '\n', '\f', '\r', ' ':
+			start++
+		default:
+			return start
+		}
+	}
+	return start
+}
+
+func parsePDFLiteralString(data []byte, start int) ([]byte, int, bool) {
+	if start >= len(data) || data[start] != '(' {
+		return nil, start, false
+	}
+	raw := make([]byte, 0)
+	depth := 1
+	for i := start + 1; i < len(data); i++ {
+		if data[i] != '\\' {
+			switch data[i] {
+			case '(':
+				depth++
+			case ')':
+				depth--
+				if depth == 0 {
+					return raw, i + 1, true
+				}
+			}
+			raw = append(raw, data[i])
 			continue
 		}
 		i++
-		switch value[i] {
+		if i >= len(data) {
+			break
+		}
+		switch data[i] {
 		case 'n':
-			b.WriteByte('\n')
+			raw = append(raw, '\n')
 		case 'r':
-			b.WriteByte('\r')
+			raw = append(raw, '\r')
 		case 't':
-			b.WriteByte('\t')
+			raw = append(raw, '\t')
 		case 'b':
-			b.WriteByte('\b')
+			raw = append(raw, '\b')
 		case 'f':
-			b.WriteByte('\f')
+			raw = append(raw, '\f')
 		case '(', ')', '\\':
-			b.WriteByte(value[i])
+			raw = append(raw, data[i])
+		case '\n':
+		case '\r':
+			if i+1 < len(data) && data[i+1] == '\n' {
+				i++
+			}
 		default:
-			b.WriteByte(value[i])
+			if data[i] >= '0' && data[i] <= '7' {
+				value := int(data[i] - '0')
+				for count := 0; count < 2 && i+1 < len(data) && data[i+1] >= '0' && data[i+1] <= '7'; count++ {
+					i++
+					value = value*8 + int(data[i]-'0')
+				}
+				raw = append(raw, byte(value))
+			} else {
+				raw = append(raw, data[i])
+			}
 		}
 	}
-	return b.String()
+	return raw, len(data), false
+}
+
+func parsePDFHexString(data []byte, start int) ([]byte, int, bool) {
+	if start >= len(data) || data[start] != '<' {
+		return nil, start, false
+	}
+	digits := make([]byte, 0)
+	for i := start + 1; i < len(data); i++ {
+		if data[i] == '>' {
+			if len(digits)%2 == 1 {
+				digits = append(digits, '0')
+			}
+			out := make([]byte, hex.DecodedLen(len(digits)))
+			if _, err := hex.Decode(out, digits); err != nil {
+				return nil, i + 1, false
+			}
+			return out, i + 1, true
+		}
+		if isPDFWhitespace(data[i]) {
+			continue
+		}
+		digits = append(digits, data[i])
+	}
+	return nil, len(data), false
+}
+
+func isPDFWhitespace(b byte) bool {
+	switch b {
+	case 0, '\t', '\n', '\f', '\r', ' ':
+		return true
+	default:
+		return false
+	}
+}
+
+func decodePDFTextString(raw []byte) string {
+	switch {
+	case len(raw) >= 2 && raw[0] == 0xfe && raw[1] == 0xff:
+		return decodeUTF16(raw[2:], true)
+	case len(raw) >= 2 && raw[0] == 0xff && raw[1] == 0xfe:
+		return decodeUTF16(raw[2:], false)
+	case len(raw) >= 3 && raw[0] == 0xef && raw[1] == 0xbb && raw[2] == 0xbf:
+		return string(raw[3:])
+	case utf8.Valid(raw):
+		return string(raw)
+	default:
+		return decodePDFDocEncoding(raw)
+	}
+}
+
+func decodeUTF16(raw []byte, bigEndian bool) string {
+	if len(raw)%2 == 1 {
+		raw = raw[:len(raw)-1]
+	}
+	words := make([]uint16, 0, len(raw)/2)
+	for i := 0; i+1 < len(raw); i += 2 {
+		if bigEndian {
+			words = append(words, uint16(raw[i])<<8|uint16(raw[i+1]))
+		} else {
+			words = append(words, uint16(raw[i+1])<<8|uint16(raw[i]))
+		}
+	}
+	return string(utf16.Decode(words))
+}
+
+func decodePDFDocEncoding(raw []byte) string {
+	runes := make([]rune, 0, len(raw))
+	for _, b := range raw {
+		if b >= 0x20 && b <= 0x7e {
+			runes = append(runes, rune(b))
+			continue
+		}
+		if r, ok := pdfDocEncodingSpecials[b]; ok {
+			runes = append(runes, r)
+			continue
+		}
+		runes = append(runes, rune(b))
+	}
+	return string(runes)
+}
+
+var pdfDocEncodingSpecials = map[byte]rune{
+	0x18: '\u02d8', 0x19: '\u02c7', 0x1a: '\u02c6', 0x1b: '\u02d9',
+	0x1c: '\u02dd', 0x1d: '\u02db', 0x1e: '\u02da', 0x1f: '\u02dc',
+	0x80: '\u2022', 0x81: '\u2020', 0x82: '\u2021', 0x83: '\u2026',
+	0x84: '\u2014', 0x85: '\u2013', 0x86: '\u0192', 0x87: '\u2044',
+	0x88: '\u2039', 0x89: '\u203a', 0x8a: '\u2212', 0x8b: '\u2030',
+	0x8c: '\u201e', 0x8d: '\u201c', 0x8e: '\u201d', 0x8f: '\u2018',
+	0x90: '\u2019', 0x91: '\u201a', 0x92: '\u2122', 0x93: '\ufb01',
+	0x94: '\ufb02', 0x95: '\u0141', 0x96: '\u0152', 0x97: '\u0160',
+	0x98: '\u0178', 0x99: '\u017d', 0x9a: '\u0131', 0x9b: '\u0142',
+	0x9c: '\u0153', 0x9d: '\u0161', 0x9e: '\u017e', 0xa0: '\u20ac',
 }
 
 func sameStringList(left []string, right []string) bool {
