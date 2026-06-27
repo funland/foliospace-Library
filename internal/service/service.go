@@ -1,6 +1,7 @@
 package service
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -1689,6 +1690,7 @@ func libretroArtworkSearchNames(game domain.GameAsset) []string {
 		return nil
 	}
 	names := []string{}
+	names = append(names, libretroArchiveSearchNames(game)...)
 	if game.Region != "" {
 		names = append(names, fmt.Sprintf("%s (%s)", title, strings.TrimSpace(game.Region)))
 	}
@@ -1707,6 +1709,134 @@ func libretroArtworkSearchNames(game domain.GameAsset) []string {
 		}
 	}
 	return out
+}
+
+func libretroArchiveSearchNames(game domain.GameAsset) []string {
+	if strings.ToLower(strings.TrimSpace(game.Format)) != "zip" || strings.TrimSpace(game.FilePath) == "" {
+		return nil
+	}
+	reader, err := zip.OpenReader(game.FilePath)
+	if err != nil {
+		return nil
+	}
+	defer reader.Close()
+
+	out := []string{}
+	for _, file := range reader.File {
+		name := strings.TrimSpace(file.Name)
+		if name == "" || file.FileInfo().IsDir() {
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(name))
+		switch ext {
+		case ".sfc", ".smc", ".fig", ".swc", ".nes", ".gb", ".gbc", ".gba", ".md", ".gen", ".bin":
+			base := strings.TrimSpace(strings.TrimSuffix(filepath.Base(name), filepath.Ext(name)))
+			out = append(out, libretroExpandedRegionNames(base)...)
+		}
+		if len(out) > 0 {
+			break
+		}
+	}
+	return out
+}
+
+func libretroExpandedRegionNames(name string) []string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	candidates := []string{name}
+	regionNames := map[string]string{
+		"J":  "Japan",
+		"U":  "USA",
+		"E":  "Europe",
+		"W":  "World",
+		"A":  "Asia",
+		"K":  "Korea",
+		"F":  "France",
+		"G":  "Germany",
+		"S":  "Spain",
+		"I":  "Italy",
+		"JU": "Japan, USA",
+		"UE": "USA, Europe",
+	}
+	for code, region := range regionNames {
+		short := "(" + code + ")"
+		if strings.Contains(name, short) {
+			candidates = append(candidates, strings.ReplaceAll(name, short, "("+region+")"))
+		}
+	}
+	clean := regexp.MustCompile(`\s*\[[^]]*]`).ReplaceAllString(name, "")
+	if clean != name {
+		candidates = append(candidates, clean)
+		for code, region := range regionNames {
+			short := "(" + code + ")"
+			if strings.Contains(clean, short) {
+				candidates = append(candidates, strings.ReplaceAll(clean, short, "("+region+")"))
+			}
+		}
+	}
+
+	if base, regions := libretroGoodSetNameParts(clean); base != "" {
+		for _, region := range regions {
+			candidates = append(candidates, fmt.Sprintf("%s (%s)", base, region))
+		}
+		candidates = append(candidates, base)
+	}
+	return candidates
+}
+
+func libretroGoodSetNameParts(name string) (string, []string) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", nil
+	}
+	first := strings.Index(name, "(")
+	if first <= 0 {
+		return "", nil
+	}
+	base := strings.TrimSpace(name[:first])
+	tags := regexp.MustCompile(`\(([^)]*)\)`).FindAllStringSubmatch(name[first:], -1)
+	if base == "" || len(tags) == 0 {
+		return "", nil
+	}
+	regionNames := map[string]string{
+		"J":       "Japan",
+		"U":       "USA",
+		"E":       "Europe",
+		"W":       "World",
+		"A":       "Asia",
+		"K":       "Korea",
+		"F":       "France",
+		"G":       "Germany",
+		"S":       "Spain",
+		"I":       "Italy",
+		"JU":      "Japan, USA",
+		"UE":      "USA, Europe",
+		"Japan":   "Japan",
+		"USA":     "USA",
+		"Europe":  "Europe",
+		"World":   "World",
+		"Asia":    "Asia",
+		"Korea":   "Korea",
+		"France":  "France",
+		"Germany": "Germany",
+		"Spain":   "Spain",
+		"Italy":   "Italy",
+	}
+	regions := []string{}
+	seen := map[string]bool{}
+	for _, tag := range tags {
+		parts := strings.Split(tag[1], ",")
+		for _, part := range parts {
+			part = strings.TrimSpace(part)
+			if region := regionNames[part]; region != "" && !seen[region] {
+				seen[region] = true
+				regions = append(regions, region)
+			}
+		}
+	}
+	return base, regions
 }
 
 func findLibretroArtworkMatch(targets []string, listing []string) string {

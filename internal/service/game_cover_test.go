@@ -1,6 +1,7 @@
 package service
 
 import (
+	"archive/zip"
 	"errors"
 	"io"
 	"os"
@@ -82,6 +83,28 @@ func TestLibretroArtworkCandidatesUseFuzzyTagStrippedMatch(t *testing.T) {
 	}
 }
 
+func TestLibretroArtworkCandidatesUseInnerZipROMName(t *testing.T) {
+	root := t.TempDir()
+	romPath := filepath.Join(root, "2020超级棒球 19930312.zip")
+	makeGameZip(t, romPath, "2020 Super Baseball (J)(1993)(KAC).sfc")
+
+	urls := libretroBoxartCandidatesFromListing(domain.GameAsset{
+		Title:    "2020超级棒球 19930312",
+		Platform: "snes",
+		Format:   "zip",
+		FilePath: romPath,
+	}, []string{
+		"2020 Super Baseball (Japan).png",
+		"Super Baseball Simulator 1.000 (USA).png",
+	})
+	if len(urls) != 1 {
+		t.Fatalf("urls len = %d, want 1", len(urls))
+	}
+	if !strings.Contains(urls[0], "2020%20Super%20Baseball%20%28Japan%29.png") {
+		t.Fatalf("url = %q, want inner ROM name matched to Japan boxart", urls[0])
+	}
+}
+
 func TestParseLibretroListingFilenames(t *testing.T) {
 	html := `<html><body>
 <a href="../">../</a>
@@ -96,6 +119,27 @@ func TestParseLibretroListingFilenames(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("filenames = %#v, want %#v", got, want)
+	}
+}
+
+func makeGameZip(t *testing.T, path string, entryName string) {
+	t.Helper()
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+
+	writer := zip.NewWriter(file)
+	entry, err := writer.Create(entryName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := entry.Write([]byte("rom")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 
