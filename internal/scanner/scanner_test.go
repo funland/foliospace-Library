@@ -1425,6 +1425,7 @@ func TestInferGamePlatformUsesFBNeoSystemDirectories(t *testing.T) {
 		{relPath: "FBNeo/megadrive/shinobi3.zip", want: "md"},
 		{relPath: "FBNeo/snes/contra3.zip", want: "snes"},
 		{relPath: "FBNeo/nes/battlecity.zip", want: "nes"},
+		{relPath: "SFC/chrono-trigger.zip", want: "snes"},
 		{relPath: "FBNeo/arcade/mslug.zip", want: "neogeo"},
 		{relPath: "FBNeo/arcade/shinobi3.zip", want: "md"},
 		{relPath: "FBNeo/arcade/wof.zip", want: "arcade"},

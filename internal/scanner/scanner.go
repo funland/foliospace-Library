@@ -1891,7 +1891,7 @@ func inferGamePlatform(ext string, relPath string) string {
 	}
 	for _, part := range strings.Split(path, "/") {
 		switch part {
-		case "snes", "super nintendo":
+		case "snes", "sfc", "super nintendo":
 			return "snes"
 		case "nes", "famicom":
 			return "nes"
