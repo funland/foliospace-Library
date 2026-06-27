@@ -49,6 +49,36 @@ func TestLibretroBoxartCandidatesSkipUnsupportedPlatform(t *testing.T) {
 	}
 }
 
+func TestLibretroBoxartCandidatesUseFBNeoArcadePlaylist(t *testing.T) {
+	withLibretroListingFetcher(t, func(_ string, _ string) ([]string, error) {
+		return nil, errors.New("offline")
+	})
+	urls := libretroBoxartCandidates(domain.GameAsset{
+		Title:      "Blandia",
+		Platform:   "arcade",
+		ROMSetName: "FBNeo",
+	})
+	if len(urls) != 4 {
+		t.Fatalf("urls len = %d, want 4", len(urls))
+	}
+	if !strings.Contains(urls[0], "FBNeo%20-%20Arcade%20Games/Named_Boxarts/Blandia.png") {
+		t.Fatalf("first url = %q, want FBNeo arcade playlist candidate", urls[0])
+	}
+
+	urls = libretroBoxartCandidates(domain.GameAsset{
+		Title:      "Metal Slug",
+		Platform:   "neogeo",
+		ROMSetName: "FBNeo",
+		RelPath:    "FBNeo/arcade/mslug.zip",
+	})
+	if len(urls) != 4 {
+		t.Fatalf("neogeo urls len = %d, want 4", len(urls))
+	}
+	if !strings.Contains(urls[0], "FBNeo%20-%20Arcade%20Games/Named_Boxarts/Metal%20Slug.png") {
+		t.Fatalf("neogeo first url = %q, want FBNeo arcade playlist candidate", urls[0])
+	}
+}
+
 func TestLibretroArtworkCandidatesPreferListingExactMatch(t *testing.T) {
 	urls := libretroBoxartCandidatesFromListing(domain.GameAsset{
 		Title:    "Super Mario World",

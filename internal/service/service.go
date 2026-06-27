@@ -1601,7 +1601,7 @@ func absDuration(value time.Duration) time.Duration {
 }
 
 func libretroBoxartCandidates(game domain.GameAsset) []string {
-	playlist, ok := libretroPlaylist(game.Platform)
+	playlist, ok := libretroPlaylistForGame(game)
 	if !ok {
 		return nil
 	}
@@ -1623,7 +1623,7 @@ func libretroBoxartCandidatesFromListing(game domain.GameAsset, listing []string
 }
 
 func libretroArtworkCandidatesFromListing(game domain.GameAsset, artFolder string, listing []string) []string {
-	playlist, ok := libretroPlaylist(game.Platform)
+	playlist, ok := libretroPlaylistForGame(game)
 	if !ok || strings.TrimSpace(game.Title) == "" {
 		return nil
 	}
@@ -1682,6 +1682,17 @@ func libretroPlaylist(platform string) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+func libretroPlaylistForGame(game domain.GameAsset) (string, bool) {
+	platform := strings.ToLower(strings.TrimSpace(game.Platform))
+	romSet := strings.ToLower(strings.TrimSpace(game.ROMSetName))
+	relPath := strings.ToLower(filepath.ToSlash(strings.TrimSpace(game.RelPath)))
+	filePath := strings.ToLower(filepath.ToSlash(strings.TrimSpace(game.FilePath)))
+	if strings.Contains(romSet, "fbneo") && (platform == "arcade" || strings.HasPrefix(relPath, "fbneo/arcade/") || strings.Contains(filePath, "/fbneo/arcade/")) {
+		return "FBNeo - Arcade Games", true
+	}
+	return libretroPlaylist(game.Platform)
 }
 
 func libretroArtworkSearchNames(game domain.GameAsset) []string {
