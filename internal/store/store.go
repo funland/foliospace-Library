@@ -1559,6 +1559,37 @@ func (s *Store) ListGamesPageForProfile(options domain.GameListOptions, profileI
 	}, nil
 }
 
+func (s *Store) ListGameFacets(options domain.GameListOptions) (domain.GameListFacets, error) {
+	where, args := gameListWhere(options)
+	var total int64
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM games`+where, args...).Scan(&total); err != nil {
+		return domain.GameListFacets{}, err
+	}
+
+	rows, err := s.db.Query(`
+		SELECT platform, rom_set_name, format, emulator_hint, COUNT(*)
+		FROM games`+where+`
+		GROUP BY LOWER(platform), LOWER(rom_set_name), LOWER(format), LOWER(emulator_hint)
+		ORDER BY LOWER(platform), LOWER(rom_set_name), LOWER(format), LOWER(emulator_hint)`, args...)
+	if err != nil {
+		return domain.GameListFacets{}, err
+	}
+	defer rows.Close()
+
+	facets := make([]domain.GamePlatformFacet, 0)
+	for rows.Next() {
+		var facet domain.GamePlatformFacet
+		if err := rows.Scan(&facet.Platform, &facet.ROMSetName, &facet.Format, &facet.EmulatorHint, &facet.Count); err != nil {
+			return domain.GameListFacets{}, err
+		}
+		facets = append(facets, facet)
+	}
+	if err := rows.Err(); err != nil {
+		return domain.GameListFacets{}, err
+	}
+	return domain.GameListFacets{Total: total, Platforms: facets}, nil
+}
+
 func (s *Store) GamePrivateStateForProfile(gameID int64, profileID int64) (domain.GamePrivateState, error) {
 	profileID, err := s.ResolveProfileID(profileID)
 	if err != nil {
@@ -1916,8 +1947,17 @@ func gameListWhere(options domain.GameListOptions) (string, []any) {
 		args = append(args, like, like, like, like, like)
 	}
 	if platform := strings.TrimSpace(options.Platform); platform != "" {
-		clauses = append(clauses, `LOWER(platform) = LOWER(?)`)
-		args = append(args, platform)
+		platforms := splitFilterValues(platform)
+		if len(platforms) == 1 {
+			clauses = append(clauses, `LOWER(platform) = LOWER(?)`)
+			args = append(args, platforms[0])
+		} else if len(platforms) > 1 {
+			placeholders := strings.TrimRight(strings.Repeat("LOWER(?),", len(platforms)), ",")
+			clauses = append(clauses, `LOWER(platform) IN (`+placeholders+`)`)
+			for _, value := range platforms {
+				args = append(args, value)
+			}
+		}
 	}
 	if romSetName := strings.TrimSpace(options.ROMSetName); romSetName != "" {
 		clauses = append(clauses, `LOWER(rom_set_name) = LOWER(?)`)
@@ -1931,6 +1971,18 @@ func gameListWhere(options domain.GameListOptions) (string, []any) {
 		return "", args
 	}
 	return " WHERE " + strings.Join(clauses, " AND "), args
+}
+
+func splitFilterValues(value string) []string {
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 func videoListWhere(options domain.VideoListOptions) (string, []any) {
@@ -1966,6 +2018,8 @@ func gameListOrderBy(sort string) string {
 		return ` ORDER BY LOWER(title), platform, id`
 	case "platform":
 		return ` ORDER BY LOWER(platform), LOWER(title), id`
+	case "oldest":
+		return ` ORDER BY updated_at ASC, id ASC`
 	default:
 		return ` ORDER BY updated_at DESC, id DESC`
 	}

@@ -766,6 +766,7 @@ func TestClientAPIHomeAndManifestsHideFilePaths(t *testing.T) {
 		!strings.Contains(infoBody, `"pageImageDownsample":true`) ||
 		!strings.Contains(infoBody, `"compactReader":true`) ||
 		!strings.Contains(infoBody, `"scanSettings":true`) ||
+		!strings.Contains(infoBody, `"gameSaveSync":true`) ||
 		!strings.Contains(infoBody, `"gameMetadataProviders":true`) {
 		t.Fatalf("client info response %q does not include v1 capabilities", infoBody)
 	}
@@ -986,6 +987,12 @@ func TestAPIClientGamesPage(t *testing.T) {
 		t.Fatalf("client games page %q missing saved private state", platformBody)
 	}
 
+	oldestBody := authGet(t, ts.URL+"/api/client/games?limit=20&sort=oldest", "secret")
+	if strings.Index(oldestBody, `"title":"Super Contra"`) > strings.Index(oldestBody, `"title":"Advance Wars"`) ||
+		strings.Index(oldestBody, `"title":"Advance Wars"`) > strings.Index(oldestBody, `"title":"Metal Slug"`) {
+		t.Fatalf("client games page %q is not oldest ordered", oldestBody)
+	}
+
 	filtered := authGet(t, ts.URL+"/api/client/games?limit=500&q=japan&platform=nes&format=nes", "secret")
 	if !strings.Contains(filtered, `"title":"Super Contra"`) || !strings.Contains(filtered, `"total":1`) || !strings.Contains(filtered, `"limit":200`) || !strings.Contains(filtered, `"hasMore":false`) {
 		t.Fatalf("filtered client games page = %q, want clamped one-item response", filtered)
@@ -994,6 +1001,173 @@ func TestAPIClientGamesPage(t *testing.T) {
 	empty := authGet(t, ts.URL+"/api/client/games?q=missing", "secret")
 	if !strings.Contains(empty, `"items":[]`) || !strings.Contains(empty, `"total":0`) {
 		t.Fatalf("empty client games page = %q, want empty list response", empty)
+	}
+}
+
+func TestAPIClientGameFacetsUseFullCatalog(t *testing.T) {
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibrary("Games", "/library")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, game := range []domain.GameAsset{
+		{LibraryID: lib.ID, Title: "SNES A", Platform: "snes", ROMSetName: "SNES", Format: "sfc", FilePath: "/library/snes/a.sfc", RelPath: "snes/a.sfc", Size: 1, MTime: time.Unix(30, 0), Compatibility: "unknown"},
+		{LibraryID: lib.ID, Title: "SNES B", Platform: "snes", ROMSetName: "SNES", Format: "sfc", FilePath: "/library/snes/b.sfc", RelPath: "snes/b.sfc", Size: 1, MTime: time.Unix(31, 0), Compatibility: "unknown"},
+		{LibraryID: lib.ID, Title: "Arcade C", Platform: "arcade", ROMSetName: "MAME", Format: "zip", FilePath: "/library/arcade/c.zip", RelPath: "arcade/c.zip", Size: 1, MTime: time.Unix(32, 0), Compatibility: "unknown"},
+	} {
+		if _, err := st.UpsertGame(game); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ts := httptest.NewServer(NewWithOptions(service.New(st), nil, Options{APIToken: "secret"}).Routes())
+	defer ts.Close()
+
+	firstPage := authGet(t, ts.URL+"/api/client/games?limit=1&sort=title", "secret")
+	if !strings.Contains(firstPage, `"total":3`) || strings.Count(firstPage, `"assetType":"game"`) != 1 {
+		t.Fatalf("first page = %q, want one item from a three-game catalog", firstPage)
+	}
+
+	facets := authGet(t, ts.URL+"/api/client/games/facets", "secret")
+	for _, want := range []string{
+		`"total":3`,
+		`"platform":"arcade"`,
+		`"count":1`,
+		`"platform":"snes"`,
+		`"count":2`,
+	} {
+		if !strings.Contains(facets, want) {
+			t.Fatalf("facets = %q, missing %s", facets, want)
+		}
+	}
+}
+
+func TestAPIClientGameSaveSyncArchiveUploadDownload(t *testing.T) {
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibrary("Games", "/library")
+	if err != nil {
+		t.Fatal(err)
+	}
+	game, err := st.UpsertGame(domain.GameAsset{
+		LibraryID:     lib.ID,
+		Title:         "Super Contra",
+		Platform:      "nes",
+		ROMSetName:    "NES",
+		Region:        "Japan",
+		Format:        "nes",
+		FilePath:      "/library/nes/Super Contra.nes",
+		RelPath:       "nes/Super Contra.nes",
+		Size:          262160,
+		MTime:         time.Unix(30, 0),
+		CRC32:         "9bb6059e",
+		SHA1:          "5de393e3ad83e6e185e6d338684d7a4475b7d2ce",
+		EmulatorHint:  "nes",
+		Compatibility: "unknown",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	configDir := t.TempDir()
+	ts := httptest.NewServer(NewWithOptions(service.NewWithConfig(st, configDir), nil, Options{APIToken: "secret"}).Routes())
+	defer ts.Close()
+
+	archiveData := []byte(`{"schemaVersion":1,"records":[],"files":[]}`)
+	path := ts.URL + "/api/client/games/" + itoa(game.ID) + "/save-sync/archive"
+
+	unauthorizedReq, err := http.NewRequest(http.MethodGet, path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unauthorizedResp, err := http.DefaultClient.Do(unauthorizedReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = unauthorizedResp.Body.Close()
+	if unauthorizedResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthorized save archive status = %d, want 401", unauthorizedResp.StatusCode)
+	}
+
+	putReq, err := http.NewRequest(http.MethodPut, path, bytes.NewReader(archiveData))
+	if err != nil {
+		t.Fatal(err)
+	}
+	putReq.Header.Set("Authorization", "Bearer secret")
+	putReq.Header.Set("Content-Type", "application/vnd.gameemu.save-sync+json")
+	putResp, err := http.DefaultClient.Do(putReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	putBody, err := io.ReadAll(putResp.Body)
+	_ = putResp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if putResp.StatusCode != http.StatusOK {
+		t.Fatalf("save archive PUT status = %d body=%s, want 200", putResp.StatusCode, putBody)
+	}
+	if !strings.Contains(string(putBody), `"ok":true`) {
+		t.Fatalf("save archive PUT body = %q, want ok", putBody)
+	}
+
+	emptyReq, err := http.NewRequest(http.MethodPut, path, strings.NewReader(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	emptyReq.Header.Set("Authorization", "Bearer secret")
+	emptyResp, err := http.DefaultClient.Do(emptyReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = emptyResp.Body.Close()
+	if emptyResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("empty save archive status = %d, want 400", emptyResp.StatusCode)
+	}
+
+	getReq, err := http.NewRequest(http.MethodGet, path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	getReq.Header.Set("Authorization", "Bearer secret")
+	getResp, err := http.DefaultClient.Do(getReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotArchive, err := io.ReadAll(getResp.Body)
+	_ = getResp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if getResp.StatusCode != http.StatusOK {
+		t.Fatalf("save archive GET status = %d body=%s, want 200", getResp.StatusCode, gotArchive)
+	}
+	if string(gotArchive) != string(archiveData) {
+		t.Fatalf("save archive GET body = %q, want %q", gotArchive, archiveData)
+	}
+	if got := getResp.Header.Get("Content-Type"); got != "application/vnd.gameemu.save-sync+json" {
+		t.Fatalf("save archive content type = %q, want save archive type", got)
+	}
+
+	missingReq, err := http.NewRequest(http.MethodPut, ts.URL+"/api/client/games/9999/save-sync/archive", bytes.NewReader(archiveData))
+	if err != nil {
+		t.Fatal(err)
+	}
+	missingReq.Header.Set("Authorization", "Bearer secret")
+	missingResp, err := http.DefaultClient.Do(missingReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = missingResp.Body.Close()
+	if missingResp.StatusCode != http.StatusNotFound {
+		t.Fatalf("missing game save archive status = %d, want 404", missingResp.StatusCode)
 	}
 }
 

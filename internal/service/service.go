@@ -51,6 +51,9 @@ const scanWorkersSetting = "scan_workers"
 
 var errVideoTranscodeBusy = errors.New("another video transcode is running")
 
+const SaveSyncArchiveContentType = "application/vnd.gameemu.save-sync+json"
+const maxSaveSyncArchiveBytes = 64 << 20
+
 var videoTranscodeState = struct {
 	sync.Mutex
 	videoID int64
@@ -866,6 +869,10 @@ func (s *Service) ListGamesPageForProfile(options domain.GameListOptions, profil
 	return s.store.ListGamesPageForProfile(options, profileID)
 }
 
+func (s *Service) ListGameFacets(options domain.GameListOptions) (domain.GameListFacets, error) {
+	return s.store.ListGameFacets(options)
+}
+
 func (s *Service) ExportGameGamelistXML(options domain.GameListOptions) ([]byte, error) {
 	options.Limit = 200
 	options.Offset = 0
@@ -1260,6 +1267,68 @@ func (s *Service) OpenGameFile(id int64) (PageStream, error) {
 		return PageStream{}, err
 	}
 	return PageStream{Body: body, ContentType: "application/octet-stream"}, nil
+}
+
+func (s *Service) SaveGameSaveSyncArchive(gameID int64, profileID int64, data []byte) error {
+	if len(data) == 0 {
+		return fmt.Errorf("save sync archive is empty")
+	}
+	if len(data) > maxSaveSyncArchiveBytes {
+		return fmt.Errorf("save sync archive is too large")
+	}
+	profileID, err := s.store.ResolveProfileID(profileID)
+	if err != nil {
+		return err
+	}
+	if _, err := s.store.GameByIDForProfile(gameID, profileID); err != nil {
+		return err
+	}
+	path := s.gameSaveSyncArchivePath(profileID, gameID)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	return nil
+}
+
+func (s *Service) OpenGameSaveSyncArchive(gameID int64, profileID int64) (PageStream, error) {
+	profileID, err := s.store.ResolveProfileID(profileID)
+	if err != nil {
+		return PageStream{}, err
+	}
+	if _, err := s.store.GameByIDForProfile(gameID, profileID); err != nil {
+		return PageStream{}, err
+	}
+	file, err := os.Open(s.gameSaveSyncArchivePath(profileID, gameID))
+	if errors.Is(err, os.ErrNotExist) {
+		return PageStream{}, sql.ErrNoRows
+	}
+	if err != nil {
+		return PageStream{}, err
+	}
+	return PageStream{Body: file, ContentType: SaveSyncArchiveContentType}, nil
+}
+
+func (s *Service) gameSaveSyncArchivePath(profileID int64, gameID int64) string {
+	base := s.configDir
+	if base == "" {
+		base = filepath.Join(os.TempDir(), "foliospace-reader")
+	}
+	return filepath.Join(
+		base,
+		"client-save-sync",
+		"profiles",
+		strconv.FormatInt(profileID, 10),
+		"games",
+		fmt.Sprintf("%d.gameemusaves", gameID),
+	)
 }
 
 func (s *Service) VideoFilePath(id int64) (string, error) {

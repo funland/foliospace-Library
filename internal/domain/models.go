@@ -316,6 +316,19 @@ type GameListPage struct {
 	HasMore bool        `json:"hasMore"`
 }
 
+type GameListFacets struct {
+	Total     int64               `json:"total"`
+	Platforms []GamePlatformFacet `json:"platforms"`
+}
+
+type GamePlatformFacet struct {
+	Platform     string `json:"platform"`
+	ROMSetName   string `json:"romSetName,omitempty"`
+	Format       string `json:"format,omitempty"`
+	EmulatorHint string `json:"emulatorHint,omitempty"`
+	Count        int64  `json:"count"`
+}
+
 type VideoListOptions struct {
 	Limit  int
 	Offset int

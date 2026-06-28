@@ -350,6 +350,7 @@ func (s *Server) handleClientInfo(w http.ResponseWriter, r *http.Request) {
 			ScannerJobControl:     true,
 			ScanSettings:          true,
 			RecentScan:            true,
+			GameSaveSync:          true,
 			GameMetadataProviders: true,
 		},
 	})
@@ -575,6 +576,20 @@ func (s *Server) handleClientGameAction(w http.ResponseWriter, r *http.Request) 
 	if !s.authorizeClient(w, r) {
 		return
 	}
+	if r.URL.Path == "/api/client/games/facets" {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		facets, err := s.service.ListGameFacets(domain.GameListOptions{
+			Query:      r.URL.Query().Get("q"),
+			Platform:   r.URL.Query().Get("platform"),
+			ROMSetName: r.URL.Query().Get("romSetName"),
+			Format:     r.URL.Query().Get("format"),
+		})
+		writeJSONOrError(w, facets, err)
+		return
+	}
 	id, tail, ok := parseIDTail(r.URL.Path, "/api/client/games/")
 	if !ok {
 		http.NotFound(w, r)
@@ -619,6 +634,37 @@ func (s *Server) handleClientGameAction(w http.ResponseWriter, r *http.Request) 
 		}
 		game, err := s.service.UpdateGamePrivateStateForProfile(id, s.requestProfileID(r), req)
 		writeJSONOrError(w, clientGameItem(game), err)
+		return
+	}
+	if tail == "save-sync/archive" {
+		switch r.Method {
+		case http.MethodGet:
+			stream, err := s.service.OpenGameSaveSyncArchive(id, s.requestProfileID(r))
+			if err != nil {
+				writeJSONOrError(w, nil, err)
+				return
+			}
+			defer stream.Body.Close()
+			w.Header().Set("Content-Type", stream.ContentType)
+			_, _ = io.Copy(w, stream.Body)
+		case http.MethodPut:
+			body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64<<20))
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			if len(body) == 0 {
+				writeError(w, http.StatusBadRequest, errors.New("save sync archive is empty"))
+				return
+			}
+			if err := s.service.SaveGameSaveSyncArchive(id, s.requestProfileID(r), body); err != nil {
+				writeJSONOrError(w, nil, err)
+				return
+			}
+			writeJSON(w, map[string]bool{"ok": true})
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
 		return
 	}
 	if tail == "cover" && r.Method == http.MethodGet {
@@ -1949,6 +1995,7 @@ type clientCapabilities struct {
 	ScannerJobControl     bool `json:"scannerJobControl"`
 	ScanSettings          bool `json:"scanSettings"`
 	RecentScan            bool `json:"recentScan"`
+	GameSaveSync          bool `json:"gameSaveSync"`
 	GameMetadataProviders bool `json:"gameMetadataProviders"`
 }
 
