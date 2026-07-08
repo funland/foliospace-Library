@@ -2074,7 +2074,7 @@ func shouldSkipScanDir(library domain.Library, path string) bool {
 }
 
 func skippedScanDirNames() []string {
-	return []string{"#recycle", "@eaDir", ".calnotes", "__MACOSX", "media", "covers", "cover", "thumbnails", ".thumbnails", "thumbs", ".thumbs"}
+	return []string{"#recycle", "@eaDir", ".@__thumb", ".calnotes", "__MACOSX", "media", "covers", "cover", "thumbnails", ".thumbnails", "thumbs", ".thumbs"}
 }
 
 func seriesIdentityForRelPath(rootPath string, relPath string) (string, string) {

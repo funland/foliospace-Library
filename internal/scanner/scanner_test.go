@@ -238,6 +238,7 @@ func TestScanLibrarySkipsThumbnailAndMediaDirectories(t *testing.T) {
 	root := t.TempDir()
 	makeZip(t, filepath.Join(root, "Series", "book.cbz"), map[string]string{"001.jpg": "image"})
 	makeZip(t, filepath.Join(root, "Series", "thumbnails", "thumb.cbz"), map[string]string{"001.jpg": "image"})
+	makeZip(t, filepath.Join(root, "Series", ".@__thumb", "qnap-thumb.cbz"), map[string]string{"001.jpg": "image"})
 	makeZip(t, filepath.Join(root, "Series", "media", "cover.cbz"), map[string]string{"001.jpg": "image"})
 
 	conn, err := db.Open(t.TempDir())
