@@ -3,6 +3,8 @@ package main
 import (
 	"log"
 	"net/http"
+	"runtime/debug"
+	"time"
 
 	"foliospace-reader/internal/config"
 	"foliospace-reader/internal/db"
@@ -13,6 +15,9 @@ import (
 
 func main() {
 	cfg := config.Load()
+	memoryLimit := int64(cfg.MemoryLimitMB) << 20
+	debug.SetMemoryLimit(memoryLimit)
+	log.Printf("Go memory limit set to %d MiB", cfg.MemoryLimitMB)
 
 	conn, err := db.Open(cfg.ConfigDir)
 	if err != nil {
@@ -29,8 +34,15 @@ func main() {
 
 	api := httpapi.NewWithOptions(service.NewWithConfig(appStore, cfg.ConfigDir), http.FileServer(http.Dir("web/dist")), httpapi.Options{APIToken: cfg.APIToken})
 
+	server := &http.Server{
+		Addr:              cfg.Addr,
+		Handler:           api.Routes(),
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20,
+	}
 	log.Printf("FolioSpace Library listening on %s", cfg.Addr)
-	if err := http.ListenAndServe(cfg.Addr, api.Routes()); err != nil {
+	if err := server.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
 }

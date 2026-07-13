@@ -41,6 +41,7 @@ type Service struct {
 	scanner                  *scanner.Scanner
 	configDir                string
 	thumbnailWorker          *thumbnailWorker
+	imageDecodeMu            sync.Mutex
 	thumbnailCacheStatusMu   sync.Mutex
 	thumbnailCacheStatusSnap domain.ThumbnailCacheStatus
 	thumbnailCacheStatusTime time.Time
@@ -2356,15 +2357,41 @@ func (s *Service) OpenPageWithOptions(bookID int64, pageIndex int, options PageI
 	if options.MaxWidth <= 0 || !strings.HasPrefix(contentType, "image/") {
 		return PageStream{Body: body, ContentType: contentType}, nil
 	}
-	return downsamplePageStream(body, contentType, options.MaxWidth)
+	return s.downsamplePageStream(body, contentType, options.MaxWidth)
 }
 
-func downsamplePageStream(body io.ReadCloser, contentType string, maxWidth int) (PageStream, error) {
-	defer body.Close()
+type prefixedReadCloser struct {
+	io.Reader
+	source io.ReadCloser
+}
 
-	data, err := io.ReadAll(body)
+func (reader prefixedReadCloser) Close() error {
+	return reader.source.Close()
+}
+
+func (s *Service) downsamplePageStream(body io.ReadCloser, contentType string, maxWidth int) (PageStream, error) {
+	s.imageDecodeMu.Lock()
+	defer s.imageDecodeMu.Unlock()
+
+	data, err := io.ReadAll(io.LimitReader(body, maxPageTransformSourceBytes+1))
 	if err != nil {
+		_ = body.Close()
 		return PageStream{}, err
+	}
+	if len(data) > maxPageTransformSourceBytes {
+		return PageStream{
+			Body: prefixedReadCloser{
+				Reader: io.MultiReader(bytes.NewReader(data), body),
+				source: body,
+			},
+			ContentType: contentType,
+		}, nil
+	}
+	if err := body.Close(); err != nil {
+		return PageStream{}, err
+	}
+	if !imageSourceWithinDecodeBudget(data) {
+		return PageStream{Body: io.NopCloser(bytes.NewReader(data)), ContentType: contentType}, nil
 	}
 	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
@@ -2377,7 +2404,7 @@ func downsamplePageStream(body io.ReadCloser, contentType string, maxWidth int) 
 		return PageStream{Body: io.NopCloser(bytes.NewReader(data)), ContentType: contentType}, nil
 	}
 
-	dstWidth := maxWidth
+	dstWidth := boundedOutputWidth(maxWidth, srcWidth, srcHeight, maxPageTransformOutputPixels)
 	dstHeight := max(1, int(float64(srcHeight)*float64(dstWidth)/float64(srcWidth)))
 	dst := image.NewRGBA(image.Rect(0, 0, dstWidth, dstHeight))
 	for y := 0; y < dstHeight; y++ {
@@ -2393,6 +2420,17 @@ func downsamplePageStream(body io.ReadCloser, contentType string, maxWidth int) 
 		return PageStream{}, err
 	}
 	return PageStream{Body: io.NopCloser(bytes.NewReader(out.Bytes())), ContentType: "image/jpeg"}, nil
+}
+
+func imageSourceWithinDecodeBudget(data []byte) bool {
+	config, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil || config.Width <= 0 || config.Height <= 0 {
+		return false
+	}
+	if config.Width > maxImageDimension || config.Height > maxImageDimension {
+		return false
+	}
+	return config.Width <= int(maxDecodedImagePixels)/config.Height
 }
 
 func blendOverWhite(c color.Color) color.RGBA {

@@ -5,8 +5,10 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"hash/crc32"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -74,6 +76,49 @@ func TestListDirectoriesRestrictsToConfiguredRoots(t *testing.T) {
 	if _, err := svc.ListDirectories(blocked); err == nil {
 		t.Fatal("blocked directory listing succeeded, want error")
 	}
+}
+
+func TestDownsamplePageStreamRejectsOversizedDecodeWithoutLosingSource(t *testing.T) {
+	data := pngHeaderWithDimensions(40_000, 40_000)
+	svc := &Service{}
+	stream, err := svc.downsamplePageStream(io.NopCloser(bytes.NewReader(data)), "image/png", 1200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Body.Close()
+	got, err := io.ReadAll(stream.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, data) {
+		t.Fatalf("oversized source changed: got %d bytes, want %d", len(got), len(data))
+	}
+	if stream.ContentType != "image/png" {
+		t.Fatalf("content type = %q, want image/png", stream.ContentType)
+	}
+}
+
+func pngHeaderWithDimensions(width uint32, height uint32) []byte {
+	var out bytes.Buffer
+	out.Write([]byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'})
+	writeChunk := func(name string, data []byte) {
+		_ = binary.Write(&out, binary.BigEndian, uint32(len(data)))
+		out.WriteString(name)
+		out.Write(data)
+		checksum := crc32.NewIEEE()
+		_, _ = checksum.Write([]byte(name))
+		_, _ = checksum.Write(data)
+		_ = binary.Write(&out, binary.BigEndian, checksum.Sum32())
+	}
+	ihdr := make([]byte, 13)
+	binary.BigEndian.PutUint32(ihdr[0:4], width)
+	binary.BigEndian.PutUint32(ihdr[4:8], height)
+	ihdr[8] = 8
+	ihdr[9] = 2
+	writeChunk("IHDR", ihdr)
+	writeChunk("IDAT", nil)
+	writeChunk("IEND", nil)
+	return out.Bytes()
 }
 
 func TestBookShelvesSkipMissingOrModifiedFiles(t *testing.T) {

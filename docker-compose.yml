@@ -2,6 +2,8 @@ services:
   foliospace-library:
     build: .
     image: foliospace-library:0.975
+    mem_limit: 1536m
+    memswap_limit: 1536m
     ports:
       - "8080:8080"
     volumes:
@@ -16,3 +18,4 @@ services:
       FOLIOSPACE_ADDR: :8080
       FOLIOSPACE_API_TOKEN: ""
       FOLIOSPACE_SCAN_WORKERS: "2"
+      FOLIOSPACE_MEMORY_LIMIT_MB: "768"

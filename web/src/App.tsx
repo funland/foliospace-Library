@@ -14,6 +14,14 @@ import {
   type WebtoonPosition,
 } from "./webtoon-position";
 import { fullscreenImageFit, type ReaderImageFitMode } from "./reader-fit";
+import {
+  normalizeReaderDevicePreferences,
+  pagePathWithMaxWidth,
+  readerDisplayMaxWidth,
+  type ReaderControlLayout,
+  type ReaderDevicePreferences,
+  type ReaderImageDisplayMode,
+} from "./reader-layout";
 import { resolveEpubOpenPosition, type EpubChapterOpenPosition } from "./epub-navigation";
 import { gamePlatformFilterOptions } from "./game-platform-options";
 
@@ -43,6 +51,7 @@ const gameCatalogPageSize = 80;
 
 export function App() {
   const initialPreferences = useRef(readLocalPreferences()).current;
+  const initialReaderDevicePreferences = useRef(readReaderDevicePreferences()).current;
   const [view, setView] = useState<View>("library");
   const [libraries, setLibraries] = useState<Library[]>([]);
   const [series, setSeries] = useState<Series[]>([]);
@@ -124,6 +133,9 @@ export function App() {
   const [readerLoadState, setReaderLoadState] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [readerRetryKey, setReaderRetryKey] = useState(0);
   const [readerPageMode, setReaderPageMode] = useState<ReaderPageMode>(initialPreferences.readerPageMode);
+  const [readerImageDisplayMode, setReaderImageDisplayMode] = useState<ReaderImageDisplayMode>(initialReaderDevicePreferences.imageDisplayMode);
+  const [readerControlLayout, setReaderControlLayout] = useState<ReaderControlLayout>(initialReaderDevicePreferences.controlLayout);
+  const [readerViewport, setReaderViewport] = useState({ width: 1200, height: 800 });
   const [readerFullscreen, setReaderFullscreen] = useState(false);
   const [epubPageMode, setEpubPageMode] = useState<EpubPageMode>(initialPreferences.epubPageMode);
   const [epubFontSize, setEpubFontSize] = useState(initialPreferences.epubFontSize);
@@ -158,6 +170,8 @@ export function App() {
   const activeProfileLabel = activeProfile ? profileDisplayName(activeProfile, t) : t.defaultProfile;
   const imageCache = useRef<Set<string>>(new Set());
   const readerRef = useRef<HTMLElement | null>(null);
+  const pageStageRef = useRef<HTMLDivElement | null>(null);
+  const pageSpreadRef = useRef<HTMLDivElement | null>(null);
   const webtoonRef = useRef<HTMLDivElement | null>(null);
   const bookLoadMoreRef = useRef<HTMLDivElement | null>(null);
   const collectionSectionsRef = useRef<HTMLDivElement | null>(null);
@@ -425,6 +439,42 @@ export function App() {
     }, 300);
     return () => window.clearTimeout(timer);
   }, [locale, readerPageMode, epubPageMode, epubTheme, epubFontSize, authRequired]);
+
+  useEffect(() => {
+    writeReaderDevicePreferences({
+      imageDisplayMode: readerImageDisplayMode,
+      controlLayout: readerControlLayout,
+    });
+  }, [readerImageDisplayMode, readerControlLayout]);
+
+  useEffect(() => {
+    if (view !== "reader" || !selectedBook) return;
+    const stage = pageStageRef.current;
+    if (!stage) return;
+    const observedStage = stage;
+
+    function updateReaderViewport() {
+      const bounds = observedStage.getBoundingClientRect();
+      if (bounds.width <= 0 || bounds.height <= 0) return;
+      setReaderViewport((current) => {
+        const next = { width: Math.round(bounds.width), height: Math.round(bounds.height) };
+        return current.width === next.width && current.height === next.height ? current : next;
+      });
+    }
+
+    updateReaderViewport();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateReaderViewport);
+    observer?.observe(observedStage);
+    window.addEventListener("resize", updateReaderViewport);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", updateReaderViewport);
+    };
+  }, [view, selectedBook?.id, readerFullscreen]);
+
+  useEffect(() => {
+    pageSpreadRef.current?.scrollTo({ top: 0, left: 0 });
+  }, [selectedBook?.id, displayedPageIndex, readerImageDisplayMode]);
 
   useEffect(() => {
     const value = query.trim();
@@ -1446,7 +1496,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [selectedBook?.id, pageIndex, pages.length, readerRetryKey, readerPageMode]);
+  }, [selectedBook?.id, pageIndex, pages.length, readerRetryKey, readerPageMode, readerImageDisplayMode, readerViewport.width, readerViewport.height]);
 
   useEffect(() => {
     if (!selectedBook || readerPageMode !== "webtoon" || selectedBook.format === "epub" || selectedBook.format === "pdf") return;
@@ -1533,7 +1583,15 @@ export function App() {
   }, [view, selectedBook, pageIndex, pages.length, pdfPageCount, readerPageMode, epubPagePosition, epubPageCount]);
 
   function comicPageDisplayPath(bookID: number, page: Page | undefined, index: number) {
-    return page?.displayUrl || page?.url || `/api/books/${bookID}/pages/${index}?maxWidth=1200`;
+    const path = page?.displayUrl || page?.url || `/api/books/${bookID}/pages/${index}`;
+    const displayMode = readerPageMode === "single" ? readerImageDisplayMode : "contain";
+    const maxWidth = readerDisplayMaxWidth(
+      displayMode,
+      readerViewport.width,
+      readerViewport.height,
+      typeof window === "undefined" ? 1 : window.devicePixelRatio || 1,
+    );
+    return pagePathWithMaxWidth(path, maxWidth);
   }
 
   function preloadPage(bookID: number, index: number) {
@@ -1855,8 +1913,9 @@ export function App() {
       ? "pdfBookReader"
       : `${selectedBook.format}Reader`
     : "";
+  const showReaderThumbControls = Boolean(selectedBook) && readerControlLayout !== "balanced" && !useWebtoonReader;
   const readerClassName = selectedBook
-    ? `reader ${selectedBookReaderClass}${selectedBook.format === "epub" ? ` epubTheme-${epubTheme}` : ""}${useWebtoonReader ? " webtoonMode" : ""}${readerFullscreen ? " immersiveMode" : ""}`
+    ? `reader ${selectedBookReaderClass} controlLayout-${readerControlLayout}${selectedBook.format === "epub" ? ` epubTheme-${epubTheme}` : ""}${useWebtoonReader ? " webtoonMode" : ""}${readerFullscreen ? " immersiveMode" : ""}`
     : "reader";
   const visibleContinueBooks = continueBooks.slice(0, 4);
 
@@ -2651,27 +2710,53 @@ export function App() {
                         </label>
                       </>
                     ) : (
-                      <div className="segmentedControl" role="group" aria-label="Page mode">
-                        <button
-                          className={readerPageMode === "single" ? "selected" : ""}
-                          onClick={() => changeComicReaderPageMode("single")}
-                        >
-                          {t.single}
-                        </button>
-                        <button
-                          className={readerPageMode === "double" ? "selected" : ""}
-                          onClick={() => changeComicReaderPageMode("double")}
-                        >
-                          {t.double}
-                        </button>
-                        <button
-                          className={readerPageMode === "webtoon" ? "selected" : ""}
-                          onClick={() => changeComicReaderPageMode("webtoon")}
-                        >
-                          {t.webtoon}
-                        </button>
-                      </div>
+                      <>
+                        <div className="segmentedControl" role="group" aria-label="Page mode">
+                          <button
+                            className={readerPageMode === "single" ? "selected" : ""}
+                            onClick={() => changeComicReaderPageMode("single")}
+                          >
+                            {t.single}
+                          </button>
+                          <button
+                            className={readerPageMode === "double" ? "selected" : ""}
+                            onClick={() => changeComicReaderPageMode("double")}
+                          >
+                            {t.double}
+                          </button>
+                          <button
+                            className={readerPageMode === "webtoon" ? "selected" : ""}
+                            onClick={() => changeComicReaderPageMode("webtoon")}
+                          >
+                            {t.webtoon}
+                          </button>
+                        </div>
+                        {selectedBook.format !== "pdf" && readerPageMode === "single" && (
+                          <select
+                            className="readerFitSelect"
+                            aria-label={t.displayMode}
+                            title={t.displayMode}
+                            value={readerImageDisplayMode}
+                            onChange={(event) => setReaderImageDisplayMode(event.target.value as ReaderImageDisplayMode)}
+                          >
+                            <option value="contain">{t.fitContain}</option>
+                            <option value="width">{t.fitWidth}</option>
+                            <option value="height">{t.fitHeight}</option>
+                          </select>
+                        )}
+                      </>
                     )}
+                    <select
+                      className="readerControlLayoutSelect"
+                      aria-label={t.controlLayout}
+                      title={t.controlLayout}
+                      value={readerControlLayout}
+                      onChange={(event) => setReaderControlLayout(event.target.value as ReaderControlLayout)}
+                    >
+                      <option value="balanced">{t.controlBalanced}</option>
+                      <option value="left">{t.controlLeft}</option>
+                      <option value="right">{t.controlRight}</option>
+                    </select>
                     <button className="readerFullscreenButton" onClick={toggleReaderFullscreen}>{readerFullscreen ? t.exitFullscreen : t.fullscreen}</button>
                   </div>
                 </div>
@@ -2744,12 +2829,19 @@ export function App() {
                   </section>
                 )}
                 <div
-                  className={`pageStage ${selectedBook.format === "epub" ? "epub" : selectedBook.format === "pdf" ? `pdf ${readerPageMode === "webtoon" ? "webtoon" : ""}` : readerPageMode}`}
+                  ref={pageStageRef}
+                  className={`pageStage ${selectedBook.format === "epub" ? "epub" : selectedBook.format === "pdf" ? `pdf ${readerPageMode === "webtoon" ? "webtoon" : ""}` : `${readerPageMode}${readerPageMode === "single" ? ` fit-${readerImageDisplayMode}` : ""}`}`}
                   onMouseDownCapture={handleReaderMouseDown}
                   onTouchStartCapture={handleReaderTouchStart}
                 >
                   <button className="pageEdge previous" aria-label="Previous page" onClick={goReaderPrevious} />
                   <button className="pageEdge next" aria-label="Next page" onClick={goReaderNext} />
+                  {showReaderThumbControls && (
+                    <div className={`readerThumbControls ${readerControlLayout}`} aria-label={t.controlLayout}>
+                      <button aria-label={t.previous} title={t.previous} onClick={goReaderPrevious}>‹</button>
+                      <button aria-label={t.next} title={t.next} onClick={goReaderNext}>›</button>
+                    </div>
+                  )}
                   {readerLoadState === "loading" && selectedBook.format !== "epub" && selectedBook.format !== "pdf" && pageIndex !== displayedPageIndex && (
                     <div className="pageLoading floating" role="status" aria-live="polite">
                       <div className="pageProgress"><div /></div>
@@ -2866,7 +2958,7 @@ export function App() {
                       })}
                     </div>
                   ) : (
-                    <div className="pageSpread" aria-live="polite">
+                    <div ref={pageSpreadRef} className="pageSpread" aria-live="polite">
                       {visiblePageIndexes(displayedPageIndex, pages.length, readerPageMode).map((visibleIndex) => (
                         <img
                           key={`${selectedBook.id}-${visibleIndex}`}
@@ -2882,7 +2974,7 @@ export function App() {
                 </div>
                 {!useWebtoonReader && (
                   <div className="readerControls">
-                    <button onClick={goReaderPrevious}>{t.previous}</button>
+                    <button className="readerControlPrevious" onClick={goReaderPrevious}>{t.previous}</button>
                     {selectedBook.format === "epub" && (
                       <span className="epubProgress">
                         {t.epubChapterPageLabel(Math.min(epubPagePosition + 1, epubPageCount), epubPageCount)}
@@ -2896,7 +2988,7 @@ export function App() {
                       value={pageIndex}
                       onChange={(event) => setReaderPage(selectedBook, Number(event.target.value))}
                     />
-                    <button onClick={goReaderNext}>{t.next}</button>
+                    <button className="readerControlNext" onClick={goReaderNext}>{t.next}</button>
                   </div>
                 )}
               </>
@@ -4721,6 +4813,14 @@ const translations = {
     single: "单页",
     double: "双页",
     webtoon: "条漫",
+    displayMode: "图片显示模式",
+    fitContain: "适应屏幕",
+    fitWidth: "填充宽度",
+    fitHeight: "填充高度",
+    controlLayout: "翻页按钮位置",
+    controlBalanced: "双侧按钮",
+    controlLeft: "左手模式",
+    controlRight: "右手模式",
     light: "浅色",
     sepia: "米色",
     dark: "深色",
@@ -4954,6 +5054,14 @@ const translations = {
     single: "單頁",
     double: "雙頁",
     webtoon: "條漫",
+    displayMode: "圖片顯示模式",
+    fitContain: "適應螢幕",
+    fitWidth: "填滿寬度",
+    fitHeight: "填滿高度",
+    controlLayout: "翻頁按鈕位置",
+    controlBalanced: "雙側按鈕",
+    controlLeft: "左手模式",
+    controlRight: "右手模式",
     light: "淺色",
     sepia: "米色",
     dark: "深色",
@@ -5187,6 +5295,14 @@ const translations = {
     single: "Single",
     double: "Double",
     webtoon: "Webtoon",
+    displayMode: "Image display mode",
+    fitContain: "Fit screen",
+    fitWidth: "Fit width",
+    fitHeight: "Fit height",
+    controlLayout: "Page controls",
+    controlBalanced: "Both sides",
+    controlLeft: "Left hand",
+    controlRight: "Right hand",
     light: "Light",
     sepia: "Sepia",
     dark: "Dark",
@@ -5420,6 +5536,14 @@ const translations = {
     single: "単ページ",
     double: "見開き",
     webtoon: "縦スクロール",
+    displayMode: "画像表示モード",
+    fitContain: "画面に合わせる",
+    fitWidth: "幅に合わせる",
+    fitHeight: "高さに合わせる",
+    controlLayout: "ページ操作位置",
+    controlBalanced: "両側",
+    controlLeft: "左手モード",
+    controlRight: "右手モード",
     light: "ライト",
     sepia: "セピア",
     dark: "ダーク",
@@ -5653,6 +5777,14 @@ const translations = {
     single: "한 페이지",
     double: "두 페이지",
     webtoon: "웹툰",
+    displayMode: "이미지 표시 모드",
+    fitContain: "화면 맞춤",
+    fitWidth: "너비 맞춤",
+    fitHeight: "높이 맞춤",
+    controlLayout: "페이지 버튼 위치",
+    controlBalanced: "양쪽 버튼",
+    controlLeft: "왼손 모드",
+    controlRight: "오른손 모드",
     light: "라이트",
     sepia: "세피아",
     dark: "다크",
@@ -5719,6 +5851,25 @@ function writeLocalPreferences(preferences: ClientPreferences) {
   const normalized = normalizeClientPreferences(preferences);
   writeLocalStorage("foliospace_preferences", JSON.stringify(normalized));
   writeLocalStorage("foliospace_locale", normalized.locale);
+}
+
+function readReaderDevicePreferences(): ReaderDevicePreferences {
+  const stored = readLocalStorage("foliospace_reader_device_preferences");
+  if (stored) {
+    try {
+      return normalizeReaderDevicePreferences(JSON.parse(stored));
+    } catch {
+      // Fall through to device defaults.
+    }
+  }
+  return normalizeReaderDevicePreferences({});
+}
+
+function writeReaderDevicePreferences(preferences: ReaderDevicePreferences) {
+  writeLocalStorage(
+    "foliospace_reader_device_preferences",
+    JSON.stringify(normalizeReaderDevicePreferences(preferences)),
+  );
 }
 
 function clampScanWorkers(value: number) {

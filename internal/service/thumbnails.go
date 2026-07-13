@@ -424,7 +424,21 @@ func (s *Service) generateThumbnailJob(ctx context.Context, job domain.Thumbnail
 	}
 	defer imageStream.Body.Close()
 
-	img, _, err := image.Decode(io.LimitReader(imageStream.Body, 64<<20))
+	s.imageDecodeMu.Lock()
+	data, readErr := io.ReadAll(io.LimitReader(imageStream.Body, maxThumbnailSourceBytes+1))
+	if readErr != nil {
+		s.imageDecodeMu.Unlock()
+		return s.writeGenericThumbnailJob(job, book, cachePath, fmt.Errorf("read thumbnail source: %w", readErr))
+	}
+	if len(data) > maxThumbnailSourceBytes || !imageSourceWithinDecodeBudget(data) {
+		s.imageDecodeMu.Unlock()
+		if book.Format == "pdf" {
+			return fmt.Errorf("pdf thumbnail source exceeds safe decode budget")
+		}
+		return s.writeGenericThumbnailJob(job, book, cachePath, fmt.Errorf("thumbnail source exceeds safe decode budget"))
+	}
+	img, _, err := image.Decode(bytes.NewReader(data))
+	s.imageDecodeMu.Unlock()
 	if err != nil {
 		if book.Format == "pdf" {
 			return fmt.Errorf("decode pdf thumbnail source: %w", err)
