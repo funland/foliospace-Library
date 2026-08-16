@@ -1,6 +1,6 @@
 # FolioSpace Library Docker Compose Quick Start
 
-This package runs FolioSpace Library 0.995 on a Docker host or NAS. The image
+This package runs FolioSpace Library 0.996 on a Docker host or NAS. The image
 supports Linux AMD64 and ARM64.
 
 ## 1. Prepare the files

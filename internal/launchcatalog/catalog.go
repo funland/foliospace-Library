@@ -31,6 +31,8 @@ var auditedEntries = []auditedEntry{
 	{name: "sf2.zip", size: 3551819, sha1: "bd59872a57f14dc492e2fb387727a9402f3d4f97", platform: "cps1", romSetName: "sf2", emulatorHint: "fbneo"},
 	{name: "sfa.zip", size: 7365582, sha1: "61dece364b8d2f2ff15391505168be334ebb371a", platform: "cps2", romSetName: "sfa", emulatorHint: "fbneo"},
 	{name: "sfiii.zip", size: 38868517, sha1: "7aae0cfc4ef8911f19d2e986cee63807deebf1b6", platform: "cps3", romSetName: "sfiii", emulatorHint: "fbneo"},
+	{name: "ptblank.zip", size: 5033400, sha1: "15f9dd6ccf009bffcb156b234bdeadbe26344314", platform: "arcade", romSetName: "ptblank", emulatorHint: "fbneo"},
+	{name: "ptblanka.zip", size: 131248, sha1: "ee3e54a9f49bfc7c27f3e0c6ad580bf78d04d1e2", platform: "arcade", romSetName: "ptblanka", emulatorHint: "fbneo"},
 	{name: "hypreact.zip", size: 8052342, sha1: "e0940f848884c9d53bbc41bb947d584e06cc1845", platform: "mame", romSetName: "hypreact", emulatorHint: "mame"},
 	{name: "hypreac2.zip", size: 18291541, sha1: "7fe73cc7ee40a49225a4616106e538c084ef4364", platform: "mame", romSetName: "hypreac2", emulatorHint: "mame"},
 	{name: "srmp4.zip", size: 7697767, sha1: "cfcf2cdf61ebca862a84473a8bf75fbe8d76cb7b", platform: "mame", romSetName: "srmp4", emulatorHint: "mame"},
@@ -118,7 +120,7 @@ func CatalogRole(game domain.GameAsset, dosLaunch *domain.DOSLaunch) string {
 
 func IsKnownDependencyFile(path string) bool {
 	switch strings.ToLower(filepath.Base(strings.TrimSpace(path))) {
-	case "neogeo.zip", "awbios.zip", "segabill.zip", "ym2413_instruments.zip",
+	case "neogeo.zip", "awbios.zip", "segabill.zip", "namcoc75.zip", "ym2413_instruments.zip",
 		"qsound.zip", "qsound_hle.zip", "dl-1425.bin",
 		"coh1000c.zip", "coh3002c.zip":
 		return true

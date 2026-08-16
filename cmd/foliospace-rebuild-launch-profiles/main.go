@@ -357,7 +357,7 @@ func applyFBNeoTarget(profile domain.GameLaunchProfile, target launchProfileTarg
 	profile.MinClientVersion = target.MinClientVersion
 	profile.ClientPlatform = target.ClientPlatform
 	profile.Architecture = target.Architecture
-	profile.Runtime = domain.GameRuntimeDescriptor{ID: "libretro", CoreID: "fbneo", CoreSHA256: target.CoreSHA256}
+	profile.Runtime = domain.GameRuntimeDescriptor{ID: "libretro", CoreID: "fbneo", CoreBuildID: target.CoreBuildID, CoreSHA256: target.CoreSHA256}
 	return profile
 }
 

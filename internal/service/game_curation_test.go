@@ -108,6 +108,13 @@ func TestGameCatalogTargetsPolicyStatusValidatesSplitPolicies(t *testing.T) {
 	if status.Available || status.Message == "" {
 		t.Fatalf("invalid targets status = %#v, want unavailable with an error", status)
 	}
+	if err := os.WriteFile(fbneoPath, []byte(`{"targets":[{"id":"ipad","coreBuildId":"fbneo-source-libretro-ios-arm64-lightgun2p-v1"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	status = gameCatalogTargetsPolicyStatus(fbneoPath, mamePath)
+	if !status.Available {
+		t.Fatalf("stable build id targets status = %#v, want available", status)
+	}
 }
 
 func TestRefreshGameMetadataFromHasheousUsesHashAndFillsMissingFields(t *testing.T) {

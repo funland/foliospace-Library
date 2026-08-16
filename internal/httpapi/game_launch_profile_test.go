@@ -235,6 +235,76 @@ func TestAPIResolvesAuditedCPSAndMAMECatalogProfiles(t *testing.T) {
 	}
 }
 
+func TestAPIResolvesPointBlankAppleFBNeoProfilesAndHidesDeviceArchive(t *testing.T) {
+	ts, games := catalogLaunchProfileTestServer(t)
+	defer ts.Close()
+
+	iosBuildID := "fbneo:archive-f1d54ccd94b661434a38930591e3697b89165a5946c45eff98f60d3981fd7b6c:ios-arm64:full-v1"
+	xrosBuildID := "fbneo:archive-a161e273b161dc77fad5acc449798987f89741f0f75da1f05bec4ff7b6b75181:xros-arm64:full-localized-v1"
+	clients := []struct {
+		name       string
+		platform   string
+		profileTag string
+		buildID    string
+	}{
+		{name: "SpatialEMU.iOS", platform: "ios-arm64", profileTag: "ios", buildID: iosBuildID},
+		{name: "SpatialEMU.iPadOS", platform: "ipados-arm64", profileTag: "ipados", buildID: iosBuildID},
+		{name: "SpatialEMU.visionOS", platform: "visionos-arm64", profileTag: "visionos", buildID: xrosBuildID},
+	}
+	for _, client := range clients {
+		request := domain.GameLaunchResolveRequest{
+			Client:   domain.GameLaunchClient{Name: client.name, Version: "1.300", Platform: client.platform, Architecture: "arm64"},
+			Runtimes: []domain.GameRuntimeDescriptor{{ID: "libretro", CoreID: "fbneo", CoreBuildID: client.buildID}},
+		}
+		for _, game := range []struct {
+			name      string
+			fileNames []string
+		}{
+			{name: "ptblank", fileNames: []string{"ptblank.zip", "namcoc75.zip"}},
+			{name: "ptblanka", fileNames: []string{"ptblanka.zip", "ptblank.zip", "namcoc75.zip"}},
+		} {
+			response := postLaunchResolve(t, ts.URL, games[game.name].ID, "secret", request, nil)
+			if response.StatusCode != http.StatusOK {
+				t.Fatalf("%s/%s resolve status=%d body=%s", client.name, game.name, response.StatusCode, response.Body)
+			}
+			var resolved clientGameLaunchResolutionResponse
+			if err := json.Unmarshal(response.Body, &resolved); err != nil {
+				t.Fatal(err)
+			}
+			if resolved.LaunchProfileID != game.name+"-"+client.profileTag+"-fbneo-lightgun2p-v1" || resolved.Runtime.CoreBuildID != client.buildID || len(resolved.Manifest.Files) != len(game.fileNames) {
+				t.Fatalf("%s/%s resolution=%+v", client.name, game.name, resolved)
+			}
+			for index, name := range game.fileNames {
+				if resolved.Manifest.Files[index].Name != name {
+					t.Fatalf("%s/%s file[%d]=%q, want %q", client.name, game.name, index, resolved.Manifest.Files[index].Name, name)
+				}
+			}
+		}
+	}
+
+	unknown := domain.GameLaunchResolveRequest{
+		Client:   domain.GameLaunchClient{Name: "SpatialEMU.iPadOS", Version: "1.300", Platform: "ipados-arm64", Architecture: "arm64"},
+		Runtimes: []domain.GameRuntimeDescriptor{{ID: "libretro", CoreID: "fbneo", CoreBuildID: "fbneo-unknown-libretro-ios-arm64-lightgun2p-v1"}},
+	}
+	response := postLaunchResolve(t, ts.URL, games["ptblank"].ID, "secret", unknown, nil)
+	if response.StatusCode != http.StatusConflict || !strings.Contains(string(response.Body), `"code":"core-fingerprint-unknown"`) {
+		t.Fatalf("unknown build status=%d body=%s", response.StatusCode, response.Body)
+	}
+
+	if err := os.Rename(games["namcoc75"].FilePath, games["namcoc75"].FilePath+".missing"); err != nil {
+		t.Fatal(err)
+	}
+	unknown.Runtimes[0].CoreBuildID = iosBuildID
+	response = postLaunchResolve(t, ts.URL, games["ptblank"].ID, "secret", unknown, nil)
+	if response.StatusCode != http.StatusConflict || !strings.Contains(string(response.Body), `"code":"dependency-missing"`) || !strings.Contains(string(response.Body), `"file":"namcoc75.zip"`) {
+		t.Fatalf("missing dependency status=%d body=%s", response.StatusCode, response.Body)
+	}
+
+	if body := authGet(t, ts.URL+"/api/client/games?q=namcoc75", "secret"); strings.Contains(body, `"romSetName":"namcoc75"`) || !strings.Contains(body, `"total":0`) {
+		t.Fatalf("client catalog exposed namcoc75: %s", body)
+	}
+}
+
 func TestAPISelectsMAMEOrFBNeoFromDualArcadeCapabilities(t *testing.T) {
 	ts, games := catalogLaunchProfileTestServer(t)
 	defer ts.Close()
@@ -971,6 +1041,9 @@ func catalogLaunchProfileTestServer(t *testing.T) (*httptest.Server, map[string]
 		{name: "fromanc4", platform: "mame", emulator: "mame", size: 21443327, sha1: "ff478f3350d9703e8647f659ce169ee234082249", role: "game"},
 		{name: "mcnpshnt", platform: "mame", emulator: "mame", size: 1205007, sha1: "24a714371a867db1709798a95a171778e0940021", role: "game"},
 		{name: "ym2413_instruments", platform: "mame", emulator: "mame", size: 322, sha1: "cbcd6e0698026452bb2bb6a6e6f7f5a3667a675c", role: "dependency"},
+		{name: "ptblank", platform: "arcade", emulator: "fbneo", size: 5033400, sha1: "15f9dd6ccf009bffcb156b234bdeadbe26344314", role: "game"},
+		{name: "ptblanka", platform: "arcade", emulator: "fbneo", size: 131248, sha1: "ee3e54a9f49bfc7c27f3e0c6ad580bf78d04d1e2", role: "game"},
+		{name: "namcoc75", platform: "arcade", emulator: "fbneo", size: 8709, sha1: "0649e27b7d605add7fc4215ee628b71e3c835328", role: "dependency"},
 	}
 	games := make(map[string]domain.GameAsset, len(assets))
 	for _, item := range assets {

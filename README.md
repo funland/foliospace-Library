@@ -8,7 +8,7 @@ It is not trying to become a complete Plex, Jellyfin, or Immich replacement. The
 
 The current implementation still starts from the FolioSpace Reader codebase and keeps the existing reading MVP operational while the model evolves toward `Asset` / `LibraryItem`.
 
-Current release: [`0.995`](https://github.com/funland/foliospace-Library/releases/tag/v0.995).
+Current release: [`0.996`](https://github.com/funland/foliospace-Library/releases/tag/v0.996).
 
 ## Quick Answers
 
@@ -261,6 +261,16 @@ Release `0.975` is a stability and performance hotfix for large game libraries:
 - Game list sorting and filtering add SQLite expression indexes for title and platform-heavy browsing.
 - Service, Client API, and MCP metadata report version `0.975`.
 
+## Release 0.996
+
+Release `0.996` adds audited Point Blank launch support for SpatialEMU Apple clients:
+
+- Exact `ptblank` and `ptblanka` fingerprints now route to FBNeo instead of MAME metadata.
+- iOS, iPadOS, and visionOS profiles use stable packaged-core `coreBuildId` identities while retaining strict rejection of unknown builds and legacy SHA-256 compatibility for older approved profiles.
+- `ptblank` resolves with `namcoc75.zip`; `ptblanka` resolves with its parent `ptblank.zip` plus `namcoc75.zip`.
+- `namcoc75.zip` is reconciled to catalog role `dependency`, keeping it out of client game directories while preserving resolver access.
+- Service, Client API, Web, and source MCP metadata report version `0.996`.
+
 ## Release 0.995
 
 Release `0.995` expands safe native game delivery, compatibility curation, and offline access:
@@ -447,7 +457,7 @@ curl -fsSL https://foliospace.app/install-mcp.sh | sh
 Release maintainers can build macOS/Linux MCP packages with:
 
 ```bash
-VERSION=0.995 ./scripts/build-mcp-release.sh
+VERSION=0.996 ./scripts/build-mcp-release.sh
 ```
 
 ## Product Direction
@@ -494,7 +504,7 @@ an access key and lets you choose a container path such as `/library`, `/books`,
 The default deployment currently pins this image:
 
 ```bash
-docker pull funland/foliospace-library:0.995
+docker pull funland/foliospace-library:0.996
 ```
 
 To upgrade later, change `FOLIOSPACE_IMAGE` in `.env`, then run:
@@ -534,7 +544,7 @@ docker run -p 8080:8080 \
   -v /volume2/GameROMS:/games:ro \
   -v /volume2/MovieCollection/Movies:/videos:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games,/videos \
-  funland/foliospace-library:0.995
+  funland/foliospace-library:0.996
 ```
 
 If a directory is missing from the setup page, add its Docker volume mapping
@@ -556,11 +566,11 @@ Docker Hub releases are built by GitHub Actions from Git tags. Configure these r
 Then create and push a version tag:
 
 ```bash
-git tag v0.995
-git push github v0.995
+git tag v0.996
+git push github v0.996
 ```
 
-The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:0.995` and `funland/foliospace-library:latest`.
+The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:0.996` and `funland/foliospace-library:latest`.
 
 ## Current MVP Support
 

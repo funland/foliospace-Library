@@ -22,6 +22,29 @@ func TestAuditedSF2OverridesCandidateMetadata(t *testing.T) {
 	}
 }
 
+func TestAuditedPointBlankRoutesToFBNeoAndHidesNamcoC75(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		size int64
+		sha1 string
+	}{
+		{name: "ptblank", size: 5033400, sha1: "15f9dd6ccf009bffcb156b234bdeadbe26344314"},
+		{name: "ptblanka", size: 131248, sha1: "ee3e54a9f49bfc7c27f3e0c6ad580bf78d04d1e2"},
+	} {
+		game := CanonicalizeAuditedGame(domain.GameAsset{
+			FilePath: "/games/MAME/" + test.name + ".zip", Size: test.size, SHA1: test.sha1,
+			Platform: "arcade", ROMSetName: test.name, EmulatorHint: "mame", CatalogRole: RoleNeedsCuration,
+		})
+		if game.Platform != "arcade" || game.ROMSetName != test.name || game.EmulatorHint != "fbneo" || CatalogRole(game, nil) != RoleGame {
+			t.Fatalf("%s = %#v, want audited Arcade/FBNeo entry", test.name, game)
+		}
+	}
+	device := domain.GameAsset{FilePath: "/games/MAME/namcoc75.zip", Platform: "arcade", CatalogRole: RoleGame}
+	if got := CatalogRole(device, nil); got != RoleDependency {
+		t.Fatalf("namcoc75 role = %q, want %q", got, RoleDependency)
+	}
+}
+
 func TestExplicitNeedsCurationSurvivesForNonArcadeContent(t *testing.T) {
 	game := domain.GameAsset{Platform: "unknown", CatalogRole: RoleNeedsCuration}
 	if got := CatalogRole(game, nil); got != RoleNeedsCuration {

@@ -247,7 +247,7 @@ Response:
 ```json
 {
   "serviceName": "FolioSpace Library",
-  "serviceVersion": "0.995",
+  "serviceVersion": "0.996",
   "apiVersion": "v1",
   "supportedFormats": ["cbz", "zip", "epub", "pdf", "mp4", "m4v", "mov", "mkv", "avi", "webm", "nes", "sfc", "smc", "vb", "vboy", "gba", "gb", "gbc", "nds", "3ds", "cci", "cxi", "cia", "z64", "v64", "n64", "gdi", "cdi", "chd", "iso", "bin", "cue", "ccd", "toc", "m3u", "cso", "gcm", "rvz", "7z", "dosz", "exe", "com", "bat", "d88", "fdi", "thd", "nhd", "hdi", "vhd", "py1"],
   "capabilities": {
@@ -1039,11 +1039,20 @@ The Android ARM64 Dreamcast runtime reports Flycast 2.6 with `coreBuildId: "flyc
 
 GameEMU Android uses the same exact tuple for resolver-certified NAOMI 2 catalog entries. The service accepts only canonical `platform: "naomi2"` games with a complete checksummed manifest; scanner-recognized cartridge packages contain one entry ZIP, GD-ROM packages contain that ZIP plus one same-driver CHD dependency, and pinned split cartridge clones contain the clone ZIP plus their checksummed parent ZIP. `parentRomSetName` identifies the latter relationship. The resolver never includes `naomi2.zip` for Android because firmware remains user-managed. A stale or unknown Android Flycast `coreBuildId` is rejected rather than echoed into an automatic profile.
 
-MAME and FBNeo profiles remain target-specific and audited. Adding an Apple client identity does not make a Windows arcade profile portable: each mobile target needs a persisted profile matching its exact client identity and runtime tuple. Current Apple builds report `mame/0.287/mame-0.287`; FBNeo additionally requires the exact client-reported `coreSha256`. The server can persist these alongside Windows MAME 0.288 and FBNeo profiles without replacing or weakening either policy.
+MAME and FBNeo profiles remain target-specific and audited. Adding an Apple client identity does not make a Windows arcade profile portable: each mobile target needs a profile matching its exact client identity and runtime tuple. Current Apple builds report `mame/0.287/mame-0.287`. New Apple FBNeo profiles use a stable `coreBuildId`; legacy profiles may continue using an exact `coreSha256`. The server can persist these alongside Windows MAME 0.288 and FBNeo profiles without replacing or weakening either policy.
 
 Clients may report MAME and FBNeo together in `runtimes`. The server evaluates every reported capability against the game's immutable fingerprint and audited profiles, then returns the selected request tuple in `runtime`. Selection is controlled by a stable server-side profile priority and does not depend on the order of `runtimes`. Existing clients that report only one runtime keep the same behavior. If no reported runtime has an audited profile, the endpoint returns `409`.
 
 Legacy statically linked Apple FBNeo builds may still report an application-derived `coreSha256`. New profiles may additionally store `coreBuildId` so UI-only application rebuilds do not invalidate the core identity. Clients must never omit or fabricate either field to bypass strict arcade verification.
+
+Point Blank uses the stable identity rule `fbneo:archive-{archiveSHA256}:{targetABI}:{buildFlavor}`, encoded as lowercase ASCII. `archiveSHA256` identifies the packaged FBNeo archive used by the target, not the SpatialEMU application executable. The audited lightgun profiles require these exact values:
+
+- SpatialEMU iOS/iPadOS ARM64: `fbneo:archive-f1d54ccd94b661434a38930591e3697b89165a5946c45eff98f60d3981fd7b6c:ios-arm64:full-v1`
+- SpatialEMU visionOS ARM64: `fbneo:archive-a161e273b161dc77fad5acc449798987f89741f0f75da1f05bec4ff7b6b75181:xros-arm64:full-localized-v1`
+
+The archive digest, target ABI, and build flavor are part of the compatibility contract. A change to the packaged FBNeo core, ABI, or compatibility-affecting build flavor requires a new ID and a separately audited server profile. Unrelated application code, version numbers, signing, and UI changes do not. Clients send `coreBuildId` only when server capabilities advertise both `gameLaunchResolver: true` and `stableRuntimeIdentityV1: true`; otherwise they preserve the legacy `coreSha256` tuple.
+
+For the exact audited ROM fingerprints, `ptblank` resolves `ptblank.zip` plus `namcoc75.zip`; `ptblanka` resolves `ptblanka.zip`, parent `ptblank.zip`, and `namcoc75.zip`. The device archive remains catalog role `dependency`: it is hidden from client game directories but remains addressable by the resolver.
 
 ```json
 {

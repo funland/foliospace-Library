@@ -160,8 +160,9 @@ func validateGameCatalogTargetsFile(path string, requireCore bool) error {
 	}
 	var document struct {
 		Targets []struct {
-			ID         string `json:"id"`
-			CoreSHA256 string `json:"coreSha256"`
+			ID          string `json:"id"`
+			CoreBuildID string `json:"coreBuildId"`
+			CoreSHA256  string `json:"coreSha256"`
 		} `json:"targets"`
 	}
 	if err := json.Unmarshal(data, &document); err != nil {
@@ -174,12 +175,19 @@ func validateGameCatalogTargetsFile(path string, requireCore bool) error {
 		if strings.TrimSpace(target.ID) == "" {
 			return errors.New("target ID is empty")
 		}
+		buildID := strings.TrimSpace(target.CoreBuildID)
 		core := strings.ToLower(strings.TrimSpace(target.CoreSHA256))
-		if requireCore && !sha256Pattern.MatchString(core) {
-			return fmt.Errorf("target %q has no complete core SHA-256", target.ID)
+		if requireCore && buildID == "" && core == "" {
+			return fmt.Errorf("target %q has no FBNeo coreBuildId or complete core SHA-256", target.ID)
 		}
-		if !requireCore && core != "" {
-			return fmt.Errorf("target %q must not set a core SHA-256", target.ID)
+		if requireCore && buildID != "" && !coreBuildIDPattern.MatchString(buildID) {
+			return fmt.Errorf("target %q has an invalid FBNeo coreBuildId", target.ID)
+		}
+		if requireCore && core != "" && !sha256Pattern.MatchString(core) {
+			return fmt.Errorf("target %q has an invalid core SHA-256", target.ID)
+		}
+		if !requireCore && (buildID != "" || core != "") {
+			return fmt.Errorf("target %q must not set an FBNeo core identity", target.ID)
 		}
 	}
 	return nil

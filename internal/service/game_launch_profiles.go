@@ -78,9 +78,14 @@ type auditedGameLaunchCandidate struct {
 
 var sha1Pattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 var sha256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+var coreBuildIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._:-]{0,255}$`)
 var errAuditedLaunchSourceUnavailable = errors.New("audited launch source unavailable")
 
-const gameEMUAndroidFlycastCoreBuildID = "flycast-392a429-android-v4-arm64-gles3-hle-vmu-arcade-save-bundle"
+const (
+	gameEMUAndroidFlycastCoreBuildID = "flycast-392a429-android-v4-arm64-gles3-hle-vmu-arcade-save-bundle"
+	pointBlankAppleIOSCoreBuildID    = "fbneo:archive-f1d54ccd94b661434a38930591e3697b89165a5946c45eff98f60d3981fd7b6c:ios-arm64:full-v1"
+	pointBlankAppleXROSCoreBuildID   = "fbneo:archive-a161e273b161dc77fad5acc449798987f89741f0f75da1f05bec4ff7b6b75181:xros-arm64:full-localized-v1"
+)
 
 var atomiswaveBIOSLaunchFile = auditedGameLaunchFile{
 	SourceSHA1: "cdf247154e28c4b352b962a4a523587f2fde9305",
@@ -271,6 +276,57 @@ var auditedGameLaunchProfiles = []auditedGameLaunchProfile{
 			{SourceSHA1: "cbcd6e0698026452bb2bb6a6e6f7f5a3667a675c", SourceName: "ym2413_instruments.zip", Name: "ym2413.zip", Size: 322, Role: "dependency"},
 		},
 	},
+}
+
+func init() {
+	auditedGameLaunchProfiles = append(auditedGameLaunchProfiles, pointBlankAppleLaunchProfiles()...)
+}
+
+func pointBlankAppleLaunchProfiles() []auditedGameLaunchProfile {
+	targets := []struct {
+		id         string
+		clientName string
+		platform   string
+		buildID    string
+	}{
+		{id: "ios", clientName: "SpatialEMU.iOS", platform: "ios-arm64", buildID: pointBlankAppleIOSCoreBuildID},
+		{id: "ipados", clientName: "SpatialEMU.iPadOS", platform: "ipados-arm64", buildID: pointBlankAppleIOSCoreBuildID},
+		{id: "visionos", clientName: "SpatialEMU.visionOS", platform: "visionos-arm64", buildID: pointBlankAppleXROSCoreBuildID},
+	}
+	games := []struct {
+		id        string
+		title     string
+		entrySHA1 string
+		files     []auditedGameLaunchFile
+	}{
+		{
+			id: "ptblank", title: "Point Blank", entrySHA1: "15f9dd6ccf009bffcb156b234bdeadbe26344314",
+			files: []auditedGameLaunchFile{
+				{SourceSHA1: "15f9dd6ccf009bffcb156b234bdeadbe26344314", SourceName: "ptblank.zip", Name: "ptblank.zip", Size: 5033400, Role: "entry"},
+				{SourceSHA1: "0649e27b7d605add7fc4215ee628b71e3c835328", SourceName: "namcoc75.zip", Name: "namcoc75.zip", Size: 8709, Role: "dependency"},
+			},
+		},
+		{
+			id: "ptblanka", title: "Point Blank (Japan)", entrySHA1: "ee3e54a9f49bfc7c27f3e0c6ad580bf78d04d1e2",
+			files: []auditedGameLaunchFile{
+				{SourceSHA1: "ee3e54a9f49bfc7c27f3e0c6ad580bf78d04d1e2", SourceName: "ptblanka.zip", Name: "ptblanka.zip", Size: 131248, Role: "entry"},
+				{SourceSHA1: "15f9dd6ccf009bffcb156b234bdeadbe26344314", SourceName: "ptblank.zip", Name: "ptblank.zip", Size: 5033400, Role: "dependency"},
+				{SourceSHA1: "0649e27b7d605add7fc4215ee628b71e3c835328", SourceName: "namcoc75.zip", Name: "namcoc75.zip", Size: 8709, Role: "dependency"},
+			},
+		},
+	}
+	profiles := make([]auditedGameLaunchProfile, 0, len(targets)*len(games))
+	for _, game := range games {
+		for _, target := range targets {
+			profiles = append(profiles, auditedGameLaunchProfile{
+				ID: game.id + "-" + target.id + "-fbneo-lightgun2p-v1", Revision: 1, Priority: 250,
+				ClientName: target.clientName, MinClientVersion: "1.300", ClientPlatform: target.platform, Architecture: "arm64",
+				Runtime:   domain.GameRuntimeDescriptor{ID: "libretro", CoreID: "fbneo", CoreBuildID: target.buildID},
+				EntrySHA1: game.entrySHA1, EntrySourceName: game.id + ".zip", Title: game.title, ROMSetName: game.id, Files: game.files,
+			})
+		}
+	}
+	return profiles
 }
 
 func ValidateGameLaunchResolveRequest(req domain.GameLaunchResolveRequest) error {
@@ -1235,7 +1291,15 @@ func runtimeIdentityMatches(requested domain.GameRuntimeDescriptor, approved dom
 	if requestedBuildID != "" && approvedBuildID != "" {
 		return requestedBuildID == approvedBuildID
 	}
-	return strings.EqualFold(strings.TrimSpace(requested.CoreSHA256), strings.TrimSpace(approved.CoreSHA256))
+	requestedSHA256 := strings.ToLower(strings.TrimSpace(requested.CoreSHA256))
+	approvedSHA256 := strings.ToLower(strings.TrimSpace(approved.CoreSHA256))
+	if sha256Pattern.MatchString(requestedSHA256) && sha256Pattern.MatchString(approvedSHA256) {
+		return requestedSHA256 == approvedSHA256
+	}
+	if approvedBuildID != "" || approvedSHA256 != "" {
+		return false
+	}
+	return requestedBuildID == "" && requestedSHA256 == ""
 }
 
 func runtimeHasStableIdentity(runtime domain.GameRuntimeDescriptor) bool {

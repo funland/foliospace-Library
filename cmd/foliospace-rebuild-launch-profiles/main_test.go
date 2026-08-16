@@ -176,11 +176,12 @@ func TestBuildMAMEProfileAcceptsAuditedTimeCrisisEmbeddedDeviceROM(t *testing.T)
 	}
 }
 
-func TestLaunchProfileTargetsRequireCanonicalIdentityAndExactFBNeoHash(t *testing.T) {
+func TestLaunchProfileTargetsRequireCanonicalIdentityAndStableFBNeoIdentity(t *testing.T) {
 	document := launchProfileTargetDocument{Targets: []launchProfileTarget{
 		{
 			ID: "iPadOS", ClientName: "SpatialEMU.iPadOS", MinClientVersion: "1.300",
-			ClientPlatform: "ipados-arm64", Architecture: "arm64", CoreSHA256: "ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789",
+			ClientPlatform: "ipados-arm64", Architecture: "arm64",
+			CoreBuildID: "fbneo:archive-f1d54ccd94b661434a38930591e3697b89165a5946c45eff98f60d3981fd7b6c:ios-arm64:full-v1",
 		},
 		{
 			ID: "visionOS", ClientName: "SpatialEMU.visionOS", MinClientVersion: "1.300",
@@ -199,7 +200,7 @@ func TestLaunchProfileTargetsRequireCanonicalIdentityAndExactFBNeoHash(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(targets) != 2 || targets[0].ID != "ipados" || targets[0].CoreSHA256 != "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789" {
+	if len(targets) != 2 || targets[0].ID != "ipados" || targets[0].CoreBuildID != document.Targets[0].CoreBuildID {
 		t.Fatalf("targets=%+v", targets)
 	}
 
@@ -213,16 +214,17 @@ func TestLaunchProfileTargetsRequireCanonicalIdentityAndExactFBNeoHash(t *testin
 	}
 }
 
-func TestApplyFBNeoTargetUsesExactCoreSHA(t *testing.T) {
+func TestApplyFBNeoTargetUsesExactStableCoreIdentity(t *testing.T) {
 	catalog := launchprofile.FBNeoCatalog{Version: "v1", SHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}
 	game := launchprofile.FBNeoGame{Name: "sf2"}
 	target := launchProfileTarget{
 		ID: "visionos", ClientName: "SpatialEMU.visionOS", MinClientVersion: "1.300",
 		ClientPlatform: "visionos-arm64", Architecture: "arm64",
-		CoreSHA256: "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+		CoreBuildID: "fbneo:archive-a161e273b161dc77fad5acc449798987f89741f0f75da1f05bec4ff7b6b75181:xros-arm64:full-localized-v1",
+		CoreSHA256:  "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
 	}
 	profile := applyFBNeoTarget(domain.GameLaunchProfile{GameID: 1}, target, catalog, game)
-	if profile.ClientName != target.ClientName || profile.Runtime.CoreSHA256 != target.CoreSHA256 || profile.Runtime.CoreID != "fbneo" {
+	if profile.ClientName != target.ClientName || profile.Runtime.CoreBuildID != target.CoreBuildID || profile.Runtime.CoreSHA256 != target.CoreSHA256 || profile.Runtime.CoreID != "fbneo" {
 		t.Fatalf("profile=%+v", profile)
 	}
 }

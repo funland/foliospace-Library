@@ -1,6 +1,6 @@
 services:
   foliospace-library:
-    image: ${FOLIOSPACE_IMAGE:-funland/foliospace-library:0.995}
+    image: ${FOLIOSPACE_IMAGE:-funland/foliospace-library:0.996}
     container_name: ${FOLIOSPACE_CONTAINER_NAME:-foliospace-library}
     restart: unless-stopped
     init: true

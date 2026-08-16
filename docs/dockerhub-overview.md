@@ -4,6 +4,16 @@ FolioSpace Library is a self-hosted personal digital asset library for NAS, Dock
 
 It is not a cloud media service and does not distribute books, comics, ROMs, movies, or other media content. It indexes user-owned local files and exposes stable service URLs to web and native clients without leaking real NAS paths.
 
+## 0.996 Release: Audited Point Blank Launch Support
+
+Release `0.996` adds strict FBNeo launch profiles for Point Blank on SpatialEMU Apple clients.
+
+- Exact `ptblank` and `ptblanka` fingerprints route to FBNeo on iOS, iPadOS, and visionOS.
+- Stable packaged-core `coreBuildId` identities replace whole-application fingerprints for these profiles; unknown builds remain rejected and approved legacy SHA-256 profiles continue to work.
+- `ptblank` resolves with `namcoc75.zip`; `ptblanka` resolves with its parent `ptblank.zip` and `namcoc75.zip`.
+- `namcoc75.zip` is hidden from client game directories as a dependency while remaining available to audited manifests.
+- Existing Client API routes remain backward compatible. Service, Client API, Web, and source MCP metadata report version `0.996`.
+
 ## 0.995 Release: Safe Native Delivery and Targeted Curation
 
 Release `0.995` expands safe native game delivery, compatibility curation, and offline access.
@@ -269,7 +279,7 @@ Example API request after adding new files under a large manga folder:
 ## Quick Start
 
 ```bash
-docker pull funland/foliospace-library:0.995
+docker pull funland/foliospace-library:0.996
 ```
 
 ```bash
@@ -279,7 +289,7 @@ docker run -p 8080:8080 \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  funland/foliospace-library:0.995
+  funland/foliospace-library:0.996
 ```
 
 Open `http://localhost:8080`. On a fresh `/config`, FolioSpace Library starts with a setup page for the first access key and first library path.

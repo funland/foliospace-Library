@@ -114,6 +114,9 @@ func TestRuntimeIdentityPrefersStableBuildIDWithLegacyHashFallback(t *testing.T)
 	if !runtimeIdentityMatches(domain.GameRuntimeDescriptor{CoreSHA256: legacyHash}, domain.GameRuntimeDescriptor{CoreSHA256: legacyHash}) {
 		t.Fatal("legacy clients and profiles should continue matching by core hash")
 	}
+	if runtimeIdentityMatches(domain.GameRuntimeDescriptor{}, domain.GameRuntimeDescriptor{CoreBuildID: approved.CoreBuildID}) {
+		t.Fatal("a build-id-only policy must not accept an omitted runtime identity through an empty hash fallback")
+	}
 }
 
 func TestAppleMobileOrdinaryLibretroDoesNotRequireCoreFingerprint(t *testing.T) {

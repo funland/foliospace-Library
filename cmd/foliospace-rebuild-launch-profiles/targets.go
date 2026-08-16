@@ -15,6 +15,7 @@ type launchProfileTarget struct {
 	MinClientVersion string `json:"minClientVersion"`
 	ClientPlatform   string `json:"clientPlatform"`
 	Architecture     string `json:"architecture"`
+	CoreBuildID      string `json:"coreBuildId,omitempty"`
 	CoreSHA256       string `json:"coreSha256,omitempty"`
 }
 
@@ -23,6 +24,7 @@ type launchProfileTargetDocument struct {
 }
 
 var sha256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+var coreBuildIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._:-]{0,255}$`)
 
 func loadLaunchProfileTargets(path, policy string) ([]launchProfileTarget, error) {
 	path = strings.TrimSpace(path)
@@ -64,6 +66,7 @@ func validateLaunchProfileTargets(targets []launchProfileTarget, policy string) 
 		target.MinClientVersion = strings.TrimSpace(target.MinClientVersion)
 		target.ClientPlatform = strings.ToLower(strings.TrimSpace(target.ClientPlatform))
 		target.Architecture = strings.ToLower(strings.TrimSpace(target.Architecture))
+		target.CoreBuildID = strings.TrimSpace(target.CoreBuildID)
 		target.CoreSHA256 = strings.ToLower(strings.TrimSpace(target.CoreSHA256))
 		if target.ID == "" || target.ID == "dat" || seen[target.ID] {
 			return nil, fmt.Errorf("launch profile target id %q is empty, invalid, or duplicated", target.ID)
@@ -73,12 +76,18 @@ func validateLaunchProfileTargets(targets []launchProfileTarget, policy string) 
 		}
 		switch policy {
 		case "fbneo":
-			if !sha256Pattern.MatchString(target.CoreSHA256) {
-				return nil, fmt.Errorf("launch profile target %q requires a 64-character FBNeo core SHA-256", target.ID)
+			if target.CoreBuildID == "" && target.CoreSHA256 == "" {
+				return nil, fmt.Errorf("launch profile target %q requires an FBNeo coreBuildId or 64-character core SHA-256", target.ID)
+			}
+			if target.CoreBuildID != "" && !coreBuildIDPattern.MatchString(target.CoreBuildID) {
+				return nil, fmt.Errorf("launch profile target %q has an invalid FBNeo coreBuildId", target.ID)
+			}
+			if target.CoreSHA256 != "" && !sha256Pattern.MatchString(target.CoreSHA256) {
+				return nil, fmt.Errorf("launch profile target %q has an invalid FBNeo core SHA-256", target.ID)
 			}
 		case "mame":
-			if target.CoreSHA256 != "" {
-				return nil, fmt.Errorf("launch profile target %q must not set coreSha256 for MAME", target.ID)
+			if target.CoreBuildID != "" || target.CoreSHA256 != "" {
+				return nil, fmt.Errorf("launch profile target %q must not set an FBNeo core identity for MAME", target.ID)
 			}
 		default:
 			return nil, fmt.Errorf("unsupported audit policy %q", policy)

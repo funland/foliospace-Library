@@ -99,6 +99,11 @@ func TestMigrateReconcilesLaunchCatalogRoles(t *testing.T) {
 	}
 	unverifiedID := insertGame("Unknown Arcade", "arcade", "/library/unknown.zip", 100, "1111111111111111111111111111111111111111", "game")
 	biosID := insertGame("Neo Geo BIOS", "neogeo", "/library/neogeo.zip", 100, "2222222222222222222222222222222222222222", "game")
+	pointBlankID := insertGame("Point Blank", "arcade", "/library/ptblank.zip", 5033400, "15f9dd6ccf009bffcb156b234bdeadbe26344314", "needs-curation")
+	namcoC75ID := insertGame("Namco C75", "arcade", "/library/namcoc75.zip", 8709, "0649e27b7d605add7fc4215ee628b71e3c835328", "game")
+	if _, err := conn.Exec(`UPDATE games SET emulator_hint = 'mame' WHERE id = ?`, pointBlankID); err != nil {
+		t.Fatal(err)
+	}
 	dosReadyID := insertGame("DOS Ready", "dos", "/library/ready.zip", 100, "3333333333333333333333333333333333333333", "needs-curation")
 	dosUnknownID := insertGame("DOS Unknown", "dos", "/library/unknown-dos.zip", 100, "4444444444444444444444444444444444444444", "game")
 	if _, err := conn.Exec(`INSERT INTO game_dos_launch(game_id, entry_file, entry_source) VALUES(?, 'PLAY.BAT', 'curated')`, dosReadyID); err != nil {
@@ -112,7 +117,7 @@ func TestMigrateReconcilesLaunchCatalogRoles(t *testing.T) {
 		t.Fatal(err)
 	}
 	for id, want := range map[int64]string{
-		readyID: "game", legacySF2ID: "game", unverifiedID: "needs-curation", biosID: "dependency", dosReadyID: "game", dosUnknownID: "needs-curation",
+		readyID: "game", legacySF2ID: "game", unverifiedID: "needs-curation", biosID: "dependency", pointBlankID: "game", namcoC75ID: "dependency", dosReadyID: "game", dosUnknownID: "needs-curation",
 	} {
 		var got string
 		if err := conn.QueryRow(`SELECT catalog_role FROM games WHERE id = ?`, id).Scan(&got); err != nil {
@@ -129,6 +134,13 @@ func TestMigrateReconcilesLaunchCatalogRoles(t *testing.T) {
 	}
 	if platform != "cps1" || romSetName != "sf2" || emulatorHint != "fbneo" {
 		t.Fatalf("legacy sf2 metadata = %q %q %q, want cps1 sf2 fbneo", platform, romSetName, emulatorHint)
+	}
+	if err := conn.QueryRow(`SELECT platform, rom_set_name, emulator_hint FROM games WHERE id = ?`, pointBlankID).
+		Scan(&platform, &romSetName, &emulatorHint); err != nil {
+		t.Fatal(err)
+	}
+	if platform != "arcade" || romSetName != "ptblank" || emulatorHint != "fbneo" {
+		t.Fatalf("legacy ptblank metadata = %q %q %q, want arcade ptblank fbneo", platform, romSetName, emulatorHint)
 	}
 	var updatedAt string
 	if err := conn.QueryRow(`SELECT updated_at FROM games WHERE id = ?`, unverifiedID).Scan(&updatedAt); err != nil {
