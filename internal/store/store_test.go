@@ -155,6 +155,58 @@ func TestReplaceGameLaunchProfilesPreservesGameRoleAcrossPolicies(t *testing.T) 
 	}
 }
 
+func TestReplaceGameLaunchProfilesNeverPromotesDependencyToGame(t *testing.T) {
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	s := New(conn)
+	lib, err := s.CreateLibrary("Games", "/games")
+	if err != nil {
+		t.Fatal(err)
+	}
+	device, err := s.UpsertGame(domain.GameAsset{
+		LibraryID: lib.ID, Title: "Namco C75", Platform: "arcade", ROMSetName: "namcoc75",
+		Format: "zip", FilePath: "/games/namcoc75.zip", RelPath: "namcoc75.zip", Size: 8709,
+		MTime: time.Unix(1, 0), SHA1: "0649e27b7d605add7fc4215ee628b71e3c835328",
+		EmulatorHint: "fbneo", Compatibility: "unknown", CatalogRole: "dependency",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := domain.GameLaunchProfile{
+		GameID: device.ID, ID: "legacy-device-profile", Revision: 1, Priority: 1, Status: "ready",
+		ClientName: "SpatialEMU.Windows", MinClientVersion: "1.302", ClientPlatform: "windows-x64", Architecture: "x64",
+		Runtime:   domain.GameRuntimeDescriptor{ID: "mame", Version: "0.288", ContentSet: "mame-0.288"},
+		EntryFile: "namcoc75.zip", CanonicalSet: "namcoc75",
+	}
+	update := domain.GameLaunchCatalogUpdate{
+		GameID: device.ID, Platform: "arcade", ROMSetName: "namcoc75", EmulatorHint: "fbneo", CatalogRole: "dependency",
+	}
+	if _, err := s.ReplaceGameLaunchProfiles("legacy-device", []domain.GameLaunchProfile{profile}, []domain.GameLaunchCatalogUpdate{update}); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := s.GameByID(device.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.CatalogRole != "dependency" {
+		t.Fatalf("catalog role=%q, want dependency despite a ready profile", stored.CatalogRole)
+	}
+	if _, err := s.ReplaceGameLaunchProfiles("legacy-device", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	stored, err = s.GameByID(device.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.CatalogRole != "dependency" {
+		t.Fatalf("catalog role after policy deletion=%q, want dependency", stored.CatalogRole)
+	}
+}
+
 func TestReplaceGameLaunchProfilesForGamePreservesOtherGames(t *testing.T) {
 	conn, err := db.Open(t.TempDir())
 	if err != nil {

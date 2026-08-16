@@ -1667,6 +1667,7 @@ func (s *Store) replaceGameLaunchProfiles(policy string, profiles []domain.GameL
 	}
 	defer tx.Rollback()
 	roleQuery := `UPDATE games SET catalog_role = CASE
+			WHEN LOWER(TRIM(catalog_role)) = 'dependency' THEN 'dependency'
 			WHEN EXISTS(SELECT 1 FROM game_launch_profiles p
 				WHERE p.game_id = games.id AND p.policy <> ? AND LOWER(TRIM(p.status)) = 'ready') THEN 'game'
 			ELSE 'needs-curation'
@@ -1724,6 +1725,7 @@ func (s *Store) replaceGameLaunchProfiles(policy string, profiles []domain.GameL
 	}
 	updateStatement, err := tx.Prepare(`UPDATE games SET platform = ?, rom_set_name = ?, emulator_hint = ?,
 		catalog_role = CASE
+			WHEN LOWER(TRIM(?)) = 'dependency' THEN 'dependency'
 			WHEN LOWER(TRIM(?)) = 'game' OR EXISTS(SELECT 1 FROM game_launch_profiles p
 				WHERE p.game_id = games.id AND LOWER(TRIM(p.status)) = 'ready') THEN 'game'
 			ELSE ?
@@ -1734,7 +1736,8 @@ func (s *Store) replaceGameLaunchProfiles(policy string, profiles []domain.GameL
 	}
 	defer updateStatement.Close()
 	for _, update := range updates {
-		if _, err := updateStatement.Exec(update.Platform, update.ROMSetName, update.EmulatorHint, update.CatalogRole, update.CatalogRole, update.GameID); err != nil {
+		if _, err := updateStatement.Exec(update.Platform, update.ROMSetName, update.EmulatorHint,
+			update.CatalogRole, update.CatalogRole, update.CatalogRole, update.GameID); err != nil {
 			return domain.GameLaunchProfileRebuildResult{}, err
 		}
 		if strings.EqualFold(update.CatalogRole, "game") {

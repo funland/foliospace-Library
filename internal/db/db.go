@@ -709,7 +709,7 @@ func reconcileGameCatalogRoles(conn *sql.DB) error {
 		}
 		item.wantGame = launchcatalog.CanonicalizeAuditedGame(item.game)
 		item.wantRole = launchcatalog.CatalogRole(item.wantGame, dos)
-		if item.hasProfile {
+		if item.hasProfile && item.wantRole != launchcatalog.RoleDependency {
 			item.wantRole = launchcatalog.RoleGame
 		}
 		if !strings.EqualFold(strings.TrimSpace(item.game.Platform), item.wantGame.Platform) ||

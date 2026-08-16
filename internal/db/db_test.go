@@ -101,6 +101,15 @@ func TestMigrateReconcilesLaunchCatalogRoles(t *testing.T) {
 	biosID := insertGame("Neo Geo BIOS", "neogeo", "/library/neogeo.zip", 100, "2222222222222222222222222222222222222222", "game")
 	pointBlankID := insertGame("Point Blank", "arcade", "/library/ptblank.zip", 5033400, "15f9dd6ccf009bffcb156b234bdeadbe26344314", "needs-curation")
 	namcoC75ID := insertGame("Namco C75", "arcade", "/library/namcoc75.zip", 8709, "0649e27b7d605add7fc4215ee628b71e3c835328", "game")
+	if _, err := conn.Exec(`INSERT INTO game_launch_profiles(
+		game_id, profile_id, profile_revision, priority, policy,
+		client_name, min_client_version, client_platform, architecture,
+		runtime_id, runtime_version, content_set, entry_file, canonical_set, status)
+		VALUES(?, 'legacy-namcoc75-profile', 1, 100, 'legacy-mame',
+		'SpatialEMU.Windows', '1.302', 'windows-x64', 'x64',
+		'mame', '0.288', 'mame-0.288', 'namcoc75.zip', 'namcoc75', 'ready')`, namcoC75ID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := conn.Exec(`UPDATE games SET emulator_hint = 'mame' WHERE id = ?`, pointBlankID); err != nil {
 		t.Fatal(err)
 	}
