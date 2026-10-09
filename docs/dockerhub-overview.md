@@ -17,6 +17,15 @@ Start with the [beginner quick start](https://github.com/funland/foliospace-Libr
 
 The published Compose default is port `8080`. Leave `FOLIOSPACE_API_TOKEN` empty for the beginner path, open the web setup page, create a token with at least 8 characters, select a mounted container path such as `/games`, then enter the service URL and the same token in SpatialEMU and select **Connect**.
 
+## 1.02 Release: PC-98 Fonts and Triforce Routing
+
+- Select one PC-98 bitmap font per ROM/version, with an independent manifest checksum and detection of font-only updates. See [configuration](https://github.com/funland/foliospace-Library/blob/v1.02/docs/operations/pc98-per-game-font.md).
+- Triforce ISO/GCM/RVZ files in a Triforce directory/library retain their arcade identity while using the existing `ngc` / `dolphin` client route. Client gameplay and BIOS configuration remain separate requirements.
+- Includes the existing MAME compatibility, FBNeo build-identity compatibility, CIA installation, resumable downloads, and bilingual setup. No ROMs, fonts, BIOS, firmware, or private catalog data are included.
+- Images: `funland/foliospace-library:1.02` and `latest`, Linux AMD64 and ARM64.
+
+简体中文：1.02 合并 PC-98 按游戏/版本选择字体、独立校验及字体更新检测，以及 Triforce 目录识别与客户端路由修复。保留 1.01 功能，不包含游戏、字体、BIOS 或固件；实际模拟运行需客户端支持。
+
 ## 1.01 Release: MAME Content Compatibility
 
 - Reuse existing audited MAME launch profiles across core versions when official listxml evidence proves the complete ROM/dependency definition is unchanged. Exact profiles remain preferred.
@@ -336,7 +345,7 @@ Example API request after adding new files under a large manga folder:
 ## Quick Start
 
 ```bash
-docker pull funland/foliospace-library:1.01
+docker pull funland/foliospace-library:1.02
 ```
 
 ```bash
@@ -346,7 +355,7 @@ docker run -p 8080:8080 \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  funland/foliospace-library:1.01
+  funland/foliospace-library:1.02
 ```
 
 Open `http://localhost:8080`. On a fresh `/config`, FolioSpace Library starts with a setup page for the first access key and first library path.

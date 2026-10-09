@@ -2,7 +2,7 @@
 
 [SpatialEMU beginner path](docs/spatialemu-quickstart.md) · [简体中文](docs/spatialemu-quickstart.zh-CN.md)
 
-This package runs FolioSpace Library 1.01 from the published Linux AMD64/ARM64 image. It works with Docker Desktop on Mac or Windows, Docker Engine with Compose on Linux, or a compatible NAS. A NAS and coding are not required.
+This package runs FolioSpace Library 1.02 from the published Linux AMD64/ARM64 image. It works with Docker Desktop on Mac or Windows, Docker Engine with Compose on Linux, or a compatible NAS. A NAS and coding are not required.
 
 FolioSpace is optional for SpatialEMU: supported local files can be opened directly without this server. The SpatialEMU macOS app is a client, not a FolioSpace server.
 

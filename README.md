@@ -8,7 +8,7 @@ It is not trying to become a complete Plex, Jellyfin, or Immich replacement. The
 
 The current implementation still starts from the FolioSpace Reader codebase and keeps the existing reading MVP operational while the model evolves toward `Asset` / `LibraryItem`.
 
-Current release: [`1.01`](https://github.com/funland/foliospace-Library/releases/tag/v1.01).
+Current release: [`1.02`](https://github.com/funland/foliospace-Library/releases/tag/v1.02).
 
 ## Start here: SpatialEMU + FolioSpace
 
@@ -273,6 +273,14 @@ Release `0.975` is a stability and performance hotfix for large game libraries:
 - Game list sorting and filtering add SQLite expression indexes for title and platform-heavy browsing.
 - Service, Client API, and MCP metadata report version `0.975`.
 
+## Release 1.02
+
+- PC-98 games can select a dedicated bitmap font per ROM/version. The manifest exposes one `FONT.bmp` with its own checksum, and targeted rescans detect font-only changes. See [font configuration](docs/operations/pc98-per-game-font.md).
+- Triforce `.iso`, `.gcm`, and `.rvz` files in a `Triforce` directory/library use the existing `ngc` / `dolphin` client route while retaining `romSetName=Triforce`. This is server catalog/routing support, not a guarantee of client gameplay or BIOS setup.
+- Preserves 1.01 MAME content compatibility, FBNeo build-identity compatibility, CIA installation, resumable downloads, and bilingual setup. No ROMs, fonts, BIOS, firmware, or private library data are distributed.
+
+简体中文：1.02 合并已在生产使用的 PC-98 独立字体与 Triforce 目录路由修复；保留 1.01 兼容性。字体变更后请定向扫描并刷新客户端 manifest；Triforce 实际运行仍取决于客户端模拟核心与配置。
+
 ## Release 1.01
 
 Release `1.01` improves MAME upgrades without reintroducing FBNeo build-identity barriers:
@@ -516,7 +524,7 @@ curl -fsSL https://foliospace.app/install-mcp.sh | sh
 Release maintainers can build macOS/Linux MCP packages with:
 
 ```bash
-VERSION=1.01 ./scripts/build-mcp-release.sh
+VERSION=1.02 ./scripts/build-mcp-release.sh
 ```
 
 ## Product Direction
@@ -563,7 +571,7 @@ an access key and lets you choose a container path such as `/library`, `/books`,
 The default deployment currently pins this image:
 
 ```bash
-docker pull funland/foliospace-library:1.01
+docker pull funland/foliospace-library:1.02
 ```
 
 To upgrade later, change `FOLIOSPACE_IMAGE` in `.env`, then run:
@@ -603,7 +611,7 @@ docker run -p 8080:8080 \
   -v /volume2/GameROMS:/games:ro \
   -v /volume2/MovieCollection/Movies:/videos:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games,/videos \
-  funland/foliospace-library:1.01
+  funland/foliospace-library:1.02
 ```
 
 If a directory is missing from the setup page, add its Docker volume mapping
@@ -625,11 +633,11 @@ Docker Hub releases are built by GitHub Actions from Git tags. Configure these r
 Then create and push a version tag:
 
 ```bash
-git tag v1.01
-git push github v1.01
+git tag v1.02
+git push github v1.02
 ```
 
-The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:1.01` and `funland/foliospace-library:latest`.
+The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:1.02` and `funland/foliospace-library:latest`.
 
 ## Current MVP Support
 

@@ -1509,7 +1509,7 @@ func TestScanLibraryPackagesValidatedPC98FontAndTracksSidecarChanges(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 2 || files[0].Role != "entry" || files[1].Role != "font" || files[1].Name != "PC98_CN.bmp" {
+	if len(files) != 2 || files[0].Role != "entry" || files[1].Role != "font" || files[1].Name != "FONT.bmp" {
 		t.Fatalf("files = %#v, want entry plus validated font", files)
 	}
 	if game.Size != files[0].Size+files[1].Size {

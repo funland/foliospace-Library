@@ -15,6 +15,7 @@ import (
 	"hash/crc32"
 	"io"
 	"io/fs"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1621,6 +1622,9 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 		emulatorHint = "ppsspp"
 	} else if platform == "ngc" {
 		romSetName = "NGC"
+		if hasTriforcePathContext(library, relPath) {
+			romSetName = "Triforce"
+		}
 		emulatorHint = "dolphin"
 	} else if platform == "ps2" {
 		romSetName = "PS2"
@@ -2034,6 +2038,10 @@ func (s *Scanner) syncPC98SupportFiles(gameID int64) error {
 			seen[key] = true
 			fonts = append(fonts, file)
 		}
+		// One active font per package, selected from sources in launch order.
+		if len(fonts) != 0 {
+			break
+		}
 	}
 	sort.Slice(fonts, func(i, j int) bool {
 		return strings.ToLower(fonts[i].FilePath) < strings.ToLower(fonts[j].FilePath)
@@ -2065,7 +2073,7 @@ func samePC98SupportFiles(sourcePath string, local []domain.GameFile, stored []d
 	}
 	for _, file := range local {
 		storedFile, ok := byPath[strings.ToLower(filepath.Clean(file.FilePath))]
-		if !ok || storedFile.Size != file.Size || !storedFile.MTime.Equal(file.MTime) {
+		if !ok || storedFile.Name != file.Name || storedFile.SHA1 != file.SHA1 || storedFile.Size != file.Size || !storedFile.MTime.Equal(file.MTime) {
 			return false
 		}
 	}
@@ -2081,28 +2089,58 @@ func pc98PackageFontFiles(mediaPath string) ([]domain.GameFile, error) {
 	if err != nil {
 		return nil, err
 	}
-	files := make([]domain.GameFile, 0, 1)
-	for _, entry := range entries {
-		if entry.IsDir() || (!strings.EqualFold(entry.Name(), "FONT.bmp") && !strings.EqualFold(entry.Name(), "PC98_CN.bmp")) {
+	// Only exact, case-insensitive sibling names are eligible; never guess from
+	// arbitrary BMP files or follow symlinks outside the source package.
+	lookup := func(name string) (string, fs.FileInfo) {
+		if name == "" || strings.ContainsAny(name, `/\\`) || name == "." || name == ".." {
+			return "", nil
+		}
+		var found fs.DirEntry
+		for _, entry := range entries {
+			if strings.EqualFold(entry.Name(), name) {
+				if found != nil {
+					log.Printf("PC-98 font selection: ambiguous sibling %q for %q; ignoring candidate", name, mediaPath)
+					return "", nil
+				} // ambiguous on case-sensitive hosts
+				found = entry
+			}
+		}
+		if found == nil {
+			return "", nil
+		}
+		info, err := found.Info()
+		if err != nil || !info.Mode().IsRegular() {
+			return "", nil
+		}
+		return filepath.Join(dir, found.Name()), info
+	}
+	names := []string{}
+	if path, info := lookup(filepath.Base(mediaPath) + ".font.json"); info != nil && info.Size() <= 4096 {
+		data, err := os.ReadFile(path)
+		var association struct {
+			File string `json:"file"`
+		}
+		if err == nil && json.Unmarshal(data, &association) == nil && strings.EqualFold(filepath.Ext(association.File), ".bmp") {
+			names = append(names, association.File)
+		}
+	}
+	names = append(names, strings.TrimSuffix(filepath.Base(mediaPath), filepath.Ext(mediaPath))+".font.bmp", "FONT.bmp", "PC98_CN.bmp")
+	for _, name := range names {
+		path, info := lookup(name)
+		if info == nil || !validPC98FontBitmap(path, info.Size()) {
 			continue
 		}
-		path := filepath.Join(dir, entry.Name())
-		info, err := entry.Info()
+		checksums, err := fileChecksums(path)
 		if err != nil {
 			return nil, err
 		}
-		if !validPC98FontBitmap(path, info.Size()) {
-			continue
-		}
-		files = append(files, domain.GameFile{
-			Name: entry.Name(), FilePath: path, Size: info.Size(), MTime: info.ModTime(), Role: "font",
-		})
+		return []domain.GameFile{{Name: "FONT.bmp", FilePath: path, Size: info.Size(), MTime: info.ModTime(), SHA1: checksums.sha1, Role: "font"}}, nil
 	}
-	return files, nil
+	return nil, nil
 }
 
 func validPC98FontBitmap(path string, size int64) bool {
-	if size < 62 {
+	if size < 62 || size > 1<<20 {
 		return false
 	}
 	file, err := os.Open(path)
@@ -5056,7 +5094,23 @@ func inferGamePlatform(ext string, relPath string) string {
 	}
 }
 
+func hasTriforcePathContext(library domain.Library, relPath string) bool {
+	for _, value := range []string{relPath, library.Name, filepath.Base(filepath.Clean(library.RootPath))} {
+		for _, part := range strings.Split(filepath.ToSlash(value), "/") {
+			if strings.EqualFold(strings.TrimSpace(part), "triforce") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func inferLibraryGamePlatform(library domain.Library, ext string, relPath string) string {
+	// Keep the established client routing enum while preserving arcade hardware
+	// identity in ROMSetName. This does not claim Dolphin gameplay compatibility.
+	if (ext == ".iso" || ext == ".gcm" || ext == ".rvz") && hasTriforcePathContext(library, relPath) {
+		return "ngc"
+	}
 	if hasPC98PathContext(library, relPath) && !hasPC98NegativePathSignal(relPath) {
 		return "pc98"
 	}

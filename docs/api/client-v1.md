@@ -247,7 +247,7 @@ Response:
 ```json
 {
   "serviceName": "FolioSpace Library",
-  "serviceVersion": "1.01",
+  "serviceVersion": "1.02",
   "apiVersion": "v1",
   "supportedFormats": ["cbz", "zip", "epub", "pdf", "mp4", "m4v", "mov", "mkv", "avi", "webm", "nes", "sfc", "smc", "vb", "vboy", "gba", "gb", "gbc", "nds", "3ds", "cci", "cxi", "cia", "z64", "v64", "n64", "gdi", "cdi", "chd", "iso", "bin", "cue", "ccd", "toc", "m3u", "cso", "gcm", "rvz", "7z", "dosz", "exe", "com", "bat", "d88", "fdi", "thd", "nhd", "hdi", "vhd", "py1"],
   "capabilities": {
