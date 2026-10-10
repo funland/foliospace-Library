@@ -1,5 +1,7 @@
 # FolioSpace Library Website Handoff
 
+> Planning/historical handoff: use the [current README](../../README.md), [中文 overview](../../README.zh-CN.md), and [Client API reference](../api/client-v1.md) for release 1.02 behavior and official product/download links. Library is the optional content foundation for Reader, Player, and SpatialEMU; all can use supported sources independently. Reader/SpatialEMU integration and server video APIs exist; deeper Player integration, photo/spatial-media expansion, and MCP download-and-play orchestration remain future work. Product direction below is not a guarantee of implemented routes or interoperability. Collection responses still carry legacy directory metadata; do not interpret the path-hiding goals below as an all-endpoint security guarantee.
+
 This document is the handoff package for building the public website at:
 
 ```text

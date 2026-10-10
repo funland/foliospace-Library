@@ -1,5 +1,7 @@
 # SpatialEMU + FolioSpace 新手快速上手
 
+三款产品介绍与下载见 [Library 中文介绍](../README.zh-CN.md)，其他客户端欢迎按 [API 接入摘要](api/client-v1.zh-CN.md) 集成。
+
 [English](spatialemu-quickstart.md)
 
 FolioSpace Library 是 SpatialEMU 的可选自托管目录。即使没有 FolioSpace，SpatialEMU 也可以直接打开支持的本地文件。

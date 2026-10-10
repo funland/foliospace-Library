@@ -2,7 +2,9 @@
 
 FolioSpace Library is an optional self-hosted personal digital asset catalog. It runs with Docker/Compose on a Mac, Windows or Linux computer, or a compatible NAS. It provides a unified indexing layer and client API for books, comics, PDFs, user-owned game libraries, videos, and future spatial media clients.
 
-It is not a cloud media service and does not distribute games, ROMs, BIOS files, firmware, books, comics, movies, or third-party content catalogs. It indexes user-owned local files and exposes stable service URLs to web and native clients without leaking real host paths.
+It is not a cloud media service and does not distribute games, ROMs, BIOS files, firmware, books, comics, movies, or third-party content catalogs. It indexes user-provided files and exposes opaque media URLs. Book/game/video DTOs omit source paths; legacy collection and administration responses can still carry directory paths.
+
+Library is the optional content foundation for [FolioSpace Reader](https://reader.foliospace.app/) ([App Store](https://apps.apple.com/app/id6765784590)), [FolioLume Player](https://foliolume.app/) ([App Store](https://apps.apple.com/app/id6812153528)), and [SpatialEMU](https://spatialemu.com/) ([App Store](https://apps.apple.com/app/id6771768889)). All three apps can use supported files/sources independently. Reader and SpatialEMU integration exists; deeper Player integration remains planned, alongside the already implemented video catalog/direct/Range/HLS APIs. Independent clients are welcome: see the [Client API quick start](https://github.com/funland/foliospace-Library/blob/main/docs/api/client-v1.md#external-client-quick-start).
 
 ## New to FolioSpace?
 
@@ -392,7 +394,7 @@ If `FOLIOSPACE_API_TOKEN` is empty, the web setup page can create the first acce
 
 ## Links
 
-- Website: https://foliospace.app/
-- GitHub: https://github.com/funland/foliospace-Library
-- Client API docs: https://github.com/funland/foliospace-Library/blob/main/docs/api/client-v1.md
-- MCP docs: https://github.com/funland/foliospace-Library/blob/main/docs/mcp/usage.md
+- [Website](https://foliospace.app/)
+- [GitHub](https://github.com/funland/foliospace-Library)
+- [Client API docs](https://github.com/funland/foliospace-Library/blob/main/docs/api/client-v1.md)
+- [MCP docs](https://github.com/funland/foliospace-Library/blob/main/docs/mcp/usage.md)

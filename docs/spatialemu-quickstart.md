@@ -1,5 +1,7 @@
 # SpatialEMU + FolioSpace beginner quick start
 
+For the wider Reader / Player / SpatialEMU product family and third-party client integration, see the [Library overview](../README.md#clients-and-downloads) and [Client API quick start](api/client-v1.md#external-client-quick-start).
+
 [简体中文](spatialemu-quickstart.zh-CN.md)
 
 FolioSpace Library is an optional self-hosted catalog for SpatialEMU. SpatialEMU can open supported local files directly without FolioSpace.
