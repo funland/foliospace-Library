@@ -5,6 +5,10 @@ Docker release. Existing `/api/client/videos`, manifests, IDs, file URLs and HLS
 routes remain valid. Original file delivery additionally supports HEAD alongside
 GET and byte Range. The metadata provider is disabled by default.
 
+The accepted P0 is running on the local production service at port 18080 and is
+the local mainline baseline. See the [production record](../operations/video-p0-production-upgrade-2026-10-10.md).
+This does not imply that a new public Docker image has been released.
+
 ## Responsibilities and quick use
 
 FolioSpace Library catalogs user-owned files and supplies metadata, posters and

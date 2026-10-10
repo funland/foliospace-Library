@@ -15,7 +15,7 @@ adds local NFO/artwork, a paginated poster wall, season/episode/version associat
 and optional, explicitly confirmed TMDB matching. Original-file delivery and
 existing playback routes remain compatible; the provider is disabled by default.
 This work is not included in the published 1.02 image yet.
-中文：影视资料库一期为开发预览，主要向客户端提供影片、海报和元数据；未发布，未启用在线刮削。
+中文：影视资料库 P0 主要向客户端提供影片、海报和元数据；已在本地生产环境验收，尚未包含在公开 1.02 镜像中。在线刮削默认关闭，可由管理员配置并确认启用。
 
 ## Start here: SpatialEMU + FolioSpace
 
