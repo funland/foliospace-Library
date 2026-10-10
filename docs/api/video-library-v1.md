@@ -8,6 +8,8 @@ GET and byte Range. The metadata provider is disabled by default.
 The accepted P0 is running on the local production service at port 18080 and is
 the local mainline baseline. See the [production record](../operations/video-p0-production-upgrade-2026-10-10.md).
 This does not imply that a new public Docker image has been released.
+Subsequent local P1/P2 deployment adds [season, progress and next-up APIs](video-library-p1-p2.md).
+The phase-1 exclusions below describe that original phase, not the later additive APIs.
 
 ## Responsibilities and quick use
 

@@ -38,6 +38,8 @@ import (
 )
 
 type Service struct {
+	videoAvailabilityMu      sync.Mutex
+	videoAvailabilityNext    time.Time
 	videoWorker              *videoMetadataWorker
 	videoCacheMu             sync.Mutex
 	videoCachePurgedAt       time.Time

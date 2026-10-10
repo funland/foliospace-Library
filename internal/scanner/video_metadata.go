@@ -19,6 +19,9 @@ var videoYearPattern = regexp.MustCompile(`^(.*?)\s*[\(\[]((?:19|20)\d{2})[\)\]]
 var videoEpisodePattern = regexp.MustCompile(`(?i)^(.*?)\s*[ ._-]*s(\d{1,3})e(\d{1,4})(?:\D|$)`)
 
 func readVideoLocalMetadata(path string) (domain.VideoLocalMetadata, string, error) {
+	return readVideoLocalMetadataWithin(path, filepath.Dir(path))
+}
+func readVideoLocalMetadataWithin(path, root string) (domain.VideoLocalMetadata, string, error) {
 	stem := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	m := domain.VideoLocalMetadata{Title: stem, Kind: "unknown", Source: "filename"}
 	if p := videoYearPattern.FindStringSubmatch(stem); p != nil {
@@ -123,6 +126,13 @@ func readVideoLocalMetadata(path string) (domain.VideoLocalMetadata, string, err
 			m.Warning = "nfo-invalid-number"
 			continue
 		}
+		if (n.Season != nil && m.Season != nil && *n.Season != *m.Season) || (n.Episode != nil && m.Episode != nil && *n.Episode != *m.Episode) {
+			m.Warning = "episode-number-conflict"
+			m.Kind = "unknown"
+			m.Season = nil
+			m.Episode = nil
+			break
+		}
 		m.Kind = "movie"
 		if n.XMLName.Local == "episodedetails" {
 			m.Kind = "episode"
@@ -156,6 +166,7 @@ func readVideoLocalMetadata(path string) (domain.VideoLocalMetadata, string, err
 		}
 		break
 	}
+	inheritVideoSeries(path, root, &m, h)
 	return m, hex.EncodeToString(h.Sum(nil)), nil
 }
 
@@ -164,7 +175,11 @@ func (s *Scanner) refreshVideoLocalMetadata(path string) error {
 	if err != nil {
 		return err
 	}
-	m, revision, err := readVideoLocalMetadata(path)
+	lib, err := s.store.LibraryByID(v.LibraryID)
+	if err != nil {
+		return err
+	}
+	m, revision, err := readVideoLocalMetadataWithin(path, lib.RootPath)
 	if err != nil {
 		return err
 	}

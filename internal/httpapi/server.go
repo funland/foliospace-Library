@@ -72,6 +72,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/client/videos", s.handleClientVideos)
 	mux.HandleFunc("/api/client/video-works", s.handleVideoWorks)
 	mux.HandleFunc("/api/client/video-works/", s.handleVideoWorks)
+	mux.HandleFunc("/api/client/video-playback", s.handleVideoPlaybackFeed)
+	mux.HandleFunc("/api/videos/works/", s.handleVideoAvailabilityRefresh)
 	mux.HandleFunc("/api/videos/metadata/provider", s.handleVideoProvider)
 	mux.HandleFunc("/api/video-metadata-jobs/", s.handleVideoMetadataJobs)
 	mux.HandleFunc("/api/client/videos/", s.handleClientVideoAction)
@@ -480,43 +482,48 @@ func (s *Server) handleClientInfo(w http.ResponseWriter, r *http.Request) {
 			"py1",
 		},
 		Capabilities: clientCapabilities{
-			ClientHome:            true,
-			UnifiedManifest:       true,
-			ProgressSync:          true,
-			EPUBStreaming:         true,
-			PDFStreaming:          true,
-			PDFPageLayout:         true,
-			PDFWebtoonLayout:      true,
-			ComicWebtoonLayout:    true,
-			WebtoonPositionSync:   true,
-			CompactReader:         true,
-			PageStreaming:         true,
-			PageImageDownsample:   true,
-			BookCatalog:           true,
-			CollectionCatalog:     true,
-			GameShelf:             true,
-			GameCatalog:           true,
-			GamePlatformCatalog:   true,
-			VideoCatalog:          true,
-			VideoHLS:              true,
-			PrivateState:          true,
-			Search:                true,
-			Preferences:           true,
-			Profiles:              true,
-			BearerTokenAuth:       s.authEnabled(),
-			SetupWizard:           true,
-			ScannerJobEvents:      true,
-			ScannerJobControl:     true,
-			ScanSettings:          true,
-			RecentScan:            true,
-			GameSaveSync:          true,
-			GamePlayStats:         true,
-			GamePlayedCatalog:     true,
-			GameMetadataProviders: true,
-			GameLaunchResolver:    !s.options.DisableGameLaunchResolver,
-			StableRuntimeIdentity: !s.options.DisableGameLaunchResolver,
-			DOSArchiveLaunchV1:    true,
-			CIAInstallV1:          true,
+			ClientHome:                 true,
+			UnifiedManifest:            true,
+			ProgressSync:               true,
+			EPUBStreaming:              true,
+			PDFStreaming:               true,
+			PDFPageLayout:              true,
+			PDFWebtoonLayout:           true,
+			ComicWebtoonLayout:         true,
+			WebtoonPositionSync:        true,
+			CompactReader:              true,
+			PageStreaming:              true,
+			PageImageDownsample:        true,
+			BookCatalog:                true,
+			CollectionCatalog:          true,
+			GameShelf:                  true,
+			GameCatalog:                true,
+			GamePlatformCatalog:        true,
+			VideoCatalog:               true,
+			VideoLibraryV1:             true,
+			VideoSeasonsV1:             true,
+			VideoPlaybackStateV1:       true,
+			VideoNextUpV1:              true,
+			VideoEpisodeAvailabilityV1: true,
+			VideoHLS:                   true,
+			PrivateState:               true,
+			Search:                     true,
+			Preferences:                true,
+			Profiles:                   true,
+			BearerTokenAuth:            s.authEnabled(),
+			SetupWizard:                true,
+			ScannerJobEvents:           true,
+			ScannerJobControl:          true,
+			ScanSettings:               true,
+			RecentScan:                 true,
+			GameSaveSync:               true,
+			GamePlayStats:              true,
+			GamePlayedCatalog:          true,
+			GameMetadataProviders:      true,
+			GameLaunchResolver:         !s.options.DisableGameLaunchResolver,
+			StableRuntimeIdentity:      !s.options.DisableGameLaunchResolver,
+			DOSArchiveLaunchV1:         true,
+			CIAInstallV1:               true,
 		},
 	})
 }
@@ -1236,6 +1243,9 @@ func (s *Server) handleClientVideoAction(w http.ResponseWriter, r *http.Request)
 	id, tail, ok := parseIDTail(r.URL.Path, "/api/client/videos/")
 	if !ok {
 		http.NotFound(w, r)
+		return
+	}
+	if s.handleVideoPlayback(w, r, id, tail) {
 		return
 	}
 	if tail == "metadata" && r.Method == http.MethodGet {
@@ -2518,43 +2528,48 @@ type clientInfoResponse struct {
 }
 
 type clientCapabilities struct {
-	ClientHome            bool `json:"clientHome"`
-	UnifiedManifest       bool `json:"unifiedManifest"`
-	ProgressSync          bool `json:"progressSync"`
-	EPUBStreaming         bool `json:"epubStreaming"`
-	PDFStreaming          bool `json:"pdfStreaming"`
-	PDFPageLayout         bool `json:"pdfPageLayout"`
-	PDFWebtoonLayout      bool `json:"pdfWebtoonLayout"`
-	ComicWebtoonLayout    bool `json:"comicWebtoonLayout"`
-	WebtoonPositionSync   bool `json:"webtoonPositionSync"`
-	CompactReader         bool `json:"compactReader"`
-	PageStreaming         bool `json:"pageStreaming"`
-	PageImageDownsample   bool `json:"pageImageDownsample"`
-	BookCatalog           bool `json:"bookCatalog"`
-	CollectionCatalog     bool `json:"collectionCatalog"`
-	GameShelf             bool `json:"gameShelf"`
-	GameCatalog           bool `json:"gameCatalog"`
-	GamePlatformCatalog   bool `json:"gamePlatformCatalog"`
-	VideoCatalog          bool `json:"videoCatalog"`
-	VideoHLS              bool `json:"videoHls"`
-	PrivateState          bool `json:"privateState"`
-	Search                bool `json:"search"`
-	Preferences           bool `json:"preferences"`
-	Profiles              bool `json:"profiles"`
-	BearerTokenAuth       bool `json:"bearerTokenAuth"`
-	SetupWizard           bool `json:"setupWizard"`
-	ScannerJobEvents      bool `json:"scannerJobEvents"`
-	ScannerJobControl     bool `json:"scannerJobControl"`
-	ScanSettings          bool `json:"scanSettings"`
-	RecentScan            bool `json:"recentScan"`
-	GameSaveSync          bool `json:"gameSaveSync"`
-	GamePlayStats         bool `json:"gamePlayStats"`
-	GamePlayedCatalog     bool `json:"gamePlayedCatalog"`
-	GameMetadataProviders bool `json:"gameMetadataProviders"`
-	GameLaunchResolver    bool `json:"gameLaunchResolver"`
-	StableRuntimeIdentity bool `json:"stableRuntimeIdentityV1"`
-	DOSArchiveLaunchV1    bool `json:"dosArchiveLaunchV1"`
-	CIAInstallV1          bool `json:"ciaInstallV1"`
+	VideoLibraryV1             bool `json:"videoLibraryV1"`
+	VideoSeasonsV1             bool `json:"videoSeasonsV1"`
+	VideoPlaybackStateV1       bool `json:"videoPlaybackStateV1"`
+	VideoNextUpV1              bool `json:"videoNextUpV1"`
+	VideoEpisodeAvailabilityV1 bool `json:"videoEpisodeAvailabilityV1"`
+	ClientHome                 bool `json:"clientHome"`
+	UnifiedManifest            bool `json:"unifiedManifest"`
+	ProgressSync               bool `json:"progressSync"`
+	EPUBStreaming              bool `json:"epubStreaming"`
+	PDFStreaming               bool `json:"pdfStreaming"`
+	PDFPageLayout              bool `json:"pdfPageLayout"`
+	PDFWebtoonLayout           bool `json:"pdfWebtoonLayout"`
+	ComicWebtoonLayout         bool `json:"comicWebtoonLayout"`
+	WebtoonPositionSync        bool `json:"webtoonPositionSync"`
+	CompactReader              bool `json:"compactReader"`
+	PageStreaming              bool `json:"pageStreaming"`
+	PageImageDownsample        bool `json:"pageImageDownsample"`
+	BookCatalog                bool `json:"bookCatalog"`
+	CollectionCatalog          bool `json:"collectionCatalog"`
+	GameShelf                  bool `json:"gameShelf"`
+	GameCatalog                bool `json:"gameCatalog"`
+	GamePlatformCatalog        bool `json:"gamePlatformCatalog"`
+	VideoCatalog               bool `json:"videoCatalog"`
+	VideoHLS                   bool `json:"videoHls"`
+	PrivateState               bool `json:"privateState"`
+	Search                     bool `json:"search"`
+	Preferences                bool `json:"preferences"`
+	Profiles                   bool `json:"profiles"`
+	BearerTokenAuth            bool `json:"bearerTokenAuth"`
+	SetupWizard                bool `json:"setupWizard"`
+	ScannerJobEvents           bool `json:"scannerJobEvents"`
+	ScannerJobControl          bool `json:"scannerJobControl"`
+	ScanSettings               bool `json:"scanSettings"`
+	RecentScan                 bool `json:"recentScan"`
+	GameSaveSync               bool `json:"gameSaveSync"`
+	GamePlayStats              bool `json:"gamePlayStats"`
+	GamePlayedCatalog          bool `json:"gamePlayedCatalog"`
+	GameMetadataProviders      bool `json:"gameMetadataProviders"`
+	GameLaunchResolver         bool `json:"gameLaunchResolver"`
+	StableRuntimeIdentity      bool `json:"stableRuntimeIdentityV1"`
+	DOSArchiveLaunchV1         bool `json:"dosArchiveLaunchV1"`
+	CIAInstallV1               bool `json:"ciaInstallV1"`
 }
 
 type clientHomeResponse struct {

@@ -25,7 +25,20 @@ func videoGeneration(tx *sql.Tx, id int64) (int64, string, error) {
 // Local observations may change provisional grouping, never confirmed/unlinked grouping.
 func (s *Store) SyncLocalVideoWork(id int64, m domain.VideoLocalMetadata) error {
 	if m.Kind != "movie" && m.Kind != "episode" {
-		return nil
+		// Never retain a provisional group after conflicting observations.
+		// Explicit confirmations and unlinks remain protected.
+		tx, err := s.db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		if _, err = tx.Exec(`DELETE FROM video_file_links WHERE video_id=? AND EXISTS(SELECT 1 FROM video_match_state WHERE video_id=? AND status='local')`, id, id); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(`UPDATE video_match_state SET status='unmatched' WHERE video_id=? AND status='local'`, id); err != nil {
+			return err
+		}
+		return tx.Commit()
 	}
 	title := m.Title
 	kind := m.Kind
@@ -208,24 +221,35 @@ func videoPage(limit, offset int) (int, int) {
 
 const videoWorkFrom = ` FROM video_works w JOIN video_work_details d ON d.work_id=w.id
  WHERE EXISTS(SELECT 1 FROM video_versions v JOIN video_file_links f ON f.version_id=v.id WHERE v.work_id=w.id)`
+const videoWorkAdded = `COALESCE((SELECT MAX(a.created_at) FROM video_versions v JOIN video_file_links f ON f.version_id=v.id JOIN videos a ON a.id=f.video_id WHERE v.work_id=w.id),w.created_at)`
 const videoWorkSelect = `SELECT w.id,w.library_id,w.kind,w.title,w.year,d.overview,d.provider,d.provider_id,
- (SELECT MIN(f.video_id) FROM video_versions v JOIN video_file_links f ON f.version_id=v.id WHERE v.work_id=w.id)`
+ (SELECT MIN(f.video_id) FROM video_versions v JOIN video_file_links f ON f.version_id=v.id WHERE v.work_id=w.id),
+ (SELECT COUNT(DISTINCT f.video_id) FROM video_versions v JOIN video_file_links f ON f.version_id=v.id WHERE v.work_id=w.id),
+ (SELECT COUNT(DISTINCT f.version_id) FROM video_versions v JOIN video_file_links f ON f.version_id=v.id WHERE v.work_id=w.id),
+ (SELECT COUNT(DISTINCT f.episode_id) FROM video_versions v JOIN video_file_links f ON f.version_id=v.id WHERE v.work_id=w.id),` + videoWorkAdded
 
 func scanVideoWork(row scanner) (domain.VideoWork, error) {
 	var w domain.VideoWork
-	err := row.Scan(&w.ID, &w.LibraryID, &w.Kind, &w.Title, &w.Year, &w.Overview, &w.Provider, &w.ProviderID, &w.VideoID)
+	err := row.Scan(&w.ID, &w.LibraryID, &w.Kind, &w.Title, &w.Year, &w.Overview, &w.Provider, &w.ProviderID, &w.VideoID, &w.FileCount, &w.VersionCount, &w.AvailableEpisodeCount, &w.AddedAt)
 	w.PosterURL = fmt.Sprintf("/api/videos/%d/artwork/poster", w.VideoID)
 	return w, err
 }
 func (s *Store) VideoWorks(q, kind string, limit, offset int) (domain.VideoWorkPage, error) {
+	return s.VideoWorksFiltered(q, kind, 0, "title", limit, offset)
+}
+func (s *Store) VideoWorksFiltered(q, kind string, libraryID int64, sort string, limit, offset int) (domain.VideoWorkPage, error) {
 	limit, offset = videoPage(limit, offset)
 	p := domain.VideoWorkPage{Items: []domain.VideoWork{}, Limit: limit, Offset: offset}
-	where := videoWorkFrom + ` AND (?='' OR w.kind=?) AND (?='' OR instr(lower(w.title),lower(?))>0)`
-	args := []any{kind, kind, q, q}
+	where := videoWorkFrom + ` AND (?='' OR w.kind=?) AND (?='' OR instr(lower(w.title),lower(?))>0) AND (?=0 OR w.library_id=?)`
+	args := []any{kind, kind, q, q, libraryID, libraryID}
 	if err := s.db.QueryRow(`SELECT COUNT(*)`+where, args...).Scan(&p.Total); err != nil {
 		return p, err
 	}
-	rows, err := s.db.Query(videoWorkSelect+where+` ORDER BY w.title COLLATE NOCASE,w.id LIMIT ? OFFSET ?`, append(args, limit, offset)...)
+	order := `w.title COLLATE NOCASE,w.id`
+	if sort == "recent" {
+		order = videoWorkAdded + ` DESC,w.id DESC`
+	}
+	rows, err := s.db.Query(videoWorkSelect+where+` ORDER BY `+order+` LIMIT ? OFFSET ?`, append(args, limit, offset)...)
 	if err != nil {
 		return p, err
 	}
@@ -244,6 +268,9 @@ func (s *Store) VideoWork(id int64) (domain.VideoWork, error) {
 	return scanVideoWork(s.db.QueryRow(videoWorkSelect+videoWorkFrom+` AND w.id=?`, id))
 }
 func (s *Store) VideoWorkFiles(id int64, season *int, limit, offset int) (domain.VideoWorkFiles, error) {
+	return s.VideoWorkEpisodeFiles(id, season, 0, limit, offset)
+}
+func (s *Store) VideoWorkEpisodeFiles(id int64, season *int, episodeID int64, limit, offset int) (domain.VideoWorkFiles, error) {
 	limit, offset = videoPage(limit, offset)
 	p := domain.VideoWorkFiles{Items: []domain.VideoWorkFile{}, Limit: limit, Offset: offset}
 	if _, err := s.VideoWork(id); err != nil {
@@ -251,6 +278,10 @@ func (s *Store) VideoWorkFiles(id int64, season *int, limit, offset int) (domain
 	}
 	from := ` FROM video_file_links f JOIN videos a ON a.id=f.video_id JOIN video_versions v ON v.id=f.version_id LEFT JOIN video_episodes e ON e.id=f.episode_id LEFT JOIN video_seasons s ON s.id=e.season_id WHERE v.work_id=?`
 	args := []any{id}
+	if episodeID > 0 {
+		from += ` AND e.id=?`
+		args = append(args, episodeID)
+	}
 	if season != nil {
 		from += ` AND s.number=?`
 		args = append(args, *season)
@@ -258,14 +289,14 @@ func (s *Store) VideoWorkFiles(id int64, season *int, limit, offset int) (domain
 	if err := s.db.QueryRow(`SELECT COUNT(*)`+from, args...).Scan(&p.Total); err != nil {
 		return p, err
 	}
-	rows, err := s.db.Query(`SELECT a.id,COALESCE((SELECT json_extract(o.value_json,'$') FROM video_metadata_overrides o WHERE o.video_id=a.id AND o.field='title'),a.title),v.label,s.number,e.number,a.format`+from+` ORDER BY s.number,e.number,v.label,a.id LIMIT ? OFFSET ?`, append(args, limit, offset)...)
+	rows, err := s.db.Query(`SELECT a.id,COALESCE((SELECT json_extract(o.value_json,'$') FROM video_metadata_overrides o WHERE o.video_id=a.id AND o.field='title'),a.title),v.label,s.number,e.number,a.format,s.id,e.id,v.id`+from+` ORDER BY s.number,e.number,v.label,a.id LIMIT ? OFFSET ?`, append(args, limit, offset)...)
 	if err != nil {
 		return p, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var f domain.VideoWorkFile
-		if err = rows.Scan(&f.VideoID, &f.Title, &f.Version, &f.Season, &f.Episode, &f.Format); err != nil {
+		if err = rows.Scan(&f.VideoID, &f.Title, &f.Version, &f.Season, &f.Episode, &f.Format, &f.SeasonID, &f.EpisodeID, &f.VersionID); err != nil {
 			return p, err
 		}
 		f.FileURL = fmt.Sprintf("/api/client/videos/%d/file", f.VideoID)

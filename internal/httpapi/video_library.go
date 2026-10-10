@@ -62,7 +62,18 @@ func (s *Server) handleVideoWorks(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
 	if r.URL.Path == "/api/client/video-works" {
-		p, err := s.service.VideoWorks(r.URL.Query().Get("q"), r.URL.Query().Get("kind"), limit, offset)
+		library, err := videoPositiveQuery(r, "libraryId")
+		if err != nil {
+			videoError(w, err)
+			return
+		}
+		sort := r.URL.Query().Get("sort")
+		kind := r.URL.Query().Get("kind")
+		if (sort != "" && sort != "title" && sort != "recent") || (kind != "" && kind != "movie" && kind != "series") {
+			videoError(w, fmt.Errorf("invalid catalog filter"))
+			return
+		}
+		p, err := s.service.VideoWorksFiltered(r.URL.Query().Get("q"), kind, library, sort, limit, offset)
 		if err != nil {
 			videoError(w, err)
 			return
@@ -84,6 +95,33 @@ func (s *Server) handleVideoWorks(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, p)
 		return
 	}
+	if tail == "seasons" {
+		p, err := s.service.VideoSeasons(id, limit, offset)
+		if err != nil {
+			videoError(w, err)
+			return
+		}
+		writeJSON(w, p)
+		return
+	}
+	if tail == "episodes" {
+		season, err := videoSeasonQuery(r)
+		if err != nil {
+			videoError(w, err)
+			return
+		}
+		p, err := s.service.VideoEpisodes(id, season, limit, offset)
+		if err != nil {
+			videoError(w, err)
+			return
+		}
+		writeJSON(w, p)
+		return
+	}
+	if tail == "availability" {
+		s.handleVideoAvailability(w, r, id, limit, offset)
+		return
+	}
 	if tail == "files" {
 		var season *int
 		if raw := r.URL.Query().Get("season"); raw != "" {
@@ -94,7 +132,12 @@ func (s *Server) handleVideoWorks(w http.ResponseWriter, r *http.Request) {
 			}
 			season = &n
 		}
-		p, err := s.service.VideoWorkFiles(id, season, limit, offset)
+		episodeID, err := videoPositiveQuery(r, "episodeId")
+		if err != nil {
+			videoError(w, err)
+			return
+		}
+		p, err := s.service.VideoWorkEpisodeFiles(id, season, episodeID, limit, offset)
 		if err != nil {
 			videoError(w, err)
 			return

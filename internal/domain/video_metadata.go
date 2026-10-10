@@ -26,16 +26,20 @@ type VideoMetadata struct {
 }
 
 type VideoWork struct {
-	ID         int64  `json:"id"`
-	LibraryID  int64  `json:"libraryId"`
-	Kind       string `json:"kind"`
-	Title      string `json:"title"`
-	Year       int    `json:"year"`
-	Overview   string `json:"overview"`
-	Provider   string `json:"provider,omitempty"`
-	ProviderID string `json:"providerId,omitempty"`
-	PosterURL  string `json:"posterUrl"`
-	VideoID    int64  `json:"videoId"`
+	ID                    int64  `json:"id"`
+	LibraryID             int64  `json:"libraryId"`
+	Kind                  string `json:"kind"`
+	Title                 string `json:"title"`
+	Year                  int    `json:"year"`
+	Overview              string `json:"overview"`
+	Provider              string `json:"provider,omitempty"`
+	ProviderID            string `json:"providerId,omitempty"`
+	PosterURL             string `json:"posterUrl"`
+	VideoID               int64  `json:"videoId"`
+	FileCount             int    `json:"fileCount"`
+	VersionCount          int    `json:"versionCount"`
+	AvailableEpisodeCount int    `json:"availableEpisodeCount"`
+	AddedAt               string `json:"addedAt"`
 }
 type VideoWorkPage struct {
 	Items   []VideoWork `json:"items"`
@@ -45,13 +49,16 @@ type VideoWorkPage struct {
 	HasMore bool        `json:"hasMore"`
 }
 type VideoWorkFile struct {
-	VideoID int64  `json:"videoId"`
-	Title   string `json:"title"`
-	Version string `json:"version"`
-	Season  *int   `json:"season"`
-	Episode *int   `json:"episode"`
-	FileURL string `json:"fileUrl"`
-	Format  string `json:"format"`
+	VideoID   int64  `json:"videoId"`
+	Title     string `json:"title"`
+	Version   string `json:"version"`
+	Season    *int   `json:"season"`
+	Episode   *int   `json:"episode"`
+	FileURL   string `json:"fileUrl"`
+	Format    string `json:"format"`
+	SeasonID  *int64 `json:"seasonId"`
+	EpisodeID *int64 `json:"episodeId"`
+	VersionID int64  `json:"versionId"`
 }
 type VideoWorkFiles struct {
 	Items   []VideoWorkFile `json:"items"`

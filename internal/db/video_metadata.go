@@ -10,6 +10,23 @@ func migrateVideoMetadata(c *sql.DB) error {
 	}
 	defer tx.Rollback()
 	statements := []string{
+		`CREATE TABLE IF NOT EXISTS video_playback_state (
+ profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+ video_id INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+ media_key TEXT NOT NULL, revision INTEGER NOT NULL, position_seconds REAL NOT NULL,
+ duration_seconds REAL NOT NULL, completed INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+ PRIMARY KEY(profile_id,video_id))`,
+		`CREATE TABLE IF NOT EXISTS video_playback_events (
+ profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+ event_id TEXT NOT NULL, video_id INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+ request_hash TEXT NOT NULL, response_json TEXT NOT NULL,
+ PRIMARY KEY(profile_id,event_id))`,
+		`CREATE TABLE IF NOT EXISTS video_playback_sessions (
+ profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+ video_id INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+ session_id TEXT NOT NULL, sequence INTEGER NOT NULL,
+ PRIMARY KEY(profile_id,video_id,session_id))`,
+		`CREATE INDEX IF NOT EXISTS idx_video_playback_recent ON video_playback_state(profile_id,completed,updated_at DESC)`,
 		`CREATE TABLE IF NOT EXISTS video_match_state (
  video_id INTEGER PRIMARY KEY REFERENCES videos(id) ON DELETE CASCADE,
  generation INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'unmatched')`,
@@ -34,6 +51,14 @@ func migrateVideoMetadata(c *sql.DB) error {
  PRIMARY KEY(video_id,version_id))`,
 		`CREATE INDEX IF NOT EXISTS idx_video_works_library_title ON video_works(library_id,title,id)`,
 		`CREATE INDEX IF NOT EXISTS idx_video_links_version ON video_file_links(version_id,position,video_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_video_links_episode ON video_file_links(episode_id,video_id)`,
+		`CREATE TABLE IF NOT EXISTS video_expected_episodes (
+ work_id INTEGER NOT NULL REFERENCES video_works(id) ON DELETE CASCADE,
+ season INTEGER NOT NULL, number INTEGER NOT NULL, title TEXT NOT NULL,
+ air_date TEXT NOT NULL, expires_at INTEGER NOT NULL, PRIMARY KEY(work_id,season,number))`,
+		`CREATE TABLE IF NOT EXISTS video_expected_seasons (
+ work_id INTEGER NOT NULL REFERENCES video_works(id) ON DELETE CASCADE,
+ season INTEGER NOT NULL, expires_at INTEGER NOT NULL, PRIMARY KEY(work_id,season))`,
 		`CREATE TABLE IF NOT EXISTS video_work_details (
  work_id INTEGER PRIMARY KEY REFERENCES video_works(id) ON DELETE CASCADE,
  identity_key TEXT NOT NULL UNIQUE, overview TEXT NOT NULL DEFAULT '',

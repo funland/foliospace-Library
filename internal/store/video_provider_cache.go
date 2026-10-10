@@ -10,6 +10,11 @@ func (s *Store) PurgeVideoProviderCache(all bool) ([]string, error) {
 	}
 	defer tx.Rollback()
 	now := time.Now().Unix()
+	for _, table := range []string{"video_expected_episodes", "video_expected_seasons"} {
+		if _, err = tx.Exec(`DELETE FROM `+table+` WHERE ? OR expires_at<=? OR work_id IN (SELECT work_id FROM video_work_details WHERE provider='tmdb' AND expires_at<=?)`, all, now, now); err != nil {
+			return nil, err
+		}
+	}
 	rows, err := tx.Query(`SELECT cache_path FROM video_artwork WHERE source='tmdb' AND (? OR expires_at<=?)`, all, now)
 	if err != nil {
 		return nil, err
