@@ -486,6 +486,9 @@ func Migrate(conn *sql.DB) error {
 			return fmt.Errorf("migrate sqlite: %w", err)
 		}
 	}
+	if err := migrateVideoMetadata(conn); err != nil {
+		return fmt.Errorf("migrate video metadata: %w", err)
+	}
 	if err := addColumnIfMissing(conn, "libraries", "exclude_patterns", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
@@ -611,8 +614,12 @@ func Migrate(conn *sql.DB) error {
 	if err := backfillLegacyArcadeGameFiles(conn); err != nil {
 		return fmt.Errorf("backfill legacy arcade manifests: %w", err)
 	}
-	if err := reconcileGameCatalogRoles(conn); err != nil {
-		return fmt.Errorf("reconcile game catalog roles: %w", err)
+	// Preserve an already curated catalog during unrelated service upgrades.
+	// Schema migrations and explicit scans remain enabled.
+	if os.Getenv("FOLIOSPACE_PRESERVE_GAME_CATALOG_ON_START") != "1" {
+		if err := reconcileGameCatalogRoles(conn); err != nil {
+			return fmt.Errorf("reconcile game catalog roles: %w", err)
+		}
 	}
 	return nil
 }

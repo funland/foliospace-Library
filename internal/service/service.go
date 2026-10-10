@@ -38,6 +38,9 @@ import (
 )
 
 type Service struct {
+	videoWorker              *videoMetadataWorker
+	videoCacheMu             sync.Mutex
+	videoCachePurgedAt       time.Time
 	store                    *store.Store
 	scanner                  *scanner.Scanner
 	configDir                string
@@ -149,6 +152,8 @@ func NewWithConfig(store *store.Store, configDir string) *Service {
 	svc.scanner.SetCompletionHook(svc.handleCompletedScan)
 	go svc.thumbnailEnqueueLoop()
 	svc.thumbnailWorker.start()
+	_ = svc.PurgeVideoProviderCache(false)
+	svc.startVideoMetadataWorker(newTMDBProvider())
 	return svc
 }
 

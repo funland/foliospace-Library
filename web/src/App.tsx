@@ -1,4 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { VideoLibrary } from "./VideoLibrary";
+import { VideoPoster } from "./VideoPoster";
+import { homeLibrarySections, isReadingOrGameCollection } from "./home-library";
 import type { CSSProperties, FormEvent, MouseEvent, ReactNode, SyntheticEvent, TouchEvent } from "react";
 import { GlobalWorkerOptions, getDocument } from "pdfjs-dist";
 import type { PDFDocumentProxy } from "pdfjs-dist";
@@ -110,6 +113,7 @@ export function App() {
   const [videoCatalogLoading, setVideoCatalogLoading] = useState(false);
   const [clientInfo, setClientInfo] = useState<ClientInfo | null>(null);
   const [selectedVideo, setSelectedVideo] = useState<VideoAsset | null>(null);
+  const [showLegacyVideoFiles, setShowLegacyVideoFiles] = useState(false);
   const [videoTranscodeStatus, setVideoTranscodeStatus] = useState<VideoTranscodeStatus | null>(null);
   const [videoTranscodeQueueStatus, setVideoTranscodeQueueStatus] = useState<VideoTranscodeQueueStatus | null>(null);
   const [videoPlaybackReloadKey, setVideoPlaybackReloadKey] = useState(0);
@@ -2282,9 +2286,8 @@ export function App() {
 
   const filteredSeries = useMemo(() => {
     const value = query.trim().toLowerCase();
-    if (!value) return series;
-    return series.filter((item) => item.title.toLowerCase().includes(value));
-  }, [query, series]);
+    return series.filter((item) => isReadingOrGameCollection(item, libraries) && (!value || item.title.toLowerCase().includes(value)));
+  }, [query, series, libraries]);
   const sortedSeries = useMemo(() => {
     return [...filteredSeries].sort((left, right) => compareCollections(left, right, collectionSort, collectionSortDirection));
   }, [collectionSort, collectionSortDirection, filteredSeries]);
@@ -2353,6 +2356,10 @@ export function App() {
     ? `reader ${selectedBookReaderClass} controlLayout-${readerControlLayout}${selectedBook.format === "epub" ? ` epubTheme-${epubTheme}` : ""}${useWebtoonReader ? " webtoonMode" : ""}${readerFullscreen ? " immersiveMode" : ""}`
     : "reader";
   const visibleContinueBooks = continueBooks.slice(0, 4);
+  // A video-only library must not surface stale book records from a former
+  // mixed scan (for example a subtitle ZIP) as recently added reading material.
+  const showRecentBooks = recentBooks.length > 0 && libraries.some(library => library.assetType !== "video");
+  const homeSections = homeLibrarySections(libraries, videoShelf.length > 0);
 
   return (
     <main className={view === "reader" ? "app readerMode" : "app"}>
@@ -2690,7 +2697,7 @@ export function App() {
                   {videoShelf.length > 0 && (
                     <VideoShelf
                       title={t.videoShelf}
-                      subtitle={t.videoShelfSubtitle}
+                      subtitle={t.recentSubtitle}
                       videos={videoShelf.slice(0, 4)}
                       meta={(video) => videoMeta(video, t)}
                       onOpen={(video) => {
@@ -2703,7 +2710,7 @@ export function App() {
                       onAddToCollection={(video) => addAssetToManualCollection("video", video.id, video.title)}
                     />
                   )}
-                  {recentBooks.length > 0 && (
+                  {showRecentBooks && (
                     <BookShelf
                       title={t.recentlyAddedTitle}
                       subtitle={t.recentSubtitle}
@@ -2718,6 +2725,14 @@ export function App() {
               </section>
             )}
 
+            {homeSections.video && (
+              <VideoLibrary presentation="home" locale={locale} onPlay={(video) => {
+                setSelectedVideo(video);
+                void openVideoCatalog();
+              }} />
+            )}
+
+            {homeSections.legacy && <>
             <section className="collectionPanel panel">
               <div className="collectionPanelHeader">
                 <div>
@@ -2854,6 +2869,7 @@ export function App() {
                 </div>
               )}
             </section>
+            </>}
           </div>
         )}
 
@@ -3177,6 +3193,9 @@ export function App() {
 
         {view === "videos" && (
           <section className="catalogPage videoCatalogPage">
+            <VideoLibrary locale={locale} onPlay={setSelectedVideo} />
+            <button aria-expanded={showLegacyVideoFiles} onClick={() => setShowLegacyVideoFiles(v => !v)}>{locale.startsWith("zh") ? "旧版文件浏览与收藏" : "Legacy file browser & collections"}</button>
+            {showLegacyVideoFiles && (
             <div className="catalogHeader">
               <div>
                 <h1>{t.videoShelf}</h1>
@@ -3191,6 +3210,7 @@ export function App() {
                 </select>
               </label>
             </div>
+            )}
             {selectedVideo && (
               <div className="inlineVideoPlayer">
                 <div>
@@ -3225,7 +3245,7 @@ export function App() {
                 )}
               </div>
             )}
-            <div className="catalogGrid videos">
+            {showLegacyVideoFiles && <div className="catalogGrid videos">
               {videoCatalog.map((video) => (
                 <VideoTile
                   className={selectedVideo?.id === video.id ? "book selected" : "book"}
@@ -3242,7 +3262,7 @@ export function App() {
                   {videoCatalogLoading ? t.loadingVideos : t.loadMore}
                 </button>
               )}
-            </div>
+            </div>}
           </section>
         )}
 
@@ -4747,17 +4767,11 @@ function VideoTile({
   onAddToCollection: (video: VideoAsset) => void;
   className?: string;
 }) {
-  const [thumbnailFailed, setThumbnailFailed] = useState(false);
-
   return (
     <div className={`${className} videoCard`} title={video.title}>
       <button className="videoCardButton" type="button" onClick={() => onOpen(video)}>
         <span className="shelfCover videoCover">
-          {!thumbnailFailed && <img src={authenticatedResourcePath(video.thumbnailUrl)} alt="" loading="lazy" onError={() => setThumbnailFailed(true)} />}
-          <span className="videoCoverFallback">
-            <em>Now Showing</em>
-            <strong>{video.title}</strong>
-          </span>
+          <VideoPoster videoId={video.id} />
           <span className="videoCoverFormat">{video.format.toUpperCase()}</span>
         </span>
         <strong>{video.title}</strong>

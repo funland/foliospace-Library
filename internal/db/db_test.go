@@ -162,3 +162,45 @@ func TestMigrateReconcilesLaunchCatalogRoles(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestMigratePreservesCuratedGameCatalogWhenRequested(t *testing.T) {
+	t.Setenv("FOLIOSPACE_PRESERVE_GAME_CATALOG_ON_START", "1")
+	conn, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_, err = conn.Exec(`INSERT INTO libraries(id,name,root_path,asset_type) VALUES(1,'Games','/library','game');
+ INSERT INTO games(id,library_id,title,platform,format,file_path,rel_path,size,mtime,rom_set_name,emulator_hint,catalog_role)
+ VALUES(1,1,'Example','arcade','zip','/library/example.zip','example.zip',100,'2026-01-01','custom-set','mame','game')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := Migrate(conn); err != nil {
+			t.Fatal(err)
+		}
+		var set, hint, role string
+		if err := conn.QueryRow(`SELECT rom_set_name,emulator_hint,catalog_role FROM games WHERE id=1`).Scan(&set, &hint, &role); err != nil {
+			t.Fatal(err)
+		}
+		if set != "custom-set" || hint != "mame" || role != "game" {
+			t.Fatalf("curated fields changed: %s %s %s", set, hint, role)
+		}
+	}
+	var n int
+	if err := conn.QueryRow(`SELECT COUNT(*) FROM video_works`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FOLIOSPACE_PRESERVE_GAME_CATALOG_ON_START", "")
+	if err := Migrate(conn); err != nil {
+		t.Fatal(err)
+	}
+	var role string
+	if err := conn.QueryRow(`SELECT catalog_role FROM games WHERE id=1`).Scan(&role); err != nil {
+		t.Fatal(err)
+	}
+	if role != "needs-curation" {
+		t.Fatalf("normal reconciliation no longer runs: %s", role)
+	}
+}

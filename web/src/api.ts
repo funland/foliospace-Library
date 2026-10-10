@@ -611,7 +611,7 @@ type RequestOptions = RequestInit & {
   timeoutMs?: number;
 };
 
-async function request<T>(path: string, init?: RequestOptions): Promise<T> {
+export async function request<T>(path: string, init?: RequestOptions): Promise<T> {
   const token = getAuthToken();
   const profileId = getActiveProfileId();
   const { timeoutMs, headers, signal, ...fetchInit } = init ?? {};

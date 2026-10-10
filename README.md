@@ -10,6 +10,13 @@ The current implementation still starts from the FolioSpace Reader codebase and 
 
 Current release: [`1.02`](https://github.com/funland/foliospace-Library/releases/tag/v1.02).
 
+Development preview: [lightweight movie / TV library](docs/api/video-library-v1.md)
+adds local NFO/artwork, a paginated poster wall, season/episode/version associations
+and optional, explicitly confirmed TMDB matching. Original-file delivery and
+existing playback routes remain compatible; the provider is disabled by default.
+This work is not included in the published 1.02 image yet.
+中文：影视资料库一期为开发预览，主要向客户端提供影片、海报和元数据；未发布，未启用在线刮削。
+
 ## Start here: SpatialEMU + FolioSpace
 
 FolioSpace is optional for SpatialEMU. SpatialEMU can open supported local files directly without a FolioSpace server.

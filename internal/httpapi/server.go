@@ -70,6 +70,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/client/games/played", s.handleClientPlayedGames)
 	mux.HandleFunc("/api/client/games/", s.handleClientGameAction)
 	mux.HandleFunc("/api/client/videos", s.handleClientVideos)
+	mux.HandleFunc("/api/client/video-works", s.handleVideoWorks)
+	mux.HandleFunc("/api/client/video-works/", s.handleVideoWorks)
+	mux.HandleFunc("/api/videos/metadata/provider", s.handleVideoProvider)
+	mux.HandleFunc("/api/video-metadata-jobs/", s.handleVideoMetadataJobs)
 	mux.HandleFunc("/api/client/videos/", s.handleClientVideoAction)
 	mux.HandleFunc("/api/client/books", s.handleClientBooks)
 	mux.HandleFunc("/api/client/books/favorites", s.handleClientFavoriteBooks)
@@ -1234,6 +1238,11 @@ func (s *Server) handleClientVideoAction(w http.ResponseWriter, r *http.Request)
 		http.NotFound(w, r)
 		return
 	}
+	if tail == "metadata" && r.Method == http.MethodGet {
+		m, err := s.service.VideoMetadata(id)
+		writeJSONOrError(w, m, err)
+		return
+	}
 	if tail == "manifest" && r.Method == http.MethodGet {
 		video, err := s.service.Video(id)
 		if err != nil {
@@ -1248,7 +1257,7 @@ func (s *Server) handleClientVideoAction(w http.ResponseWriter, r *http.Request)
 		writeJSONOrError(w, status, err)
 		return
 	}
-	if tail == "file" && r.Method == http.MethodGet {
+	if tail == "file" && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
 		path, err := s.service.VideoFilePath(id)
 		if err != nil {
 			writeJSONOrError(w, nil, err)
@@ -1372,6 +1381,13 @@ func (s *Server) handleVideoAction(w http.ResponseWriter, r *http.Request) {
 	id, tail, ok := parseIDTail(r.URL.Path, "/api/videos/")
 	if !ok {
 		http.NotFound(w, r)
+		return
+	}
+	if s.handleVideoLibraryAction(w, r, id, tail) {
+		return
+	}
+	if tail == "metadata" {
+		s.handleVideoMetadata(w, r, id)
 		return
 	}
 	if tail == "thumbnail" && r.Method == http.MethodGet {

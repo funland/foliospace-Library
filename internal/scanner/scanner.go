@@ -258,6 +258,10 @@ func (s *Scanner) runScanJob(library domain.Library, job domain.ScanJob, scope s
 		}
 		if kind == "video" {
 			if s.store.CanSkipVideo(path, info.Size(), info.ModTime()) {
+				if err := s.refreshVideoLocalMetadata(path); err != nil {
+					job.ErrorCount++
+					_ = s.store.AddJobEvent(job.ID, "error", "video local metadata refresh failed: "+path)
+				}
 				job.SkippedFiles++
 				_ = s.store.UpdateScanJob(job)
 				return nil
@@ -853,6 +857,10 @@ func (s *Scanner) processScanTask(library domain.Library, jobID int64, task scan
 	}
 	if task.kind == "video" {
 		if s.store.CanSkipVideo(task.path, task.info.Size(), task.info.ModTime()) {
+			if err := s.refreshVideoLocalMetadata(task.path); err != nil {
+				s.recordTaskError(library.ID, jobID, task.path, domain.ErrorUnknownIO, "video local metadata refresh failed: ", err, updateJob)
+				return
+			}
 			updateJob(func(job *domain.ScanJob) {
 				setCurrent(job)
 				job.SkippedFiles++
@@ -4036,7 +4044,10 @@ func (s *Scanner) indexVideoFile(library domain.Library, path string, info fs.Fi
 		AudioCodec:      metadata.audioCodec,
 		ThumbnailStatus: "placeholder",
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	return s.refreshVideoLocalMetadata(path)
 }
 
 type videoProbeMetadata struct {
