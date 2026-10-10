@@ -8,7 +8,10 @@ bump, Git push and App Store submission are not part of this task.
 
 - Isolated worktree: `/private/tmp/foliospace-video-library-p1-p2`, branch
   `codex/video-library-p1-p2`, from local main `73944012a26bb880d71144fe13ab5d50edaba340`.
-  P1/P2 source remains uncommitted; do not use pristine public 1.02 as production.
+  P1/P2 source was subsequently committed as
+  `7c4b67a438ceefaf122ebb17079fe059ef4c65de` under explicit user authorization.
+  See the [complete baseline](production-baseline-video-p1-p2-2026-10-10.md);
+  do not use pristine public 1.02 as production.
 - Running container: `0fa590d6bb1c0fc9681935117753534743dc27a49f3ebd0a9b6d51dc6dcb83f8`.
 - Server SHA-256: `0b803ae92af67949d62b054ee546ea8e7056e0c613a0fd87cf900d7f8d4e2d73`.
 - Build: Go 1.24.7, `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath`.
@@ -113,8 +116,9 @@ production provider refresh/manual regroup were not exercised. Disc ISO and
 multi-title timelines retain local resume rather than file-seconds server sync.
 Existing unrelated client diagnostic dirty source was preserved and included in
 these development builds; exact source hashes/patch are retained, and this is
-not a clean commercial-release-source assertion. Neither side committed or
-published P1/P2 in this task.
+not a clean commercial-release-source assertion. The original deployment task
+did not commit or publish P1/P2; the later user-authorized local-commit closeout
+is recorded in the complete baseline document. No public publication is implied.
 
 Client cleanup retained current successful platform products and removed only
 verified superseded P0 outputs/unused intermediates. Allocated sizes removed:

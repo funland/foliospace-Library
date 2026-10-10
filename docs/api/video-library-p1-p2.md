@@ -1,8 +1,10 @@
 # Video library P1/P2 contract
 
-Implementation target: production P0 `7394401`. Additive; old file IDs, manifests,
-Range, authentication and playback remain unchanged. Feature flags only become
-available after the implementing server is deployed. No public release implied.
+Implemented on production P0 `7394401`; P1/P2 source is committed as
+`7c4b67a438ceefaf122ebb17079fe059ef4c65de` and deployed on local port 18080.
+Additive; old file IDs, manifests, Range, authentication and playback remain
+unchanged. Clients must still discover capabilities rather than assume a service
+version implies availability. No public release implied.
 
 ## Capability negotiation
 

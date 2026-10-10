@@ -10,7 +10,7 @@ The current implementation still starts from the FolioSpace Reader codebase and 
 
 Current release: [`1.02`](https://github.com/funland/foliospace-Library/releases/tag/v1.02).
 
-Development preview: [lightweight movie / TV library](docs/api/video-library-v1.md)
+Local production baseline: [lightweight movie / TV library](docs/api/video-library-v1.md)
 adds local NFO/artwork, a paginated poster wall, season/episode/version associations
 and optional, explicitly confirmed TMDB matching. Original-file delivery and
 existing playback routes remain compatible; the provider is disabled by default.
@@ -18,7 +18,9 @@ This work is not included in the published 1.02 image yet.
 The locally deployed P1/P2 adds season/episode browsing, scoped work counts,
 profile-scoped playback synchronization, continue/next-up and optional expected
 episode availability. See the [P1/P2 contract](docs/api/video-library-p1-p2.md).
-中文：影视资料库 P0 主要向客户端提供影片、海报和元数据；已在本地生产环境验收，尚未包含在公开 1.02 镜像中。在线刮削默认关闭，可由管理员配置并确认启用。
+Use the [complete P0 + P1/P2 production baseline](docs/operations/production-baseline-video-p1-p2-2026-10-10.md)
+for subsequent development; do not replace it with the older public 1.02 image.
+中文：本地主线以 18080 正在运行的 P0 + P1/P2 完整版为基线，保留此前阅读、游戏和下载功能；公开 1.02 镜像尚不包含电影库升级。在线刮削默认关闭，可由管理员配置并确认启用。
 
 ## Start here: SpatialEMU + FolioSpace
 
