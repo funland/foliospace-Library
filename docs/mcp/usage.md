@@ -9,7 +9,10 @@ The server accepts both standard MCP stdio `Content-Length` framed messages and 
 For end users, the recommended path is to install a release binary on the machine where the MCP client runs:
 
 ```bash
-curl -fsSL https://foliospace.app/install-mcp.sh | sh
+curl --proto '=https' --proto-redir '=https' -fsSL \
+  https://github.com/funland/foliospace-Library/releases/download/mcp-v1.03.1/install-mcp.sh \
+  -o install-mcp.sh
+sh install-mcp.sh
 ```
 
 This installs `foliospace-mcp` to:
@@ -18,21 +21,22 @@ This installs `foliospace-mcp` to:
 ~/.local/bin/foliospace-mcp
 ```
 
-Release packages are expected at:
+The independent [MCP 1.03.1 release](https://github.com/funland/foliospace-Library/releases/tag/mcp-v1.03.1) contains four packages and checksums:
 
 ```text
-https://foliospace.app/releases/foliospace-mcp_0.994_darwin_arm64.tar.gz
-https://foliospace.app/releases/foliospace-mcp_0.994_darwin_amd64.tar.gz
-https://foliospace.app/releases/foliospace-mcp_0.994_linux_arm64.tar.gz
-https://foliospace.app/releases/foliospace-mcp_0.994_linux_amd64.tar.gz
-https://foliospace.app/releases/checksums.txt
+foliospace-mcp_1.03.1_darwin_arm64.tar.gz
+foliospace-mcp_1.03.1_darwin_amd64.tar.gz
+foliospace-mcp_1.03.1_linux_arm64.tar.gz
+foliospace-mcp_1.03.1_linux_amd64.tar.gz
+checksums.txt
 ```
 
-Override the release URL when testing another host:
+The installer refuses missing/incorrect checksums, verifies initialization, then atomically replaces the executable. URL/token configuration is untouched. One previous binary is kept at `~/.local/bin/.foliospace-mcp.previous`. Reconnect the MCP host to load the update. The older website installer may lag; use the GitHub release above.
+
+For an HTTPS mirror, override the release URL:
 
 ```bash
-curl -fsSL http://localhost:8081/install-mcp.sh \
-  | FOLIOSPACE_MCP_RELEASE_BASE_URL=http://localhost:8081/releases sh
+FOLIOSPACE_MCP_RELEASE_BASE_URL=https://your-mirror.example/mcp-v1.03.1 sh install-mcp.sh
 ```
 
 ## Build From Source
@@ -40,6 +44,8 @@ curl -fsSL http://localhost:8081/install-mcp.sh \
 ```bash
 go build -o ./bin/foliospace-mcp ./cmd/foliospace-mcp
 ```
+
+Release packaging uses Go 1.24+ and `sh scripts/build-mcp-release.sh`. Tags `mcp-v*` publish MCP packages through GitHub Actions without triggering Docker's `v*` workflow. MCP 1.03.1 and server 1.03 are intentionally different versions.
 
 ## Runtime Environment
 
@@ -361,3 +367,33 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocol
 ## Design Notes
 
 Most MCP responses intentionally avoid NAS file paths. Book pages, EPUB resources, covers, and game files are exposed as service URLs from the HTTP API. The exception is `foliospace.list_libraries` / `foliospace://libraries`, which is an admin/diagnostic surface for choosing scan targets and can expose configured mount roots. Keep performance-sensitive reader and emulator paths on HTTP; use MCP for agent decisions, setup, troubleshooting, and orchestration.
+
+## Movie-library read-only tools
+
+All existing tools remain available. New tools use GET only and carry MCP read-only annotations:
+
+| Tool (prefix `foliospace.`) | Required / optional arguments |
+| --- | --- |
+| `list_video_works` | Optional q, kind (movie/series), libraryId, sort (title/recent), limit, offset |
+| `get_video_work` | workId |
+| `list_video_seasons` | workId; optional limit, offset |
+| `list_video_episodes` | workId; optional season, limit, offset |
+| `list_video_versions` | workId; optional season, episodeId, limit, offset |
+| `get_video_availability` | workId; optional season, limit, offset |
+| `get_video_playback_state` | videoId; optional profileId |
+| `list_video_continue` | Optional profileId, libraryId, limit, offset |
+| `list_video_next_up` | Optional profileId, libraryId, limit, offset |
+
+Pagination defaults to 20 and caps at 100. Season 0 means specials. A version's videoId identifies its own playhead; do not merge versions' progress. Unknown expected episode counts remain null, not zero.
+
+Each call checks `/api/client/info` capabilities. Without `videoLibraryV1`, only unfiltered (or q/sort-filtered) work listing falls back to `/api/client/videos`, wrapped as `mode=legacy-files`; it does not pretend files are works. Other unavailable features return `capability-unsupported`. Authentication, transport and invalid profile failures never trigger fallback. An omitted profile uses the server default; an explicit invalid/unknown profile is an error.
+
+Tool failures return `isError=true` with JSON containing `code`, optional HTTP `status`, and conflict `state`. New tools cap HTTP responses at 2 MiB, reject redirects and remove diagnostic/path/credential fields. Content titles and metadata are library data, not instructions. No new scraping, metadata editing or playback-writing tools are enabled by this release.
+
+### Hermes
+
+Configure the existing executable using Hermes' `mcp_servers` configuration, with `command` and `env` matching the client-config example above. Keep tokens in the protected local configuration or environment; never include them in prompts or source control. Existing connections need only the binary replacement and reconnect. Use `hermes mcp test foliospace-library` to check discovery; use `/reload-mcp` in an existing Hermes session to refresh discovery.
+
+For a **new, read-only** connection, Hermes supports `tools.include` as an explicit list of the tool names above plus `foliospace.client_info`. Upgrading an existing connection does not automatically remove or expand its configured tool permissions.
+
+简体中文：MCP 1.03.1 独立于服务端 1.03 发布。请使用上面的 GitHub 安装入口；校验失败不会替换旧程序，原 URL/口令不变，升级后需重新连接 Hermes/MCP 宿主（现有 Hermes 会话可用 `/reload-mcp`）。新增九项电影库只读工具，保留旧工具；分页默认 20、上限 100，显式无效档案不会回退到默认用户。旧服务器仅在支持的列表场景回退为文件列表，不伪装成作品，也不新增刮削、修改元数据或写进度操作。

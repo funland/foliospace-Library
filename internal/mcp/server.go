@@ -42,6 +42,7 @@ type Tool struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description"`
 	InputSchema map[string]any `json:"inputSchema"`
+	Annotations map[string]any `json:"annotations,omitempty"`
 }
 
 type Resource struct {
@@ -51,7 +52,7 @@ type Resource struct {
 	MimeType    string `json:"mimeType,omitempty"`
 }
 
-const serviceVersion = "1.03"
+const serviceVersion = "1.03.1"
 
 func New(baseURL string, token string) *Server {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
@@ -85,7 +86,7 @@ func (s *Server) Handle(ctx context.Context, req Request) Response {
 			},
 		})
 	case "tools/list":
-		return ok(req.ID, map[string]any{"tools": tools()})
+		return ok(req.ID, map[string]any{"tools": append(tools(), videoTools()...)})
 	case "resources/list":
 		return ok(req.ID, map[string]any{"resources": resources()})
 	case "resources/read":
@@ -253,6 +254,9 @@ func (s *Server) callTool(ctx context.Context, raw json.RawMessage) (any, error)
 	}
 	if params.Arguments == nil {
 		params.Arguments = map[string]any{}
+	}
+	if spec, exists := videoSpecs[params.Name]; exists {
+		return s.callVideoTool(ctx, spec, params.Arguments), nil
 	}
 
 	var data any
