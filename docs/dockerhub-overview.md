@@ -1,415 +1,95 @@
 # FolioSpace Library
 
-FolioSpace Library is an optional self-hosted personal digital asset catalog. It runs with Docker/Compose on a Mac, Windows or Linux computer, or a compatible NAS. It provides a unified indexing layer and client API for books, comics, PDFs, user-owned game libraries, videos, and future spatial media clients.
+FolioSpace Library is an optional self-hosted catalog for your own books, comics, PDFs, games and movies. It runs with Docker/Compose on a Mac, Windows or Linux computer, or a compatible NAS. **A NAS is not required, and you do not need to write code.** You do need Docker, persistent storage, media folders, a service URL and an access token.
 
-It is not a cloud media service and does not distribute games, ROMs, BIOS files, firmware, books, comics, movies, or third-party content catalogs. It indexes user-provided files and exposes opaque media URLs. Book/game/video DTOs omit source paths; legacy collection and administration responses can still carry directory paths.
+Library connects [FolioSpace Reader](https://reader.foliospace.app/), [FolioLume Player](https://foliolume.app/) and [SpatialEMU](https://spatialemu.com/). Each client can also use supported local files or sources independently. Other clients are welcome through the [Client API](https://github.com/funland/foliospace-Library/blob/main/docs/api/client-v1.md#external-client-quick-start).
 
-Library is the optional content foundation for [FolioSpace Reader](https://reader.foliospace.app/) ([App Store](https://apps.apple.com/app/id6765784590)), [FolioLume Player](https://foliolume.app/) ([App Store](https://apps.apple.com/app/id6812153528)), and [SpatialEMU](https://spatialemu.com/) ([App Store](https://apps.apple.com/app/id6771768889)). All three apps can use supported files/sources independently. Release 1.03 includes enhanced movie/TV library and playback-state APIs; compatible Player test builds implement them, without implying an App Store update. Independent clients are welcome: see the [Client API quick start](https://github.com/funland/foliospace-Library/blob/main/docs/api/client-v1.md#external-client-quick-start).
+This is not a hosted cloud service, a native macOS server app or a third-party media catalog. No books, movies, ROMs, BIOS or firmware are bundled or supplied. Only index files you have the right to use. Book/game/video DTOs omit source paths; legacy collection and administration responses can still carry directory paths.
 
 ## 1.03: Movie and TV library, posters and playback state
 
 - Consistent poster artwork across the home video library, recent additions, works and collections, plus a paginated poster wall.
-- Local NFO/artwork, manual metadata corrections, explicit TMDB candidate selection, seasons/episodes and multiple file versions without rewriting media.
-- Capability-discovered library filtering/recent sorting, stable episode/version IDs, profile-scoped playback state, watched/unwatched, continue watching and next-up APIs. Retries are idempotent; stale state produces a visible conflict instead of silently overwriting another device.
-- Optional explicit single-season expected-episode refresh distinguishes available, missing, unreleased and unknown. Local playback remains available if TMDB is disabled or unavailable.
-- Dedicated clients decode original files. Existing optional HLS remains; no new always-on transcoding. All previous reading/game, CIA, MAME/FBNeo, PC-98, Triforce and Range features are retained.
-- Images: `funland/foliospace-library:1.03` and `latest`, Linux AMD64 and ARM64. Back up `/config` before upgrading; preserve your token, mounts and existing settings. See [release notes](https://github.com/funland/foliospace-Library/blob/v1.03/docs/releases/1.03.md).
+- Local NFO/artwork, manual metadata corrections and explicit optional TMDB candidate selection without rewriting original media.
+- Seasons, episodes, specials and multiple file versions, with stable identities, library filters and recent sorting for compatible clients.
+- Profile/file-scoped playback state, watched/unwatched, continue watching and next-up APIs. Retries are idempotent; stale revisions/content identities produce explicit conflicts rather than silently overwriting another device.
+- Optional explicit single-season expected-episode refresh distinguishes available, missing, unreleased and unknown. Local files remain playable when TMDB is disabled or unavailable.
 
-### TMDB: your own token, your own applicable permission
+The server primarily indexes and delivers original files; dedicated clients decode them. Existing optional HLS is retained, not replaced by new always-on whole-library transcoding. Features require capability discovery and a compatible client build; this server release does not imply an App Store update or completed four-platform device acceptance.
 
-TMDB is **disabled by default**. Apply through your own TMDB account and configure your **API Read Access Token** server-side; we supply no shared developer key. This is not the shorter v3 API key or your FolioSpace connection token. A personal credential does not automatically grant commercial permission; review TMDB's official terms, commercial licensing and attribution requirements. Never put real credentials in Git, images, URLs, logs or screenshots. [Setup and official links](https://github.com/funland/foliospace-Library/blob/v1.03/docs/tmdb-setup.md) · [中文说明](https://github.com/funland/foliospace-Library/blob/v1.03/docs/tmdb-setup.zh-CN.md).
-
-简体中文：1.03 正式纳入影片海报墙、本地/人工元数据、季集与多版本、观看进度及继续观看/下一集接口。TMDB 可选且默认关闭，需部署者自备读取令牌；不提供共享密钥，自备不等于商用许可，须遵守来源条款和署名。原阅读与游戏功能保留，不提供影片或其他媒体文件。客户端功能按实际版本和能力启用，服务器发布不代表商店客户端已更新。
-
-## New to FolioSpace?
-
-FolioSpace is optional for SpatialEMU. SpatialEMU can open supported local files directly without a FolioSpace server. A NAS and coding are not required; you need Docker, one or more media folders, the FolioSpace service URL, and an access token created during first-run web setup.
-
-The SpatialEMU macOS app is a client, not the FolioSpace server. FolioSpace Library currently runs from this published Linux AMD64/ARM64 Docker image.
-
-Start with the [beginner quick start](https://github.com/funland/foliospace-Library/blob/main/docs/spatialemu-quickstart.md), then use the official SpatialEMU help routes:
-
-- [Connection setup guide](https://spatialemu.com/guides/foliospace-connection/) · [简体中文](https://spatialemu.com/zh-cn/guides/foliospace-connection/)
-- [Learn about FolioSpace](https://spatialemu.com/foliospace/) · [简体中文](https://spatialemu.com/zh-cn/foliospace/)
-
-The published Compose default is port `8080`. Leave `FOLIOSPACE_API_TOKEN` empty for the beginner path, open the web setup page, create a token with at least 8 characters, select a mounted container path such as `/games`, then enter the service URL and the same token in SpatialEMU and select **Connect**.
-
-## 1.02 Release: PC-98 Fonts and Triforce Routing
-
-- Select one PC-98 bitmap font per ROM/version, with an independent manifest checksum and detection of font-only updates. See [configuration](https://github.com/funland/foliospace-Library/blob/v1.02/docs/operations/pc98-per-game-font.md).
-- Triforce ISO/GCM/RVZ files in a Triforce directory/library retain their arcade identity while using the existing `ngc` / `dolphin` client route. Client gameplay and BIOS configuration remain separate requirements.
-- Includes the existing MAME compatibility, FBNeo build-identity compatibility, CIA installation, resumable downloads, and bilingual setup. No ROMs, fonts, BIOS, firmware, or private catalog data are included.
-- Images: `funland/foliospace-library:1.02` and `latest`, Linux AMD64 and ARM64.
-
-简体中文：1.02 合并 PC-98 按游戏/版本选择字体、独立校验及字体更新检测，以及 Triforce 目录识别与客户端路由修复。保留 1.01 功能，不包含游戏、字体、BIOS 或固件；实际模拟运行需客户端支持。
-
-## 1.01 Release: MAME Content Compatibility
-
-- Reuse existing audited MAME launch profiles across core versions when official listxml evidence proves the complete ROM/dependency definition is unchanged. Exact profiles remain preferred.
-- Includes 1,889 content definitions for 631 sets across MAME 0.287, 0.288, and 0.289, plus the `foliospace-mame-content-registry` administrator tool. No ROMs, BIOS files, or private catalog records are included.
-- Cross-version responses echo the client runtime and expose `contentAudit` provenance; source file checksums and dependencies are verified. Different definitions require a fresh audit.
-- Existing custom evidence files remain authoritative and are not overwritten. The bundled defaults apply only when no custom registry is installed. See the [upgrade notes](https://github.com/funland/foliospace-Library/blob/v1.01/docs/operations/mame-content-equivalence.md).
-- Preserves the 1.00 FBNeo hotfix: supported official clients are not blocked just because their App fingerprint or `coreBuildId` changes.
-- Keeps CIA installation, resumable downloads, and bilingual beginner setup. Available as `funland/foliospace-library:1.01` and `latest` for Linux AMD64 and ARM64.
-
-简体中文：1.01 增加 MAME 跨版本内容兼容、内置证据和管理员生成工具；保留 FBNeo 不按 App 指纹或构建标识拦截的行为，不包含或下载 ROM、BIOS、固件，也不会覆盖已有管理员策略。
-
-## 1.00 Release: Beginner SpatialEMU Setup
-
-Release `1.00` makes the optional SpatialEMU + FolioSpace workflow approachable on ordinary Docker hosts.
-
-- SpatialEMU can open supported local files without FolioSpace; FolioSpace remains an optional self-hosted catalog and sync service.
-- Mac, Windows, Linux, and compatible NAS hosts share one Compose path. A NAS and coding are not required.
-- First-run Web setup explains the required storage folders, service URL, token, and SpatialEMU connection steps before showing advanced catalog policy.
-- English and Simplified Chinese setup guidance link separately to the connection guide and FolioSpace product overview.
-- Existing 0.998 CIA installation, Range delivery, and game compatibility behavior remain unchanged. Service, Client API, Web, and source MCP metadata report version `1.00`.
-
-## 0.998 Release: Resumable Nintendo 3DS CIA Installation
-
-Release `0.998` adds an explicit client-side Nintendo 3DS CIA installation contract.
-
-- CIA catalog and manifest responses identify install content consistently and include original filename, byte size, SHA-1, and authenticated download routes.
-- Apple clients advertise `cia-install-v1` before requesting the dedicated installation action; unsupported clients receive a stable diagnostic instead of a missing launch profile.
-- CIA downloads preserve byte ranges for interrupted-transfer recovery. Azahar performs final signature, encryption, title identity, and base/update/DLC validation.
-- Malformed or truncated CIA header/section layouts are rejected during scanning, while `.3ds`, `.cci`, and `.cxi` launch behavior remains unchanged.
-- Existing FBNeo compatibility fixes from 0.997 remain included. Service, Client API, Web, and source MCP metadata report version `0.998`.
-
-## 0.997 Release: Stable FBNeo Coverage and Historical ROM Compatibility
-
-Release `0.997` restores stable Apple default FBNeo target coverage while keeping runtime and ROM validation strict.
-
-- Hotfix: FBNeo `coreSha256` and `coreBuildId` values are diagnostic only for supported official Windows, macOS, iOS, iPadOS, visionOS, tvOS, and Android clients, and no longer gate an otherwise approved launch profile.
-- FBNeo approval still requires the exact client/platform/architecture, `libretro/fbneo` route, ROM profile, and complete dependency closure. MAME content-set matching and Android Flycast identity rules are unchanged.
-- Historical member filenames are accepted when their exact size and CRC match the installed FBNeo DAT.
-- The field-proven Captain Commando `ioc1.ic7` PLD variant (279 bytes, CRC `0d182081`) is accepted only for the `captcomm` set; unrelated or damaged content remains blocked.
-- Default FBNeo rebuilds cover stable SpatialEMU iOS, iPadOS, and visionOS core identities plus the approved Windows target instead of producing Windows-only profiles.
-- Deployment-supplied target documents remain authoritative for client/platform coverage, including legacy tvOS targets.
-- Android keeps its existing manifest-first, pinned-DAT FBNeo flow. Android Flycast/NAOMI and MAME launch policies are unchanged.
-- The FBNeo runtime-identity hotfix needs only a server image update and no catalog re-analysis. Deployments with partial FBNeo profiles should still run **Analyze Catalog** once after checking their target document. Service, Client API, Web, and source MCP metadata report version `0.997`.
-
-## 0.996 Release: Audited Point Blank Launch Support
-
-Release `0.996` adds strict FBNeo launch profiles for Point Blank on SpatialEMU Apple clients.
-
-- Exact `ptblank` and `ptblanka` fingerprints route to FBNeo on iOS, iPadOS, and visionOS.
-- Stable packaged-core `coreBuildId` identities replace whole-application fingerprints for these profiles; unknown builds remain rejected and approved legacy SHA-256 profiles continue to work.
-- `ptblank` resolves with `namcoc75.zip`; `ptblanka` resolves with its parent `ptblank.zip` and `namcoc75.zip`.
-- `namcoc75.zip` is hidden from client game directories as a dependency while remaining available to audited manifests.
-- Existing Client API routes remain backward compatible. Service, Client API, Web, and source MCP metadata report version `0.996`.
-
-## 0.995 Release: Safe Native Delivery and Targeted Curation
-
-Release `0.995` expands safe native game delivery, compatibility curation, and offline access.
-
-- Nintendo 3DS libraries validate direct `.3ds`/`.cci` NCSD images, `.cxi` NCCH images, and safe single-image ZIP packages before indexing. Launchable images stream as their original inner bytes, while `.cia` packages are explicitly marked for client-side installation.
-- ZIP-backed game downloads support single-range requests even when the inner archive stream is not seekable, enabling resumable Nintendo DS, Nintendo 3DS, and other validated single-ROM downloads.
-- Game Curation can rebuild FBNeo or MAME compatibility for one game without deleting unrelated profiles. The MAME audit includes a fingerprint-pinned exception for the verified Time Crisis package that embeds its exact `namcoc71` device ROM, without rewriting the ZIP.
-- Android ARM64 launch resolution accepts the pinned Flycast v4 runtime identity for Dreamcast, NAOMI, Atomiswave, and audited NAOMI 2 packages. Split NAOMI 2 sets require their checksummed parent ZIP, while user-managed firmware is not injected into Android manifests.
-- Book manifests expose a byte-exact authenticated download URL with HTTP Range and HEAD support for offline reading.
-- The Client Home API can omit collection expansion for faster first-screen loading, and scans skip `_maintenance` directories by default.
-- Existing Client API routes remain backward compatible. Service, Client API, Web, and source MCP metadata report version `0.995`.
-
-## 0.994 Release: Offline Identity and Expanded Game Delivery
-
-Release `0.994` expands native game delivery and adds stable offline identity for books and comics.
-
-- Nintendo DS `.nds` files and supported single-ROM ZIP packages are indexed as canonical `nds` games, matched against Nintendo DS artwork, and negotiated only with the exact `melonds-ds` core on supported physical Apple clients.
-- 3DO `.cue`, `.iso`, and `.chd` images are indexed as canonical `3do` games. CUE manifests preserve every referenced track, exclude BIOS files from the public catalog, and require an Opera-compatible client runtime.
-- Konami Python 1 `.py1` descriptors are indexed as one game with their seven validated relative dependencies, complete file checksums, and an explicit `pcsx2-reliquary` launch contract.
-- PC-98 mixed packages containing `USER.FDI` plus CUE/BIN CD media are published as one launchable game with a complete ordered manifest instead of separate or missing entries.
-- Audited NAOMI Project Justice revisions preserve canonical clone and parent identities, while Atomiswave manifests include the shared `awbios.zip` dependency when required.
-- Game file downloads support HTTP Range requests, enabling resumable downloads and large-image streaming without restarting from byte zero.
-- Book, EPUB, PDF, CBZ, and ZIP DTOs add nullable `contentHash`, `contentHashAlgorithm`, `fileSize`, and `contentRevision` fields. A serialized background worker computes full-file SHA-256 values without blocking list or manifest requests and invalidates them when source bytes or page manifests change.
-- Existing Client API routes remain backward compatible. Service, Client API, Web, and MCP metadata report version `0.994`.
-
-## 0.993 Release: Virtual Boy and Dynamic Platform Catalog
-
-Release `0.993` adds Nintendo Virtual Boy support and removes the need for clients to hard-code game-platform filters.
-
-- Virtual Boy `.vb` and `.vboy` ROMs are indexed with canonical `virtualboy` metadata and existing client-safe manifests.
-- Local `boxart` artwork uses normalized filename matching and takes priority over cached network artwork.
-- The authenticated `/api/client/games/platforms` endpoint publishes stable platform IDs, display titles, aliases, counts, and availability.
-- `/api/client/info` advertises `gamePlatformCatalog`; older integrations can continue using `/api/client/games/facets`.
-- MCP adds `foliospace.get_game_platform_catalog` for agents that need the complete server-owned platform catalog.
-- Existing Client API response shapes remain backward compatible. Service, Client API, Web, and MCP metadata report version `0.993`.
-
-## 0.992 Release: Manifest Stability and Progressive Loading
-
-Release `0.992` stabilizes game delivery and reduces startup work on large self-hosted libraries.
-
-- Manifest-first game delivery remains the compatible default for existing and mobile clients; launch-profile resolution is explicitly capability-gated.
-- Arcade manifests include audited parent, BIOS, device, QSound, and Capcom ZN dependencies when required.
-- ZIP contents take precedence over filename guesses, preventing cartridge ROMs inside ZIP archives from being published as similarly named CPS/MAME sets.
-- Self-contained MAME clones can satisfy merged parent ROM requirements from their own archive.
-- Game searches prioritize launchable entries over same-name records that still require curation.
-- The Game Curation Center batches status queries, eliminating per-item SQLite reads on large pages.
-- The web home screen progressively loads first-screen sections, pages collections, defers maintenance data, and polls only active scan state.
-- Existing Client API response shapes remain backward compatible. Service, Client API, Web, and MCP metadata report version `0.992`.
-
-## 0.991 Release: CPS Catalog Filter Hotfix
-
-Release `0.991` fixes CPS platform browsing in the web game catalog while preserving existing Client API behavior.
-
-- CPS-1, CPS-2, and CPS-3 labels map to the canonical `cps1`, `cps2`, and `cps3` platform identifiers.
-- Platform filters and counts come from the full client facets endpoint instead of legacy collection totals.
-- Counts now match the launchable records returned by `/api/client/games`; dependency and `needs-curation` entries do not lead users to empty shelves.
-- Existing native clients remain compatible because API response shapes are unchanged.
-- Service, Client API, Web, and MCP metadata report version `0.991`.
-
-## 0.990 Release: Game Curation Center
-
-Release `0.990` adds a complete game-library preparation workflow for new and existing self-hosted installations.
-
-- The new **Game Curation Center** separates published games, dependencies, and records that still need attention.
-- Automatic post-scan analysis is enabled by default for fresh installations and can be configured from the web UI.
-- Compatibility analysis rebuilds audited FBNeo/MAME launch profiles from administrator-supplied policy files without modifying source ROMs.
-- Only launchable records are published to native clients; incomplete archives and unresolved dependencies remain visible to administrators as `needs-curation`.
-- Background analysis, artwork, and metadata tasks are bounded, observable, and protected against duplicate concurrent runs.
-- Batch artwork matching supports local sidecars, cover folders, `media/<ROM name>/boxFront.*`, and optional Libretro fallback.
-- Web metadata editing covers titles, descriptions, genres, developers, publishers, dates, regions, and explicit source selection.
-- Optional Hasheous lookup is hash-based and opt-in. Local-only operation remains the default, and metadata outages never block scanning.
-- First-run setup includes game-catalog automation and advanced FBNeo/MAME/runtime policy paths.
-- Service, Client API, Web, and MCP metadata report version `0.990`.
-
-Detailed setup and recovery guidance is available in the [Game Curation documentation](https://github.com/funland/foliospace-Library/blob/main/docs/operations/game-catalog-curation.md).
-
-## 0.982 Release: Durable Audited Arcade Profiles
-
-Release `0.982` makes audited arcade launch profiles durable and rebuildable for existing libraries.
-
-- Audited profiles and their complete entry/dependency closure are persisted in SQLite.
-- The explicit `foliospace-rebuild-launch-profiles` command validates existing FBNeo ZIP sets against a deployment-supplied official Arcade DAT without rescanning or rewriting ROM files.
-- It also supports an official MAME 0.288 `listxml` audit for selected platforms. Model 2 archives are matched by ZIP stem and promoted only when their complete parent, device, and BIOS closure validates.
-- Every published FBNeo game passes logical ROM name, uncompressed size, CRC, and parent/BIOS dependency checks.
-- Windows FBNeo profiles require the exact approved core SHA-256; unknown or mismatched cores return `409 runtime-profile-not-available`.
-- Deployment-supplied target files can publish the same audited FBNeo closure to Apple physical-device builds using their exact reported core SHA-256, while mobile MAME 0.287 and Windows MAME 0.288 profiles remain separate.
-- SFC/SNES profile negotiation recognizes Libretro bsnes alongside Snes9x and Mesen-S.
-- Client lists, facets, search, and played shelves hide dependency and `needs-curation` records instead of advertising games that cannot launch.
-- Existing users do not need to rescan their game libraries. Only missing hashes or rejected ROM sets need a targeted rescan or repair.
-- Service, Client API, and MCP source metadata report version `0.982`.
-
-The official FBNeo Arcade DAT is intentionally not bundled. Place it at `/config/policies/fbneo-arcade.dat`, then run once after upgrading:
-
-```bash
-docker exec foliospace-library /app/foliospace-rebuild-launch-profiles \
-  --dat=/config/policies/fbneo-arcade.dat
-```
-
-For Model 2, place the official MAME 0.288 listxml ZIP at `/config/policies/mame0288lx.zip`, inspect a dry-run, and then repeat without `--dry-run`:
-
-```bash
-docker exec foliospace-library /app/foliospace-rebuild-launch-profiles \
-  --policy=mame \
-  --mame-listxml=/config/policies/mame0288lx.zip \
-  --platforms=model2 \
-  --dry-run
-```
-
-## 0.981 Release: Tiered Game Launch Profiles
-
-Release `0.981` adds launch-profile negotiation without forcing every ordinary console game into a per-runtime audit table.
-
-- `POST /api/client/games/{gameId}/resolve` matches the authoritative client/runtime inventory against a validated canonical manifest.
-- Ordinary console platforms reuse existing single-file and multi-file manifests. Known Libretro platform/core combinations do not require a per-build core hash.
-- Curated DOS packages preserve the archive download plus their safe inner executable, arguments, working directory, and launch candidates. Unknown DOS entries still return a profile conflict.
-- Windows runtime versions such as PCSX2 `2.6.3.0` and DOSBox Staging `0.82.2.0` are normalized only for policy matching; the successful response echoes the exact selected request tuple.
-- Virtua Striker resolves its required `segabill.zip` dependency for Windows MAME 0.288.
-- Tekken Tag Tournament can receive the compatible logical entry name without renaming or rewriting the physical ROM archive.
-- CPS1, CPS2, and CPS3 are exposed as separate canonical platforms. Audited `sf2`, `sfa`, and `sfiii` profiles match the exact packaged FBNeo core SHA-256.
-- MAME 0.288 profiles now cover six audited Mahjong sets. `mcnpshnt` receives the required logical `ym2413.zip` dependency without renaming `ym2413_instruments.zip` on disk.
-- Responses include profile revision, exact selected runtime identity, logical filenames, available checksums, and complete dependency closure.
-- Unsupported runtime combinations return an explicit `409 runtime-profile-not-available`; the server never substitutes the closest or newest MAME set.
-- The legacy game manifest remains unchanged for existing clients.
-- MCP adds `foliospace.resolve_game_launch_profile` for trusted agent integrations.
-- Service, Client API, and MCP metadata report version `0.981`.
-
-## 0.98 Release: Expanded Platforms and Curated DOS Launches
-
-Release `0.98` expands the game catalog while keeping launch details stable for native clients.
-
-- PSP, Nintendo GameCube, and PlayStation 2 files receive canonical platform metadata and web/API filters.
-- NAOMI 2 filtering now remains distinct from adjacent arcade platforms.
-- MCP adds `foliospace.list_game_platforms`, using full-library facets and launchable-item counts.
-- Curated DOS collections can read `games.json` metadata, match covers, index archive packages, and expose executable launch commands and working directories.
-- DOS manifests preserve archive-relative paths so clients can extract a package and start the intended executable reliably.
-- Service, Client API, Web, and MCP metadata report version `0.98`.
-
-## 0.978 Release: Game Play-Time Sync
-
-Release `0.978` adds profile-scoped game play-time synchronization for GameEMU and other native clients.
-
-- Clients report cumulative active emulation time through idempotent launch-session heartbeats, so retries and out-of-order reports never double-count time.
-- `GET` and `PUT /api/client/games/{gameId}/play-stats` provide total play seconds, launch count, and first/last played timestamps.
-- `GET /api/client/games/played` provides a profile-scoped, paginated played-game catalog for recent activity and play-time dashboards.
-- MCP adds `foliospace.get_game_play_stats` and `foliospace.report_game_play_session` for trusted local agents.
-- MCP also provides `foliospace.list_played_games` for aggregate game-history queries without one request per game.
-- `/api/client/info` advertises `gamePlayStats: true` for capability detection.
-- Service and MCP metadata report version `0.978`.
-
-## 0.977 Release: Expanded Console and Arcade ROM Support
-
-Release `0.977` adds canonical scanning, filtering, artwork, and complete launch manifests for six additional platforms.
-
-- Dreamcast GDI/CDI/CHD packages retain every required track under one launchable game.
-- Sega Saturn CUE/BIN and ISO games are counted by disc rather than by physical track file.
-- NEC PC-FX supports CUE, CCD, TOC, CHD, M3U, multi-disc grouping, Pegasus metadata, and local cover folders.
-- Nintendo 64 validates `.z64`, `.v64`, and `.n64` byte order and can stream the raw ROM from a supported single-ROM ZIP.
-- NEC PC-98 adds validated floppy/hard-disk formats, CP932 title decoding, duplicate merging, multi-disk manifests, and artwork sidecars.
-- Sega Model 2 preserves MAME ZIP shortnames and bytes, adds friendly titles and compatibility states, and keeps BIOS dependencies outside ordinary platform counts.
-- Client API facets, manifests, MCP tools, web filters, and authenticated downloads use stable canonical platform metadata.
-- Service and MCP metadata now report version `0.977`.
-
-## 0.976 Release: Bounded Memory and Reader Layouts
-
-Release `0.976` addresses a T0 memory-exhaustion risk on large NAS libraries and expands comic reader display controls.
-
-- Image decoding and thumbnail transforms enforce source-size, pixel-count, output-size, and concurrency limits.
-- PDF thumbnail rendering is handled only by the bounded background worker.
-- Cover-wall cache misses use a bounded queue and batched SQLite writes, keeping the API responsive under thumbnail bursts.
-- Docker deployments receive a 768 MiB Go memory budget and a 1.5 GiB Compose container limit by default.
-- Comic single-page reading supports contain, fit-width, and fit-height modes with left- and right-handed controls.
-- Service and MCP metadata now report version `0.976`.
-
-## 0.975 Release: Large Game Library Stability
-
-Release `0.975` is a stability and performance hotfix for large game libraries and NAS deployments.
-
-- The web game catalog now loads a smaller first page to reduce initial cover-wall pressure.
-- The Client Home API avoids concurrent SQLite section reads that could queue up on single-connection deployments.
-- Game and collection private-state lookups now only read state for the current page of items.
-- Game list sorting and filtering add SQLite expression indexes for title and platform-heavy browsing.
-- Service and MCP metadata now report version `0.975`.
-
-## 0.970 Release: Manual Collections and Game Library Controls
-
-Release `0.970` adds a more flexible personal-library layer on top of indexed assets.
-
-- User-defined manual collections can group books, games, and videos without moving files on disk.
-- Game assets can now be marked favorite or liked from the web UI, Client API, and MCP.
-- Game catalog browsing can filter by platform groups derived from indexed game collections.
-- Game metadata helpers include provider discovery and `gamelist.xml` export for launcher-style integrations.
-- Service and MCP metadata now report version `0.970`.
-
-## 0.969 Release: PDF Metadata and Scan Excludes
-
-Release `0.969` improves scan results for PDF-heavy libraries and mixed folders that contain generated artwork.
-
-- PDF scans now read lightweight embedded Info metadata when available, mapping title, author, and subject to FolioSpace title, creator, and description fields.
-- Libraries can define scan exclude directories from the web UI, API, or MCP.
-- The scanner skips common generated folders such as `media`, `thumbnails`, `covers`, `__MACOSX`, and `@eaDir`, preventing artwork and sidecar folders from being indexed as books.
-- Service and MCP metadata now report version `0.969`.
-
-## 0.968 Release: Sortable Library Views
-
-Release `0.968` improves large-library browsing in the web UI and keeps the Client API version aligned.
-
-- Collection pages can now sort by title, recently added time, item count, or primary type, with ascending/descending direction controls.
-- Game and video catalog pages now expose simple sort controls for title, recently added time, and platform where applicable.
-- Collection API responses include `addedAt`, and paginated `/api/collections` supports type-based sorting for client integrations.
-- Game cover lookup continues to support local `media/<rom-name>/boxFront.*` artwork beside ROM files, so curated arcade/console covers can be displayed without remote scraping.
-- Service and MCP metadata now report version `0.968`.
-
-## 0.966 Release: Embedded Comic Metadata
-
-Release `0.966` adds embedded JSON metadata support for comic ZIP/CBZ archives.
-
-- ZIP/CBZ scans now read small embedded metadata JSON files such as `metadata.json`, `info.json`, `comicinfo.json`, and `元数据.json`.
-- Metadata fields `name`, `author`, `description`, and `tags` map onto FolioSpace's existing book title, creator, description, and public tag fields without a database migration.
-- Search now matches public archive tags and creators, so tagged packs can be found through the web UI, Client API, and MCP-backed search flows.
-- Book API responses merge public archive tags with profile-private tags while keeping user private state separate.
-
-## 0.965 Release: Client Catalog APIs
-
-Release `0.965` adds paginated catalog APIs for native iPad, iPhone, and Vision Pro clients.
-
-- `GET /api/client/books` returns a client-safe paginated All Books catalog with `limit`, `offset`, `q`, `sort`, `direction`, and `format`.
-- Book catalog responses include `manifestUrl`, cover URLs, thumbnail URLs, profile-scoped progress, favorite state, private status, tags, and ratings without exposing NAS file paths.
-- `GET /api/collections` now has an optional paginated mode with `primaryType`, `limit`, `offset`, `sort`, `direction`, and `q`.
-- Legacy `GET /api/collections` without query parameters still returns the original array shape for existing web UI compatibility.
-- `/api/client/info` advertises `bookCatalog: true` and `collectionCatalog: true` for client capability detection.
-
-## 0.961 Hotfix: Cleaner Shelves and Covers
-
-Release `0.961` is a library cleanup and cover-refresh hotfix on top of `0.96`.
-
-- ZIP/CBZ page listing now ignores macOS resource fork entries such as `__MACOSX/` and `._*`, preventing doubled page counts and broken placeholder pages in affected archives.
-- Continue Reading, Favorites, Want to Read, and recent shelves now hide stale entries when the indexed file has been deleted or changed on disk.
-- Book thumbnail cache keys were refreshed so corrected books no longer keep old generic placeholder covers after re-analysis.
-- The service, Client API, and MCP metadata report version `0.961`.
-
-## 0.96 Release: Fast Recent Scans
-
-Release `0.96` focuses on faster day-to-day imports for very large libraries. When you add several new comics or books to a directory with thousands of existing files, you no longer need to kick off a heavy full-library scan.
-
-- New "scan latest added" action in the Tasks page.
-- Selectable recent limits for common import batches, such as 10, 20, 50, 100, or 200 files.
-- Recent scans index only new or changed files under a selected library or subdirectory.
-- Duplicate running scans for the same library and target path are reused instead of creating overlapping jobs.
-- HTTP API supports `POST /api/libraries/:id/scan` with `mode: "recent"`.
-- MCP exposes `foliospace.scan_recent`, so local agents can trigger the same fast scan path.
-- `/api/client/info` advertises `recentScan: true` for client capability discovery.
-
-Example API request after adding new files under a large manga folder:
-
-```json
-{
-  "mode": "recent",
-  "path": "/library/韩漫",
-  "recentLimit": 20
-}
-```
+**All previous reading and game features remain included:** EPUB/PDF/comic reading, progress and profiles, CIA installation delivery, MAME/FBNeo compatibility, PC-98 per-game fonts, Triforce routing, launch manifests and resumable Range downloads. See the [full 1.03 release notes](https://github.com/funland/foliospace-Library/releases/tag/v1.03) and [version history](https://github.com/funland/foliospace-Library/releases). Old release-specific policies are historical, not replacements for the current contract.
 
 ## Quick Start
 
-```bash
-docker pull funland/foliospace-library:1.03
-```
+Use the [Compose quick start](https://github.com/funland/foliospace-Library/blob/v1.03/COMPOSE-QUICKSTART.md) for configurable media folders and resource limits. The default web/API port is **8080**.
 
-```bash
-docker run -p 8080:8080 \
-  -v /volume1/docker/foliospace-library/config:/config \
-  -v /volume2/ComicCenter:/library:ro \
-  -v /volume2/Books:/books:ro \
-  -v /volume2/GameROMS:/games:ro \
-  -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
+For a minimal new installation, replace the example host paths below with your own existing directories. Keep the config directory writable and media read-only:
+
+```sh
+docker pull funland/foliospace-library:1.03
+docker run -d --name foliospace-library --restart unless-stopped \
+  -p 8080:8080 \
+  -v /absolute/path/to/config:/config \
+  -v /absolute/path/to/media:/library:ro \
   funland/foliospace-library:1.03
 ```
 
-Open `http://localhost:8080`. On a fresh `/config`, FolioSpace Library starts with a setup page for the first access key and first library path.
+Open `http://localhost:8080` on the Docker host, or `http://<host-address>:8080` from another device. Complete first-run setup to create your access token and select the mounted container path `/library`. In a compatible client, enter that service URL and the same token, then test the connection.
 
-## Runtime Paths
+The SpatialEMU Mac app is a client, not this Docker server. [Beginner guide](https://github.com/funland/foliospace-Library/blob/main/docs/spatialemu-quickstart.md) · [简体中文](https://github.com/funland/foliospace-Library/blob/main/docs/spatialemu-quickstart.zh-CN.md) · [SpatialEMU connection guide](https://spatialemu.com/guides/foliospace-connection/).
 
-- `/config`: SQLite database, generated covers/thumbnails, runtime cache.
-- `/library`: default read-only mounted asset library root.
-- `/books`, `/games`, `/movies`: optional read-only roots.
-- `8080`: web UI and HTTP API.
+## TMDB: bring your own token
 
-## Key Environment Variables
+TMDB matching is **disabled by default**. Apply through your own TMDB account and configure your own **API Read Access Token** on the server. We supply no shared developer key. This is not the shorter v3 API key or your FolioSpace connection token.
 
-```bash
-FOLIOSPACE_CONFIG_DIR=/config
-FOLIOSPACE_LIBRARY_DIR=/library
-FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games
-FOLIOSPACE_ADDR=:8080
-FOLIOSPACE_API_TOKEN=
-FOLIOSPACE_SCAN_WORKERS=2
+The 1.03 Compose template passes these optional settings from a private `.env`:
+
+```dotenv
+FOLIOSPACE_VIDEO_METADATA_PROVIDER=tmdb
+FOLIOSPACE_TMDB_TOKEN=YOUR_OWN_TMDB_API_READ_ACCESS_TOKEN
+FOLIOSPACE_TMDB_LANGUAGE=en-US
 ```
 
-If `FOLIOSPACE_API_TOKEN` is empty, the web setup page can create the first access token and stores only a SHA-256 token hash in SQLite.
+The token above is a placeholder. Keep real credentials out of Git, Docker images, URLs, logs, screenshots and shared Compose output. Use `docker compose config --quiet` for validation. Older custom Compose files need the environment mappings too; `.env` alone is not passed to a container.
 
-## Supported Areas
+**A personal credential or this project's software license does not automatically grant commercial permission.** Review TMDB's current terms, applicable commercial licensing and attribution requirements. The web About screen and video footer provide attribution; independent clients must address their own use.
 
-- EPUB, CBZ, ZIP, and PDF reading.
-- Single-page, double-page, compact mobile, fullscreen, and webtoon-style comic/PDF modes.
-- Structured reading progress and private state.
-- Game ROM library indexing and client-safe launch manifests.
-- Video library indexing and lightweight playback/transcode support.
-- Scan jobs with progress, worker settings, errors, pause/cancel/resume, and targeted scan entry points.
-- MCP server packages for local agent integration.
+[TMDB setup, privacy and official sources](https://github.com/funland/foliospace-Library/blob/v1.03/docs/tmdb-setup.md) · [中文配置说明](https://github.com/funland/foliospace-Library/blob/v1.03/docs/tmdb-setup.zh-CN.md).
+
+TMDB supplies metadata/artwork, not movie files. Candidate confirmation, artwork retrieval and season refresh are explicit operations, not automatic whole-library scraping. Local NFO, artwork and manual metadata remain usable without it. MetaTube/DMM adapters and complex multi-episode file handling are not delivered in 1.03.
+
+## Upgrading and persistent data
+
+Tags `1.03` and `latest` support **Linux AMD64 and ARM64**. Pin a version for repeatable deployments.
+
+Before upgrading, back up the persistent `/config` directory and preserve your existing access token, media mounts and custom environment. The metadata/playback tables are additive. Retain a prior image and stopped-state backup; do not restore an old database over new user progress without reconciliation. Keep `FOLIOSPACE_PRESERVE_GAME_CATALOG_ON_START=1` if your existing installation uses it.
+
+Publishing or pulling an image does not replace an existing container automatically. After your deliberate upgrade, verify `/api/client/info`, your normal reading/game/video workflows and the original-file download path.
+
+| Container path/setting | Purpose |
+| --- | --- |
+| `/config` | Writable SQLite database, metadata, thumbnails and runtime cache; persist and back up |
+| `/library` | Default read-only media mount |
+| `/books`, `/games`, `/videos` | Additional read-only mounts in the Compose template |
+| `FOLIOSPACE_DIRECTORY_ROOTS` | Comma-separated container-visible media roots |
+| `FOLIOSPACE_API_TOKEN` | Optional fixed token; otherwise first-run setup can save a token hash |
+| `FOLIOSPACE_SCAN_WORKERS` | Scan concurrency; Compose default is 2 |
+| `FOLIOSPACE_MEMORY_LIMIT_MB` | Go memory limit; Compose default is 768 MiB |
+
+An empty API-token environment variable does **not** disable a token previously saved during setup. Use HTTPS across untrusted networks. Profiles partition state within a shared-token household; they are not separate authenticated accounts.
+
+## 简体中文
+
+1.03 正式发布完整影片库：统一海报墙、本地 NFO 与人工元数据、季集和多版本、按档案与文件隔离的观看进度、继续观看和下一集接口。原阅读、游戏、CIA、MAME/FBNeo、PC-98、Triforce 和 Range 功能保留。服务器主要提供目录与原文件，解码交给客户端；旧 HLS 兼容路径仍在。
+
+无需 NAS，也无需写代码，但要准备 Docker、持久配置目录、媒体目录、服务地址和 token。默认端口 8080；首次打开网页完成设置，再让客户端填写相同 URL/token。升级前备份 `/config`，保留原挂载和口令。发布 Docker 不代表现有容器或商店客户端已自动更新。
+
+TMDB 可选且默认关闭，需部署者自行申请并配置读取令牌；没有共享开发者密钥。自备不等于商业授权，须遵守来源条款和署名要求。FolioSpace 不提供或下载影片、ROM、BIOS 等内容。
 
 ## Links
 
-- [Website](https://foliospace.app/)
-- [GitHub](https://github.com/funland/foliospace-Library)
-- [Client API docs](https://github.com/funland/foliospace-Library/blob/main/docs/api/client-v1.md)
-- [MCP docs](https://github.com/funland/foliospace-Library/blob/main/docs/mcp/usage.md)
+- [Project and English introduction](https://github.com/funland/foliospace-Library)
+- [中文项目介绍](https://github.com/funland/foliospace-Library/blob/main/README.zh-CN.md)
+- [Release notes and upgrade cautions](https://github.com/funland/foliospace-Library/blob/v1.03/docs/releases/1.03.md)
+- [Movie library API](https://github.com/funland/foliospace-Library/blob/v1.03/docs/api/video-library-v1.md)
+- [Seasons, progress and next-up contract](https://github.com/funland/foliospace-Library/blob/v1.03/docs/api/video-library-p1-p2.md)
+- [MCP documentation](https://github.com/funland/foliospace-Library/blob/main/docs/mcp/usage.md)

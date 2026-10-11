@@ -1,0 +1,32 @@
+name: Docker Hub Overview
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - docs/dockerhub-overview.md
+      - .github/workflows/dockerhub-overview.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dockerhub-overview
+  cancel-in-progress: false
+
+jobs:
+  overview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject truncated documentation
+        run: test "$(wc -c < docs/dockerhub-overview.md)" -le 25000
+      - name: Update Docker Hub overview without rebuilding images
+        uses: peter-evans/dockerhub-description@v5
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: funland/foliospace-library
+          readme-filepath: ./docs/dockerhub-overview.md
