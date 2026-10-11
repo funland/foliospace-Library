@@ -379,7 +379,7 @@ All existing tools remain available. New tools use GET only and carry MCP read-o
 | `list_video_seasons` | workId; optional limit, offset |
 | `list_video_episodes` | workId; optional season, limit, offset |
 | `list_video_versions` | workId; optional season, episodeId, limit, offset |
-| `get_video_availability` | workId; optional season, limit, offset |
+| `get_video_availability` | workId, season; optional limit, offset |
 | `get_video_playback_state` | videoId; optional profileId |
 | `list_video_continue` | Optional profileId, libraryId, limit, offset |
 | `list_video_next_up` | Optional profileId, libraryId, limit, offset |

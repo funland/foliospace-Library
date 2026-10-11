@@ -21,7 +21,7 @@ func TestVideoToolsRoutesAndBounds(t *testing.T) {
 		{"list_video_seasons", map[string]any{"workId": 7}, "/api/client/video-works/7/seasons?limit=20&offset=0"},
 		{"list_video_episodes", map[string]any{"workId": 7, "season": 0}, "/api/client/video-works/7/episodes?limit=20&offset=0&season=0"},
 		{"list_video_versions", map[string]any{"workId": 7, "episodeId": 3}, "/api/client/video-works/7/files?episodeId=3&limit=20&offset=0"},
-		{"get_video_availability", map[string]any{"workId": 7}, "/api/client/video-works/7/availability?limit=20&offset=0"},
+		{"get_video_availability", map[string]any{"workId": 7, "season": 1}, "/api/client/video-works/7/availability?limit=20&offset=0&season=1"},
 		{"get_video_playback_state", map[string]any{"videoId": 8, "profileId": 2}, "/api/client/videos/8/playback-state?profileId=2"},
 		{"list_video_continue", map[string]any{"profileId": 2}, "/api/client/video-playback?kind=continue&limit=20&offset=0&profileId=2"},
 		{"list_video_next_up", map[string]any{}, "/api/client/video-playback?kind=next-up&limit=20&offset=0"},
@@ -52,6 +52,15 @@ func TestVideoToolsRoutesAndBounds(t *testing.T) {
 }
 
 func TestVideoInvalidArgumentsNeverRequest(t *testing.T) {
+	s := New("http://test", "")
+	s.httpClient.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+		t.Fatal("missing season reached network")
+		return nil, nil
+	})
+	r := s.Handle(context.Background(), toolCall(t, "foliospace.get_video_availability", map[string]any{"workId": 1}))
+	if !strings.Contains(mustJSON(t, r.Result), "invalid-arguments") {
+		t.Fatal(r)
+	}
 	for _, a := range []map[string]any{{"profileId": 0}, {"profileId": "2"}, {"profileId": -1}, {"profileId": 1.5}, {"limit": 0}, {"offset": -1}, {"unexpected": true}} {
 		s := New("http://test", "")
 		s.httpClient.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {

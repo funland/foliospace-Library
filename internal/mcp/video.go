@@ -49,6 +49,9 @@ func videoTools() []Tool {
 		if s.paged {
 			fields = append(fields, "limit", "offset")
 		}
+		if s.capability == "videoEpisodeAvailabilityV1" {
+			required = append(required, "season")
+		}
 		for _, f := range fields {
 			if f == "q" || f == "kind" || f == "sort" {
 				props[f] = stringSchema(f)
@@ -89,6 +92,9 @@ func videoError(code string, status int, state any) map[string]any {
 }
 
 func (s *Server) callVideoTool(ctx context.Context, spec videoSpec, args map[string]any) map[string]any {
+	if spec.capability == "videoEpisodeAvailabilityV1" && args["season"] == nil {
+		return videoError("invalid-arguments", 0, nil)
+	}
 	allowed := map[string]bool{}
 	for _, k := range strings.Fields(spec.fields) {
 		allowed[k] = true
