@@ -1,5 +1,7 @@
 # FolioSpace Library Website Handoff
 
+> Planning/historical handoff: use the [current README](../../README.md), [中文 overview](../../README.zh-CN.md), and [Client API reference](../api/client-v1.md) for 1.03 behavior and product/download links. Movie/TV works, metadata/artwork, seasons and playback-state APIs are implemented; compatible FolioLume test clients integrate them, without implying public app distribution or universal device acceptance. Photo/spatial expansion and MCP download-and-play remain future work. Product direction below is not a route guarantee. Collections still carry legacy directory metadata; path-hiding goals below are not an all-endpoint privacy guarantee.
+
 This document is the handoff package for building the public website at:
 
 ```text

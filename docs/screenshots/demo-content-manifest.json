@@ -1,0 +1,70 @@
+{
+  "prepared": "2026-10-11",
+  "scope": "Owner-confirmed test instance only; files are not bundled with the server.",
+  "indexedFixtures": [
+    {
+      "path": "books/Alice in Wonderland.epub",
+      "bytes": 189249,
+      "sha256": "4f81245d31380ac1d6eafb9a321e3691369bc70985736ae4bccf849a4f784036",
+      "source": "https://www.gutenberg.org/ebooks/11.epub3.images"
+    },
+    {
+      "path": "books/Pepper and Carrot - Episode 01.cbz",
+      "bytes": 1196850,
+      "sha256": "1e395861264f94e764419537d566873ee8d983b76cc6d2149909fffaecad3fac",
+      "source": "https://www.peppercarrot.com/en/webcomic/ep01_Potion-of-Flight.html"
+    },
+    {
+      "path": "books/Pride and Prejudice.epub",
+      "bytes": 24836548,
+      "sha256": "d401ad6b118e84d01b8dd1a3d034fd41784feb14c50f1f7a0fc17f3263fa8e9f",
+      "source": "https://www.gutenberg.org/ebooks/1342.epub3.images"
+    },
+    {
+      "path": "games/gb/144p Test Suite.gb",
+      "bytes": 32768,
+      "sha256": "733eb6e7ec0719752ddd5fcda4e715c2f2e20f4ac4bc971c4bd1d49272f9bb04",
+      "source": "https://github.com/pinobatch/240p-test-mini/releases/download/v0.23/gb240p.gb"
+    },
+    {
+      "path": "games/gba/160p Test Suite.gba",
+      "bytes": 61104,
+      "sha256": "47844f7140738a06f8f3bc09780da3ab095539a250b870f614feed561d9d6f34",
+      "source": "https://github.com/pinobatch/240p-test-mini/releases/download/v0.23/240pee_mb.gba"
+    },
+    {
+      "path": "games/gbc/UCity.gbc",
+      "bytes": 131072,
+      "sha256": "9422ee2ca7b7ea1d46b58b2a429fff3f354dfd3e732dee1e7ae6220f148ce6e0",
+      "source": "https://github.com/AntonioND/ucity/releases/download/v1.3/ucity.gbc"
+    },
+    {
+      "path": "games/nes/240p Test Suite.nes",
+      "bytes": 65552,
+      "sha256": "04f01d7372f66ea2befe325b9bd655a9fcc395a31fa46d9466286bb8f9d2e62e",
+      "source": "https://github.com/pinobatch/240p-test-mini/releases/download/v0.23/240pee.nes"
+    },
+    {
+      "path": "videos/Big Buck Bunny.m4v",
+      "bytes": 121283919,
+      "sha256": "738e2f999860553d056dd79c952f58f63cbb73892a57c72342ce9e5330d9d2d7",
+      "source": "https://download.blender.org/peach/bigbuckbunny_movies/BigBuckBunny_640x360.m4v.zip"
+    },
+    {
+      "path": "videos/Elephants Dream.mov",
+      "bytes": 103636531,
+      "sha256": "a7dbacae5fa2bc345dbd7b10588575f3e2bba36012e9a93df5346467053b0634",
+      "source": "https://download.blender.org/ED/elephantsdream-480-h264-st-aac.mov"
+    }
+  ],
+  "artwork": [
+    {
+      "path": "games/gbc/UCity.png",
+      "bytes": 10198,
+      "sha256": "f17e624f6534be0c2a883fce3bc9c58f81dac467fd4dac65fb9707557d71d380",
+      "source": "https://github.com/AntonioND/ucity/blob/v1.3/screenshot.png",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "Antonio Niño Díaz / AntonioND / SkyLyrac"
+    }
+  ]
+}

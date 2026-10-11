@@ -3308,6 +3308,14 @@ export function App() {
                   ))}
               </div>
             </section>
+            <section className="aboutSection" aria-label="TMDB attribution">
+              <h2>TMDB</h2>
+              <a href="https://www.themoviedb.org" target="_blank" rel="noreferrer">
+                <img src="/tmdb.svg" width="130" height="32" alt="The Movie Database (TMDB)" />
+              </a>
+              <p>This product uses the TMDB API but is not endorsed or certified by TMDB.</p>
+              <a href="https://github.com/funland/foliospace-Library/blob/main/docs/tmdb-setup.md" target="_blank" rel="noreferrer">TMDB setup / 自备令牌与许可说明</a>
+            </section>
           </section>
         )}
 

@@ -8,3 +8,5 @@ web/public/website
 web/src/Website.tsx
 web/src/Website.css
 .DS_Store
+.env
+.env.*

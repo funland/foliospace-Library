@@ -1,5 +1,7 @@
 # FolioSpace Library Direction
 
+> Planning/historical handoff: use the [current README](../../README.md), [中文 overview](../../README.zh-CN.md), and [Client API reference](../api/client-v1.md) for 1.03 behavior and product/download links. Movie/TV works, metadata/artwork, seasons and playback-state APIs are implemented; compatible FolioLume test clients integrate them, without implying public app distribution or universal device acceptance. Photo/spatial expansion and MCP download-and-play remain future work. Product direction below is not a route guarantee. Collections still carry legacy directory metadata; path-hiding goals below are not an all-endpoint privacy guarantee.
+
 FolioSpace Library is the product direction that evolves the current FolioSpace Reader codebase into a personal digital asset library.
 
 The server runs on a NAS, Docker host, or local machine. Its job is to index personal assets and expose a stable client service layer. Apple-device clients, including reading apps, GameEMU, and Vision Pro experiences, own the final consumption UI.

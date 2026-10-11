@@ -4,7 +4,8 @@ Implemented on production P0 `7394401`; P1/P2 source is committed as
 `7c4b67a438ceefaf122ebb17079fe059ef4c65de` and deployed on local port 18080.
 Additive; old file IDs, manifests, Range, authentication and playback remain
 unchanged. Clients must still discover capabilities rather than assume a service
-version implies availability. No public release implied.
+version implies availability. These APIs are included in public server release
+1.03; this does not publish or update native clients.
 
 ## Capability negotiation
 

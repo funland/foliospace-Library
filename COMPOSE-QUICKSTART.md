@@ -2,7 +2,11 @@
 
 [SpatialEMU beginner path](docs/spatialemu-quickstart.md) · [简体中文](docs/spatialemu-quickstart.zh-CN.md)
 
-This package runs FolioSpace Library 1.02 from the published Linux AMD64/ARM64 image. It works with Docker Desktop on Mac or Windows, Docker Engine with Compose on Linux, or a compatible NAS. A NAS and coding are not required.
+This package runs FolioSpace Library 1.03 from the published Linux AMD64/ARM64 image. It works with Docker Desktop on Mac or Windows, Docker Engine with Compose on Linux, or a compatible NAS. A NAS and coding are not required.
+
+Movie/TV management is included. Optional TMDB matching is disabled by default
+and requires your own API Read Access Token, not a shared project key. Follow
+the [setup and licensing guide](docs/tmdb-setup.md) · [中文](docs/tmdb-setup.zh-CN.md).
 
 FolioSpace is optional for SpatialEMU: supported local files can be opened directly without this server. The SpatialEMU macOS app is a client, not a FolioSpace server.
 

@@ -71,7 +71,7 @@ export function VideoLibrary({ locale, onPlay, presentation = "catalog" }: { loc
       <button disabled={loading || !page?.hasMore} onClick={() => setOffset(offset + 24)}>{text("Next", "下一页")}</button>
     </nav>
     {editing !== null ? <VideoMetadataEditor key={editing} videoId={editing} zh={zh} onClose={() => setEditing(null)} onChange={changed} /> : null}
-    <footer><a href="https://www.themoviedb.org" target="_blank" rel="noreferrer"><img src="/tmdb.svg" width="130" height="32" alt="The Movie Database (TMDB)" /></a><p>This application uses TMDB and the TMDB APIs but is not endorsed, certified, or otherwise approved by TMDB.</p><small>{text("Online matching is optional. No movies are provided or downloaded by FolioSpace.", "在线匹配为可选功能，FolioSpace 不提供或下载影片。")}</small>
+    <footer><a href="https://www.themoviedb.org" target="_blank" rel="noreferrer"><img src="/tmdb.svg" width="130" height="32" alt="The Movie Database (TMDB)" /></a><p>This product uses the TMDB API but is not endorsed or certified by TMDB.</p><small>{text("Online matching is optional. Bring your own TMDB read token; commercial permission is separate. No movies are provided or downloaded by FolioSpace.", "在线匹配为可选功能，需自备 TMDB 读取令牌；商业授权需另行核实。FolioSpace 不提供或下载影片。")}</small>
       {presentation === "catalog" ? <p><button onClick={async () => { if (!window.confirm(text("Clear all TMDB metadata, artwork and candidates? Your files, local sidecars and manual fields will be kept.", "清除所有 TMDB 元数据、图片和候选？保留原文件、本地附属文件及人工字段。"))) return; try { await request("/api/videos/metadata/provider", { method: "DELETE" }); setWork(null); changed(); } catch(e) { setError(message(e)); } }}>{text("Clear TMDB cache", "清除 TMDB 缓存")}</button></p> : null}
     </footer>
   </section>;

@@ -1,7 +1,7 @@
 # Movie / TV library (development phase 1)
 
-This additive API is implemented on top of public 1.02. It is not yet a published
-Docker release. Existing `/api/client/videos`, manifests, IDs, file URLs and HLS
+This additive API is included in release 1.03, on top of public 1.02. Existing
+`/api/client/videos`, manifests, IDs, file URLs and HLS
 routes remain valid. Original file delivery additionally supports HEAD alongside
 GET and byte Range. The metadata provider is disabled by default.
 
@@ -9,7 +9,8 @@ The accepted P0 is retained in the local production service at port 18080;
 the current mainline baseline also includes P1/P2. See the
 [complete baseline](../operations/production-baseline-video-p1-p2-2026-10-10.md)
 and the historical [P0 production record](../operations/video-p0-production-upgrade-2026-10-10.md).
-This does not imply that a new public Docker image has been released.
+Release 1.03 packages that complete baseline; earlier deployment-only acceptance
+records retain their historical publication boundaries.
 Subsequent local P1/P2 deployment adds [season, progress and next-up APIs](video-library-p1-p2.md).
 The phase-1 exclusions below describe that original phase, not the later additive APIs.
 
@@ -73,9 +74,11 @@ URLs, screenshots or logs):
 | `FOLIOSPACE_TMDB_TOKEN` | Operator's API read-access bearer token |
 | `FOLIOSPACE_TMDB_LANGUAGE` | Optional; defaults to `en-US` |
 
-Both provider and nonempty token are required. Existing Compose operators must
-explicitly pass these variables to the container; no default Compose secret was
-added. Restarting/redeploying production is a separate authorized operation.
+Both provider and nonempty token are required. The 1.03 Compose file maps these
+variables with blank provider/token defaults; no shared secret is supplied.
+Older custom Compose files need the mappings too. See [operator setup](../tmdb-setup.md)
+for credential type, registration, private configuration and applicable licensing.
+Restarting/redeploying production is a separate authorized operation.
 
 Search only sends the user-entered title query, kind and configured language to
 the fixed TMDB API. It does not scan/upload your library, files or paths. Results

@@ -2,7 +2,24 @@
 
 FolioSpace Library is an optional self-hosted personal digital asset catalog. It runs with Docker/Compose on a Mac, Windows or Linux computer, or a compatible NAS. It provides a unified indexing layer and client API for books, comics, PDFs, user-owned game libraries, videos, and future spatial media clients.
 
-It is not a cloud media service and does not distribute games, ROMs, BIOS files, firmware, books, comics, movies, or third-party content catalogs. It indexes user-owned local files and exposes stable service URLs to web and native clients without leaking real host paths.
+It is not a cloud media service and does not distribute games, ROMs, BIOS files, firmware, books, comics, movies, or third-party content catalogs. It indexes user-provided files and exposes opaque media URLs. Book/game/video DTOs omit source paths; legacy collection and administration responses can still carry directory paths.
+
+Library is the optional content foundation for [FolioSpace Reader](https://reader.foliospace.app/) ([App Store](https://apps.apple.com/app/id6765784590)), [FolioLume Player](https://foliolume.app/) ([App Store](https://apps.apple.com/app/id6812153528)), and [SpatialEMU](https://spatialemu.com/) ([App Store](https://apps.apple.com/app/id6771768889)). All three apps can use supported files/sources independently. Release 1.03 includes enhanced movie/TV library and playback-state APIs; compatible Player test builds implement them, without implying an App Store update. Independent clients are welcome: see the [Client API quick start](https://github.com/funland/foliospace-Library/blob/main/docs/api/client-v1.md#external-client-quick-start).
+
+## 1.03: Movie and TV library, posters and playback state
+
+- Consistent poster artwork across the home video library, recent additions, works and collections, plus a paginated poster wall.
+- Local NFO/artwork, manual metadata corrections, explicit TMDB candidate selection, seasons/episodes and multiple file versions without rewriting media.
+- Capability-discovered library filtering/recent sorting, stable episode/version IDs, profile-scoped playback state, watched/unwatched, continue watching and next-up APIs. Retries are idempotent; stale state produces a visible conflict instead of silently overwriting another device.
+- Optional explicit single-season expected-episode refresh distinguishes available, missing, unreleased and unknown. Local playback remains available if TMDB is disabled or unavailable.
+- Dedicated clients decode original files. Existing optional HLS remains; no new always-on transcoding. All previous reading/game, CIA, MAME/FBNeo, PC-98, Triforce and Range features are retained.
+- Images: `funland/foliospace-library:1.03` and `latest`, Linux AMD64 and ARM64. Back up `/config` before upgrading; preserve your token, mounts and existing settings. See [release notes](https://github.com/funland/foliospace-Library/blob/v1.03/docs/releases/1.03.md).
+
+### TMDB: your own token, your own applicable permission
+
+TMDB is **disabled by default**. Apply through your own TMDB account and configure your **API Read Access Token** server-side; we supply no shared developer key. This is not the shorter v3 API key or your FolioSpace connection token. A personal credential does not automatically grant commercial permission; review TMDB's official terms, commercial licensing and attribution requirements. Never put real credentials in Git, images, URLs, logs or screenshots. [Setup and official links](https://github.com/funland/foliospace-Library/blob/v1.03/docs/tmdb-setup.md) · [中文说明](https://github.com/funland/foliospace-Library/blob/v1.03/docs/tmdb-setup.zh-CN.md).
+
+简体中文：1.03 正式纳入影片海报墙、本地/人工元数据、季集与多版本、观看进度及继续观看/下一集接口。TMDB 可选且默认关闭，需部署者自备读取令牌；不提供共享密钥，自备不等于商用许可，须遵守来源条款和署名。原阅读与游戏功能保留，不提供影片或其他媒体文件。客户端功能按实际版本和能力启用，服务器发布不代表商店客户端已更新。
 
 ## New to FolioSpace?
 
@@ -345,7 +362,7 @@ Example API request after adding new files under a large manga folder:
 ## Quick Start
 
 ```bash
-docker pull funland/foliospace-library:1.02
+docker pull funland/foliospace-library:1.03
 ```
 
 ```bash
@@ -355,7 +372,7 @@ docker run -p 8080:8080 \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  funland/foliospace-library:1.02
+  funland/foliospace-library:1.03
 ```
 
 Open `http://localhost:8080`. On a fresh `/config`, FolioSpace Library starts with a setup page for the first access key and first library path.
@@ -392,7 +409,7 @@ If `FOLIOSPACE_API_TOKEN` is empty, the web setup page can create the first acce
 
 ## Links
 
-- Website: https://foliospace.app/
-- GitHub: https://github.com/funland/foliospace-Library
-- Client API docs: https://github.com/funland/foliospace-Library/blob/main/docs/api/client-v1.md
-- MCP docs: https://github.com/funland/foliospace-Library/blob/main/docs/mcp/usage.md
+- [Website](https://foliospace.app/)
+- [GitHub](https://github.com/funland/foliospace-Library)
+- [Client API docs](https://github.com/funland/foliospace-Library/blob/main/docs/api/client-v1.md)
+- [MCP docs](https://github.com/funland/foliospace-Library/blob/main/docs/mcp/usage.md)

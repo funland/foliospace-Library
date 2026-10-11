@@ -1,26 +1,28 @@
 # FolioSpace Library
 
-[Website](https://foliospace.app/) · [Docker Hub](https://hub.docker.com/r/funland/foliospace-library) · [FolioSpace on the App Store](https://apps.apple.com/app/foliospace/id6765784590) · [Reader](https://reader.foliospace.app/) · [SpatialEMU downloads](https://spatialemu.com/downloads/) · [Client API](docs/api/client-v1.md) · [MCP](docs/mcp/usage.md)
+[Website](https://foliospace.app/) · [Docker Hub](https://hub.docker.com/r/funland/foliospace-library) · [Reader](https://reader.foliospace.app/) · [Player](https://foliolume.app/) · [SpatialEMU](https://spatialemu.com/) · [简体中文](README.zh-CN.md) · [Client API](docs/api/client-v1.md) · [MCP](docs/mcp/usage.md)
 
-FolioSpace Library is an optional self-hosted personal digital asset library. It runs with Docker/Compose on a Mac, Windows or Linux computer, or a compatible NAS. One service keeps your collection, metadata, progress, and private state available to the web, Vision Pro, iPad, iPhone, SpatialEMU, and MCP agents.
+FolioSpace Library is the optional, self-hosted content foundation connecting **FolioSpace Reader**, **FolioLume Player**, and **SpatialEMU** around your personal collection. It runs with Docker/Compose on a Mac, Windows or Linux computer, or a compatible NAS. The server indexes books, PDFs, comics, games, and local videos, and exposes catalogs, metadata, media URLs, reading progress, and supported private state through its web UI, HTTP API, and MCP.
 
-It is not trying to become a complete Plex, Jellyfin, or Immich replacement. The first priority is personal asset indexing: scanning, identifying, covers/thumbnails, classification, search, favorites, recent access, progress, and private state. Dedicated clients such as a reader app, GameEMU, and Vision Pro experiences own the actual consumption UI.
+Reader, Player, and SpatialEMU provide the reading, viewing, and retro gaming experiences. Each can use supported files or sources independently of Library. Release 1.03 adds movie/TV works, artwork, seasons, versions, playback-state synchronization, and continue/next-up APIs alongside the existing video catalog and direct/Range delivery. Compatible FolioLume test clients implement these features; availability in a public app build must be checked separately. A catalog entry or server capability does not guarantee playback on every client.
 
-The current implementation still starts from the FolioSpace Reader codebase and keeps the existing reading MVP operational while the model evolves toward `Asset` / `LibraryItem`.
+**Other clients are welcome.** Build your own reader, catalog browser, game frontend, or media client using the [stable Client API v1](docs/api/client-v1.md#external-client-quick-start). Keep feature discovery and compatibility checks in your client; Library is a shared content service, not a full Plex, Jellyfin, or Immich replacement.
 
-Current release: [`1.02`](https://github.com/funland/foliospace-Library/releases/tag/v1.02).
+Current release: [`1.03`](https://github.com/funland/foliospace-Library/releases/tag/v1.03).
 
-Local production baseline: [lightweight movie / TV library](docs/api/video-library-v1.md)
-adds local NFO/artwork, a paginated poster wall, season/episode/version associations
-and optional, explicitly confirmed TMDB matching. Original-file delivery and
-existing playback routes remain compatible; the provider is disabled by default.
-This work is not included in the published 1.02 image yet.
-The locally deployed P1/P2 adds season/episode browsing, scoped work counts,
-profile-scoped playback synchronization, continue/next-up and optional expected
-episode availability. See the [P1/P2 contract](docs/api/video-library-p1-p2.md).
-Use the [complete P0 + P1/P2 production baseline](docs/operations/production-baseline-video-p1-p2-2026-10-10.md)
-for subsequent development; do not replace it with the older public 1.02 image.
-中文：本地主线以 18080 正在运行的 P0 + P1/P2 完整版为基线，保留此前阅读、游戏和下载功能；公开 1.02 镜像尚不包含电影库升级。在线刮削默认关闭，可由管理员配置并确认启用。
+## What's new in 1.03: a stronger movie and TV library
+
+- Browse a paginated **poster wall**, with consistent artwork in the home video library, recently added items, works, and collection surfaces.
+- Keep files separate from works: local NFO/artwork, manual title and metadata corrections, season/episode associations, and multiple file versions without rewriting media.
+- Optionally search TMDB, review candidates, and explicitly confirm metadata/artwork. Local-only browsing works without TMDB; unavailable or expired provider data falls back locally.
+- Give compatible clients library filters, recent sorting, stable season/episode IDs, and version selection, plus profile-scoped playback state, explicit watched/unwatched, continue watching, and next-up. Retried events are idempotent; conflicts do not silently overwrite another device.
+- Explicitly refresh one confirmed TMDB series season to distinguish locally available, missing, unreleased, and unknown episodes. No automatic whole-library provider scan.
+
+The server primarily catalogs and delivers original files; dedicated clients decode and play them. Existing HLS remains an optional compatibility path, not a new always-on transcoding service. All earlier reader/game, CIA, MAME/FBNeo, PC-98 font, Triforce, and resumable-download features remain included.
+
+**TMDB is optional and bring-your-own-credential.** Apply through your own TMDB account and configure your own **API Read Access Token** on the server. We provide no shared developer key. A personal token or this project's software license does **not** automatically authorize commercial use; review TMDB's terms, applicable commercial licensing, and attribution requirements. Keep tokens out of Git, URLs, logs and screenshots. See the [TMDB setup and licensing notes](docs/tmdb-setup.md) · [中文](docs/tmdb-setup.zh-CN.md).
+
+See [release notes](docs/releases/1.03.md), [movie-library API](docs/api/video-library-v1.md), and [season/progress API](docs/api/video-library-p1-p2.md). Client integration was built/tested separately; Mac/iPad development packages were installed, while cross-device playback acceptance and visionOS/tvOS device checks remain distinct. No App Store update is implied by this server release.
 
 ## Start here: SpatialEMU + FolioSpace
 
@@ -38,15 +40,15 @@ The SpatialEMU macOS app is a client, not the server. FolioSpace Library current
 
 ### What is FolioSpace Library?
 
-FolioSpace Library is a self-hosted Docker service for indexing and accessing user-owned books, comics, games, videos, documents, photos, and other personal digital assets across multiple clients.
+FolioSpace Library is a self-hosted Docker service for indexing and accessing your own books, PDFs, comics, games, and local videos across clients. Photo and broader spatial-media indexing are product direction, not current Client API promises.
 
 ### Is FolioSpace a cloud storage service?
 
-No. FolioSpace runs with Docker on a computer or compatible NAS that you control. Your files remain under your control, and clients receive authenticated service URLs instead of exposed host paths.
+No. FolioSpace runs with Docker on a computer or compatible NAS that you control. Your files remain under your control, and media is delivered through authenticated service URLs. Legacy collection/admin metadata can still contain path fields; see the [API privacy notes](docs/api/client-v1.md#covers-thumbnails-and-cache-compatibility).
 
 ### Which clients can connect to FolioSpace?
 
-The same FolioSpace Library service can connect to the web UI, FolioSpace Reader on Vision Pro, iPad, and iPhone, SpatialEMU for compatible game catalogs, and MCP-enabled AI agents.
+The web UI, FolioSpace Reader, SpatialEMU, compatible FolioLume Player builds, MCP-enabled agents, and independently developed clients can use the implemented APIs. Check `/api/client/info` and the actual client version for movie-library/progress support. See [Clients and Downloads](#clients-and-downloads) for product links and current boundaries.
 
 ### How do I install FolioSpace Library?
 
@@ -54,30 +56,60 @@ The fastest deployment path is the published multi-architecture Docker image. Fo
 
 ### Does FolioSpace distribute books, ROMs, or other media?
 
-No. FolioSpace indexes and serves metadata for files that you already own and store locally. It does not include, host, share, or provide download sources for games, ROMs, BIOS files, firmware, books, or other copyrighted media.
+No. FolioSpace indexes and serves files that you provide and have the right to use. It does not bundle books, films, games, ROMs, BIOS, firmware, or a third-party download catalog.
 
-![FolioSpace Library web reader with English controls](https://raw.githubusercontent.com/funland/foliospace-Library/main/docs/screenshots/web-reader-en.png)
+![FolioSpace Library English web reader displaying Pepper and Carrot](docs/screenshots/demo-reader-en.jpg)
+
+Pepper&Carrot by David Revoy, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Real test-instance capture; [source, credits, and capture notes](docs/screenshots/README.md).
 
 ## Clients and Downloads
 
 FolioSpace Library is the server layer. Your files stay on the Docker host or compatible NAS you control; clients connect to that service instead of turning FolioSpace into a hosted cloud library.
 
-- **FolioSpace Reader**: Read EPUB, PDF, and ZIP/CBZ comics on [Vision Pro, iPad, and iPhone through the App Store](https://apps.apple.com/app/foliospace/id6765784590), or open the [Reader web experience](https://reader.foliospace.app/).
-- **SpatialEMU**: Open supported local files without FolioSpace, or connect to the optional self-hosted catalog and import compatible titles. Download [SpatialEMU](https://spatialemu.com/downloads/) and use the [connection setup guide](https://spatialemu.com/guides/foliospace-connection/). The separate [FolioSpace product page](https://spatialemu.com/foliospace/) explains the service boundary.
-- **Web UI and API**: Use the built-in web interface or integrate another native client through the [Client API](docs/api/client-v1.md).
-- **AI agents**: Install and configure the local MCP client with the [MCP guide](docs/mcp/usage.md).
+| Product | Personal content experience | Official links |
+| --- | --- | --- |
+| **FolioSpace Reader** | Native EPUB, PDF, comic, and webtoon reading on iPhone, iPad, and Apple Vision Pro. Import files for offline reading or optionally connect Library. | [App Store](https://apps.apple.com/app/id6765784590) · [Product website](https://reader.foliospace.app/) |
+| **FolioLume Player** | Organize and watch your personal film collection, with supported local/network sources and compatible Blu-ray ISO/BDMV playback and menus. The current App Store lists iPhone, iPad, Mac, Apple Vision Pro, and Apple TV; format, hardware, and release compatibility apply. | [App Store](https://apps.apple.com/app/id6812153528) · [Product website](https://foliolume.app/) |
+| **SpatialEMU** | Browse and play your own compatible retro game files, using local imports or optional Library catalogs, supported saves, and play records. Apple clients cover iPhone, iPad, Apple Vision Pro, Apple TV, and Apple silicon Mac; Windows is a separate download. | [App Store](https://apps.apple.com/app/id6771768889) · [Product website](https://spatialemu.com/) · [Downloads](https://spatialemu.com/downloads/) |
 
-FolioSpace Library indexes and serves metadata for user-owned local files. It does not host or distribute books, comics, games, ROMs, BIOS files, firmware, or other copyrighted media.
+Platform availability and app features were checked against the official websites and App Store listings on 2026-10-10; current device/region availability is determined by the store. The Reader website describes the native app; Library's bundled web reader is served by your own Library instance.
+
+- **Web UI and third-party clients**: Use the built-in interface or follow the [external-client quick start](docs/api/client-v1.md#external-client-quick-start) · [中文接入摘要](docs/api/client-v1.zh-CN.md).
+- **AI agents**: Configure the existing [MCP tools](docs/mcp/usage.md) for catalog discovery, manifests, and supported state/scan operations. One-command download-and-play orchestration is not an implemented product capability.
+
+All three apps can be used independently of Library. Library serves files you provide and control; it does not supply a third-party content catalog, books, films, ROMs, BIOS, or firmware. Player's app-level Blu-ray support is not a promise that Library scans or serves disc menus through its video API.
 
 ## Screenshots
 
+These English web UI captures were taken on 2026-10-11 from an owner-confirmed test instance using public-domain and openly licensed demonstration files. They show the bundled reading and administration experience. [Capture notes and content credits](docs/screenshots/README.md) record the exact capture environment; its old version label is not a 1.03 screenshot or proof of native-client interoperability.
+
+### Movie library
+
+![English video library showing the openly licensed Big Buck Bunny demonstration](docs/screenshots/demo-videos-preview-en.jpg)
+
+Captured on the pre-release test UI whose movie-library implementation is included in 1.03. Big Buck Bunny © 2008 Blender Foundation, [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/). This is a real file-list capture, not a fabricated poster-wall mockup; [credits and limitations](docs/screenshots/README.md).
+
+### EPUB reading
+
+![English EPUB reader displaying Alice's Adventures in Wonderland](docs/screenshots/demo-epub-en.jpg)
+
+Lewis Carroll's *Alice's Adventures in Wonderland*, from [Project Gutenberg](https://www.gutenberg.org/ebooks/11).
+
+### Homebrew game catalog
+
+![English Game Shelf displaying the openly licensed UCity homebrew](docs/screenshots/demo-games-en.jpg)
+
+UCity by Antonio Niño Díaz / SkyLyrac; original author screenshot, [CC BY-SA 4.0 artwork](https://creativecommons.org/licenses/by-sa/4.0/). Catalog indexing and checksums were verified; emulator gameplay was not tested.
+
 ### Transparent scan jobs
 
-![FolioSpace Library scan worker settings and completed job details](https://raw.githubusercontent.com/funland/foliospace-Library/main/docs/screenshots/scan-jobs-en.png)
+![English scan workers and completed open-movie demonstration scan](docs/screenshots/demo-scan-jobs-en.jpg)
 
-### Game catalog curation
+### Service capabilities
 
-![FolioSpace Library game compatibility and metadata curation](https://raw.githubusercontent.com/funland/foliospace-Library/main/docs/screenshots/game-curation-en.png)
+![English About screen with formats and service capability labels](docs/screenshots/library-capabilities-en.jpg)
+
+Use `/api/client/info` for the complete, machine-readable capabilities of your own running instance.
 
 ## License
 
@@ -91,7 +123,7 @@ FolioSpace Library indexes user-owned local files only. It does not distribute b
 
 - `/config`: SQLite database, generated covers/thumbnails, runtime cache.
 - `/library`: read-only mounted asset library root.
-- `/books`, `/games`: optional read-only roots used by the default Docker compose example.
+- `/books`, `/games`, `/videos`: optional read-only roots used by the default Docker compose example.
 - `8080`: web UI and HTTP API.
 
 Example NAS config root:
@@ -125,7 +157,7 @@ FOLIOSPACE_DISABLE_GAME_LAUNCH_RESOLVER=true
 
 Set `FOLIOSPACE_API_TOKEN` to require API authentication from environment variables. If it is empty, release `0.966` can create the first access token from the web setup page and stores only a SHA-256 token hash in SQLite. Native clients can send `Authorization: Bearer <token>`. The web UI stays publicly loadable, then prompts for the access token and receives an HttpOnly cookie so covers, pages, and EPUB iframe resources can load through normal browser requests.
 
-The launch resolver is disabled by default while runtime profiles are being stabilized. With `FOLIOSPACE_DISABLE_GAME_LAUNCH_RESOLVER=true`, the server advertises `gameLaunchResolver: false` and returns `404` from the resolve endpoint, allowing compatible clients to use the established game manifest flow. Set the variable to `false` only after the runtime target catalog and profile migration have passed client acceptance tests.
+The normal server executable defaults to a disabled launch resolver (`config.Load`); the Dockerfile and Compose file do not override that setting. A directly embedded `httpapi.New`/zero-value `Options` instead enables it, so discover the running instance through `/api/client/info` rather than inferring from an example. With `FOLIOSPACE_DISABLE_GAME_LAUNCH_RESOLVER=true`, the server advertises `gameLaunchResolver: false` and returns `404` from the resolve endpoint, allowing compatible clients to use the established game manifest flow. Set the variable to `false` only after the runtime target catalog and profile migration have passed client acceptance tests.
 
 Authentication helpers:
 
@@ -150,11 +182,13 @@ After setup, open **Game Curation** in the web sidebar to inspect ready games, d
 Detailed client integration docs are in [`docs/api/client-v1.md`](docs/api/client-v1.md).
 
 - `GET /api/client/info`: service metadata, supported formats, and capability flags.
-- `GET /api/client/home`: `continueReading`, `recentBooks`, and `collections` in one response.
+- `GET /api/client/home`: limited reading shelves, `gameShelf`, `videoShelf`, and `collections` in one response; `includeCollections=false` skips collection expansion.
 - `GET /api/client/books`: paginated all-books catalog for native All / Library overview screens.
 - `GET /api/collections?primaryType=comic&limit=60&offset=0`: paginated collection catalog for native Home / collection overview screens.
 - `GET /api/client/books/:id/manifest`: a client-safe open manifest with `readerModes` and `defaultReaderMode`. CBZ/ZIP books include page URLs; EPUB books include spine, TOC, `resourceBaseUrl`, `coverUrl`, and progress; PDF books expose an opaque Range-capable stream URL for single-page, double-page, or webtoon/vertical-scroll client layouts.
 - `GET /api/books/:id/reading-position` and `PUT /api/books/:id/reading-position/webtoon`: structured webtoon progress using a stable page key plus normalized page Y offset, with automatic legacy `/progress` fallback compatibility.
+- `GET /api/client/games`, `/api/client/games/facets`, and `/api/client/games/platforms`: paginated discovery, indexed platform counts, and platform capability metadata.
+- `GET /api/client/videos` and `/api/client/videos/:id/manifest`: paginated video browsing and direct/Range or on-demand HLS URLs. [HLS retry rules](docs/api/client-v1.md#get-apiclientvideosvideoidtranscodestatus) apply.
 - `GET /api/client/games/:id/manifest`: a client-safe game launch manifest with platform, checksums, emulator hint, and opaque file URLs. Sega Model 2 keeps original MAME ZIP names and bytes, exposes operator-arcade input metadata, and resolves hidden runtime dependencies without inflating facets. Nintendo 64 `.z64`, `.v64`, and `.n64` games, Virtual Boy `.vb`/`.vboy` games, and PC-98 disk images are validated before indexing and downloaded as raw media bytes even when stored in a single-media ZIP. PC-98 multi-disk sets expose one ordered entry/dependency list, while byte-identical mirrors are collapsed into one catalog record. Dreamcast GDI, Saturn CUE, and PC-FX CUE/M3U manifests include the descriptor plus every required track in `files[]`. DOS ZIP/DOSZ archives keep their exact download bytes and add safe inner-archive launch candidates, hash-matched localized metadata, covers, and curated launch commands from a controlled `games.json` source.
 - `GET/PUT /api/client/games/:id/play-stats`: profile-scoped first/last played time, cumulative play seconds, and launch count. Clients report cumulative seconds per stable session id, so heartbeat retries are idempotent.
 - `GET/PUT /api/client/books/:id/private-state`: client-safe private status, favorite, rating, tags, and note sync.
@@ -163,7 +197,7 @@ Detailed client integration docs are in [`docs/api/client-v1.md`](docs/api/clien
 - `GET /api/client/search`, `/api/client/books/favorites`, and `/api/client/books/private-status/:status`: private-state-aware discovery shelves.
 - `POST /api/libraries/:id/scan` supports full scans, targeted `path` scans, and `mode: "recent"` scans for only the latest new or changed files.
 
-Client API book and collection responses omit local NAS file paths. Returned cover, thumbnail, page, EPUB, game, and video URLs are opaque service URLs; clients should preserve query parameters because FolioSpace uses them for cache-compatible media refreshes while keeping older routes valid.
+Client API book, game, and video DTOs omit source file paths. Collection DTOs still include legacy `directoryPath`; treat it as sensitive metadata, never as a client download path. Returned cover, thumbnail, page, EPUB, game, and video URLs are opaque service URLs; clients should preserve query parameters because FolioSpace uses them for cache-compatible media refreshes while keeping older routes valid.
 
 ## Compact Mobile Reader
 
@@ -284,6 +318,12 @@ Release `0.975` is a stability and performance hotfix for large game libraries:
 - Game and collection private-state lookups now only read state for the current page of items.
 - Game list sorting and filtering add SQLite expression indexes for title and platform-heavy browsing.
 - Service, Client API, and MCP metadata report version `0.975`.
+
+## Release 1.03
+
+Movie-library P0/P1/P2 is now included: consistent posters, local metadata and optional TMDB matching, seasons/episodes/versions, profile-scoped playback state, continue/next-up and explicit episode availability. Previous reader/game features remain intact. [Full release notes and upgrade cautions](docs/releases/1.03.md).
+
+TMDB requires your own API Read Access Token and remains disabled by default. No shared key is shipped; commercial permission and attribution are separate requirements. [Setup](docs/tmdb-setup.md) · [中文](docs/tmdb-setup.zh-CN.md).
 
 ## Release 1.02
 
@@ -536,7 +576,7 @@ curl -fsSL https://foliospace.app/install-mcp.sh | sh
 Release maintainers can build macOS/Linux MCP packages with:
 
 ```bash
-VERSION=1.02 ./scripts/build-mcp-release.sh
+VERSION=1.03 ./scripts/build-mcp-release.sh
 ```
 
 ## Product Direction
@@ -583,7 +623,7 @@ an access key and lets you choose a container path such as `/library`, `/books`,
 The default deployment currently pins this image:
 
 ```bash
-docker pull funland/foliospace-library:1.02
+docker pull funland/foliospace-library:1.03
 ```
 
 To upgrade later, change `FOLIOSPACE_IMAGE` in `.env`, then run:
@@ -623,7 +663,7 @@ docker run -p 8080:8080 \
   -v /volume2/GameROMS:/games:ro \
   -v /volume2/MovieCollection/Movies:/videos:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games,/videos \
-  funland/foliospace-library:1.02
+  funland/foliospace-library:1.03
 ```
 
 If a directory is missing from the setup page, add its Docker volume mapping
@@ -645,11 +685,11 @@ Docker Hub releases are built by GitHub Actions from Git tags. Configure these r
 Then create and push a version tag:
 
 ```bash
-git tag v1.02
-git push github v1.02
+git tag v1.03
+git push github v1.03
 ```
 
-The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:1.02` and `funland/foliospace-library:latest`.
+The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:1.03` and `funland/foliospace-library:latest`.
 
 ## Current MVP Support
 

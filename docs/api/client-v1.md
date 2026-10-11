@@ -1,10 +1,10 @@
 # FolioSpace Library Client API v1
 
-This document describes the stable HTTP surface intended for native clients such as a Vision Pro reader, GameEMU, and future spatial media clients. The client API is a facade over the current reading routes, so native clients do not need to depend on every web UI endpoint directly.
+This document describes the implemented Client API v1 at release **1.03**, including the production P0/P1/P2 movie-library baseline. Independent clients are welcome: readers, catalog browsers, game frontends, and media clients can use the same HTTP surface. Compatible FolioLume development clients implement the new movie-library/progress contract; public client distribution and device interoperability are separate. One-command MCP download/play remains future work. Existing routes and response shapes remain compatible; additions are optional unless negotiated. Ignore unknown fields and tolerate absent optional fields on older servers.
 
 ## Base URL
 
-Use the NAS or test server address as the base URL:
+Use the configured service origin as the base URL. Use HTTPS when crossing an untrusted network; HTTP examples are for a trusted local network:
 
 ```text
 http://your-nas-ip:8080
@@ -14,25 +14,29 @@ All examples below use relative paths.
 
 ## Authentication
 
-Authentication is disabled when `FOLIOSPACE_API_TOKEN` is empty.
+Authentication is enabled when either a nonblank `FOLIOSPACE_API_TOKEN` is configured **or** first-run setup has saved an access-token hash in SQLite. The environment token takes precedence; an empty environment variable does not disable a saved token. Only an instance with neither token source has authentication disabled. Discover this with `GET /api/auth/status`.
 
-When `FOLIOSPACE_API_TOKEN` is set, every `/api/*` route requires one of:
+When authentication is enabled, protected `/api/*` routes accept:
 
 - Native clients: `Authorization: Bearer <token>`
 - Web UI: the HttpOnly cookie created by `POST /api/auth/check`
+
+The public bootstrap routes are `/api/auth/status`, `/api/auth/check`, `/api/auth/logout`, `/api/setup/status`, `/api/setup/initialize`, and `/api/config/directory-roots`. The initialize handler applies its own token check when a token already exists and returns `409` after setup is initialized. Other APIs require authentication when enabled.
+
+`access_token` query authentication is also implemented for constrained resource loaders, but prefer Bearer headers or the browser cookie: URL tokens can leak through logs and history. Store credentials in the platform keychain, keep them out of screenshots and shared URLs, and send them only to the configured trusted service. The built-in cookie is HttpOnly and SameSite=Lax; it is not currently marked Secure, so protect browser access with HTTPS. There is no built-in cross-origin CORS/OPTIONS middleware. Browser integrations should be same-origin or use a separately configured and tested proxy.
 
 Native clients should use the bearer token. The cookie flow exists mainly so browser-loaded covers, pages, and EPUB iframe resources can work without manually attaching headers to every subresource.
 
 ## Profiles And Scoped State
 
-FolioSpace supports multiple in-app profiles inside the same authenticated service. Switching profiles does not require another token or password.
+FolioSpace supports multiple in-app profiles inside the same authenticated service. Switching profiles does not require another token or password. Profiles partition state inside one trusted instance; they are not separate accounts or an authorization boundary. A valid shared service token also permits administration APIs.
 
 Profile-scoped endpoints accept either:
 
 - `X-FolioSpace-Profile-Id: <profileId>`
 - `?profileId=<profileId>`
 
-If the profile id is missing, invalid, deleted, or unknown, the server falls back to the default profile. Older native clients can keep using the v1 API without sending profile information and will continue to read and write the default profile.
+Legacy reading/game state falls back to the default profile for missing, invalid, deleted or unknown profile IDs. **New video playback-state/events/feed routes differ:** only omission selects the default; an invalid or unknown explicit profile is rejected, never silently written into another profile. Older native clients can keep using existing APIs without sending a profile.
 
 Profile-scoped data includes reading progress, continue/recent/favorite/want shelves, private status, rating, tags, notes, summaries, and client preferences. Instance-level data remains shared: libraries, scan jobs, indexed files, metadata, covers, setup, and service authentication.
 
@@ -171,7 +175,7 @@ Request:
 
 `assetType` can be `mixed`, `book`, `comic`, `game`, or `video`.
 
-Response is the created library:
+Response is the created library (the shown fields are an excerpt):
 
 ```json
 {
@@ -196,24 +200,49 @@ Returns the container-visible roots used by the setup page and directory picker:
 
 This endpoint reports container paths, not host/NAS paths. Docker volume mappings decide which host paths are visible.
 
-## Recommended Native Client Flow
+<a id="recommended-native-client-flow"></a>
 
-1. Call `GET /api/auth/status`.
-2. If `enabled` is true, store the token in the platform keychain and send `Authorization: Bearer <token>` on every `/api/*` request.
-3. Call `GET /api/client/info` to check server capabilities.
-4. Call `GET /api/client/home` for the first screen.
-5. Open a book with `GET /api/client/books/{bookId}/manifest`.
-6. For CBZ/ZIP, load page image URLs from `pages`.
-7. For EPUB, load chapters/resources from `epub.resourceBaseUrl`.
-8. Sync paged/legacy progress with `GET /api/books/{bookId}/progress` and `PUT /api/books/{bookId}/progress`. For comic webtoon mode, prefer the structured `GET /api/books/{bookId}/reading-position` and `PUT /api/books/{bookId}/reading-position/webtoon` endpoints described below.
-9. Sync private state with `GET/PUT /api/client/books/{bookId}/private-state`.
-10. Sync UI language and reader defaults with `GET/PUT /api/client/preferences`.
-11. Open a game with `GET /api/client/games/{gameId}/manifest`, then use `fileUrl` only through the service.
-12. Open a video with `GET /api/client/videos/{videoId}/manifest`, then use `fileUrl` for direct/Range playback or `hlsUrl` when `playbackMode` is `hls`.
+## External Client Quick Start
+
+No official-app identity is needed to browse catalogs or read manifests. Have the owner complete setup and give your client the service origin and token; do not run setup or scans merely to connect.
+
+1. Read public `GET /api/auth/status`; when enabled, use `Authorization: Bearer <token>` for subsequent protected requests.
+2. Read `GET /api/client/info`. Gate optional features on the returned flags, not the service version alone. Read `/api/profiles` and preserve the chosen profile header on every state request; omission selects the default profile.
+3. Fetch `/api/client/home?limit=12&includeCollections=false` for a limited first screen. For full browsing, page `/api/client/books`, `/api/client/games`, or `/api/client/videos`. Use game facets/platform metadata for filters and hints.
+4. Open the returned `manifestUrl`. For books, read `pages[].displayUrl`/`url` or EPUB resources; PDFs use the opaque page-0 PDF stream. For offline books, use `fileUrl`/`downloadUrl`. For games, preserve the ordered `files[]`, logical names, roles, and checksums; a manifest does not certify your emulator. For videos, use direct `fileUrl` or the HLS flow below.
+5. Resolve every returned relative URL against the service origin, preserving query parameters and path encoding. Authenticate media subrequests (including HLS segments) to that trusted service. Never forward the token to a different origin or follow a cross-origin redirect with it.
+6. Sync reading `/progress` (or structured webtoon positions), book private state, and preferences for the same profile. Games expose private-state PUT, play statistics and save archives. Video progress uses the separate capability-gated [playback-state/events contract](video-library-p1-p2.md); do not reuse game progress or invent video private-state routes.
+7. Handle status codes before decoding JSON. Offer meaningful failures, bounded retries, and placeholders for missing covers; never bypass a resolver compatibility conflict.
+
+Safe read-only shell example (token entered interactively, not embedded in a command or URL):
+
+```bash
+BASE_URL='https://library.example.com'
+read -r -s -p 'Library access token: ' LIBRARY_TOKEN
+printf '\n'
+# Pass the header through stdin, avoiding a token argument in the process list.
+printf 'Authorization: Bearer %s\n' "$LIBRARY_TOKEN" |
+  curl --fail-with-body --silent --show-error --header @- \
+    "$BASE_URL/api/client/info"
+unset LIBRARY_TOKEN
+```
+
+Use the same authenticated request mechanism for, for example, `/api/client/books?limit=60&offset=0`. Do not use verbose HTTP logging with credentials. Resolve returned URLs with a URL parser rather than appending a complete URL as a path; the [Swift sketch](#swift-sketch) shows this distinction.
+
+### Pagination and compatibility
+
+| Catalog | Default limit | Maximum | Response |
+| --- | --- | --- | --- |
+| `/api/client/books` | 60 | 200 | `{items,total,limit,offset,hasMore}` |
+| `/api/client/games` | 50 | 200 | same envelope |
+| `/api/client/videos` | 50 | 200 | same envelope |
+| `/api/collections` with `limit` or `offset` | 60 | 200 | same envelope; legacy unpaged calls return an array |
+
+Offsets are zero-based. Increment by the returned `limit` while `hasMore` is true; stop on an empty page. Noninteger or negative numeric query values fall back to the endpoint default and limits above the maximum are clamped; zero limits also fall back to the endpoint default. These are offset pages of a mutable catalog, not snapshot cursors. Home and shelf arrays do not enumerate the full collection. Keep server identity, media type, item ID, and profile distinct in local caches.
 
 ## Covers, Thumbnails, And Cache Compatibility
 
-Clients should treat every returned `coverUrl`, `thumbnailUrl`, page URL, EPUB resource URL, game `fileUrl`, and video URL as an opaque service URL. Do not strip query parameters or rebuild the URL from the book id. When auth is enabled, native clients should send the bearer token on the request that loads the image or media bytes. Browser surfaces that must append token auth to an existing URL should append with `&` when the URL already contains `?`.
+Clients should treat every returned `coverUrl`, `thumbnailUrl`, page URL, EPUB resource URL, game `fileUrl`, and video URL as an opaque service URL. Do not strip query parameters or rebuild the URL from the book id. When auth is enabled, native clients should send the bearer token on the request that loads the image or media bytes. Prefer the HttpOnly cookie for browser resources; if a constrained loader requires query auth, use a URL parser to add `access_token` without dropping existing query parameters and keep the resulting URL private.
 
 Book cover and thumbnail URLs may include a client cache-busting query value such as:
 
@@ -234,7 +263,7 @@ The thumbnail endpoint is a read-through cache. When a JPEG thumbnail is ready, 
 
 PDF covers and PDF thumbnail sources are generated from the first rendered page with `pdftoppm`. The official container image includes `poppler-utils` for that renderer. If rendering is temporarily unavailable or fails, the HTTP response can still fall back to the built-in PDF/generic cover, but the failed PDF thumbnail job is not stored as a ready cache entry; later requests can retry and replace the fallback once rendering works. This is backward-compatible at the API level because the resource remains an image URL, but clients should not hard-code one content type for PDF covers; a PDF cover can now be `image/jpeg` instead of the older SVG placeholder.
 
-Legacy REST endpoints keep their existing fields and response shapes. Some book responses now include an additive `thumbnailUrl` and `thumbnailStatus` to help the web UI and older integrations pick up the refreshed cache version without changing the endpoint they call. The client-safe `/api/client/*` facade still omits local NAS paths such as `filePath`, `rootPath`, and `directoryPath`.
+Legacy REST endpoints keep their existing fields and response shapes. Some book responses now include an additive `thumbnailUrl` and `thumbnailStatus` to help the web UI and older integrations pick up the refreshed cache version without changing the endpoint they call. Book, game, and video client DTOs omit source file paths. Collection DTOs, including home collections, still carry legacy `directoryPath`; administration routes and legacy collection `volumes`/`assets` responses also expose paths. Treat those fields as sensitive metadata, not media locators, and redact them in logs or shared fixtures.
 
 ## Client Endpoints
 
@@ -247,9 +276,9 @@ Response:
 ```json
 {
   "serviceName": "FolioSpace Library",
-  "serviceVersion": "1.02",
+  "serviceVersion": "1.03",
   "apiVersion": "v1",
-  "supportedFormats": ["cbz", "zip", "epub", "pdf", "mp4", "m4v", "mov", "mkv", "avi", "webm", "nes", "sfc", "smc", "vb", "vboy", "gba", "gb", "gbc", "nds", "3ds", "cci", "cxi", "cia", "z64", "v64", "n64", "gdi", "cdi", "chd", "iso", "bin", "cue", "ccd", "toc", "m3u", "cso", "gcm", "rvz", "7z", "dosz", "exe", "com", "bat", "d88", "fdi", "thd", "nhd", "hdi", "vhd", "py1"],
+  "supportedFormats": ["cbz", "zip", "epub", "pdf", "mp4", "m4v", "mov", "mkv", "avi", "webm", "nes", "sfc", "smc", "vb", "vboy", "gba", "gb", "gbc", "nds", "3ds", "cci", "cxi", "cia", "z64", "v64", "n64", "gdi", "cdi", "chd", "iso", "bin", "cue", "ccd", "toc", "m3u", "cso", "gcm", "rvz", "7z", "dosz", "exe", "com", "bat", "d88", "88d", "d98", "98d", "fdi", "xdf", "hdm", "dup", "2hd", "tfd", "nfd", "hd4", "hd5", "hd9", "fdd", "h01", "hdb", "ddb", "dd6", "dcp", "dcu", "flp", "img", "ima", "fim", "thd", "nhd", "hdi", "vhd", "slh", "hdn", "cmd", "py1"],
   "capabilities": {
     "clientHome": true,
     "unifiedManifest": true,
@@ -267,7 +296,13 @@ Response:
     "collectionCatalog": true,
     "gameShelf": true,
     "gameCatalog": true,
+    "gamePlatformCatalog": true,
     "videoCatalog": true,
+    "videoLibraryV1": true,
+    "videoSeasonsV1": true,
+    "videoPlaybackStateV1": true,
+    "videoNextUpV1": true,
+    "videoEpisodeAvailabilityV1": true,
     "videoHls": true,
     "privateState": true,
     "search": true,
@@ -281,15 +316,26 @@ Response:
     "recentScan": true,
     "gameSaveSync": true,
     "gamePlayStats": true,
-	"gamePlayedCatalog": true,
-	"gameMetadataProviders": true,
-	"gameLaunchResolver": false,
-	"stableRuntimeIdentityV1": false,
-	"dosArchiveLaunchV1": true,
-	"ciaInstallV1": true
+    "gamePlayedCatalog": true,
+    "gameMetadataProviders": true,
+    "gameLaunchResolver": false,
+    "stableRuntimeIdentityV1": false,
+    "dosArchiveLaunchV1": true,
+    "ciaInstallV1": true
   }
 }
 ```
+
+This example represents an authenticated normal deployment with the resolver disabled. `bearerTokenAuth` reflects current authentication, not merely parser support. `gamePlatformCatalog` advertises `/api/client/games/platforms`; it describes server-side platform metadata, not the runtimes bundled in your client. `supportedFormats` describes indexing/API formats, not universal device playback. `videoHls` advertises the HLS interface, not successful ffmpeg execution or codec availability.
+
+| Resolver context | Default behavior |
+| --- | --- |
+| Normal executable via `config.Load()` | `FOLIOSPACE_DISABLE_GAME_LAUNCH_RESOLVER` defaults to `true` (also on invalid/empty values) |
+| Published Dockerfile and Compose | Neither sets the resolver variable; the executable default applies |
+| Direct `httpapi.New` or zero-value `Options` | The bool is false, so the resolver is enabled |
+| Explicitly configured running instance | `gameLaunchResolver` and `stableRuntimeIdentityV1` are both the inverse of the disable option |
+
+When disabled, the resolve route returns `404`; CIA install remains independently available. Check actual capability discovery on each connection. Enabling the resolver is an administrator decision after policy/runtime acceptance, not a client-side workaround. Release 1.01 added bounded MAME content-equivalence evidence; 1.02 added PC-98 per-ROM fonts and Triforce routing. These have no separate capability flags: inspect manifests/audit fields and keep optional-field fallback.
 
 PDF clients should read the manifest through `GET /api/client/books/{bookId}/manifest`, then fetch the PDF through the opaque page URL at `GET /api/books/{bookId}/pages/0`. The server supports HTTP Range requests for that URL, so native clients can stream PDF data without exposing the NAS path. `pdfPageLayout` means clients may offer single-page and two-page spread modes on top of the same PDF stream. `pdfWebtoonLayout` and `comicWebtoonLayout` mean clients may also offer vertical continuous scrolling when a manifest includes `webtoon` in `readerModes`. `webtoonPositionSync` means the structured `reading-position/webtoon` endpoints are available. `pageImageDownsample` means archive image pages can be requested with `maxWidth` and client manifests include `displayUrl` for memory-safe mobile/tablet rendering. `compactReader` means the bundled web UI has a phone-oriented compact reader, but native clients can still implement their own layout.
 
@@ -344,6 +390,7 @@ Query:
 - `limit`: optional, default `12`, max `50`. Applies to `continueReading`, `recentBooks`, `favoriteBooks`, and `wantToRead`.
 - `gameShelf` uses the same limit and returns recent local ROM assets.
 - `videoShelf` uses the same limit and returns recent local video assets.
+- `collections` is also bounded by this limit; `includeCollections=false` skips it and returns an empty array. Use paginated collection browsing for the complete catalog.
 
 Response:
 
@@ -429,7 +476,7 @@ Response:
 
 Collection `coverBookId`, `thumbnailStatus`, and `thumbnailUrl` are additive optional fields. Clients can use them to render collection covers from the first response without calling the collection volumes endpoint first. Older servers may omit them, so clients should keep a local fallback for missing values.
 
-The client DTO intentionally omits local NAS paths such as `filePath`, `rootPath`, and `directoryPath`.
+The book/game/video DTOs omit source file paths. The `collections` array still includes legacy `directoryPath`; ignore it for media access and redact it before sharing responses.
 
 ### `GET /api/client/books`
 
@@ -551,7 +598,7 @@ Query:
 
 - `limit`: optional, default `50`, max `200`. Values above max are clamped and the response returns the actual limit.
 - `offset`: optional, default `0`.
-- `q`: optional search against `title`, archive filename/path, `romSetName`, `region`, `platform`, and `format`. A matching dependency-only package may be returned so a native client can resolve runtime files by shortname.
+- `q`: optional search against `title`, archive filename/path, `romSetName`, `region`, `platform`, and `format`. Dependency-only records remain hidden even when the query matches; required files are obtained through the game manifest/resolver.
 - `platform`: optional exact platform filter, for example `nes`, `snes`, `virtualboy`, `n64`, `gba`, `md`, `neogeo`, `model2`, `arcade`, or `3ds`.
 - `romSetName`: optional exact ROM set filter.
 - `format`: optional exact format filter, for example `nes`, `sfc`, `gba`, `zip`, or `3ds`.
@@ -633,9 +680,9 @@ Response:
 
 The response is aggregate-only and never includes NAS paths, local file paths, or Docker volume paths.
 
-Facets contain exactly one entry per normalized `platform`. Its `count` is the number of launchable game records and therefore matches `GET /api/client/games?platform={platform}`; dependency files such as Dreamcast GDI tracks and Saturn CUE tracks never contribute to the count. When one platform contains multiple ROM-set names, formats, or emulator hints, the corresponding aggregate field is an empty string instead of producing duplicate platform rows.
+Facets contain exactly one entry per normalized `platform`. Its `count` is the number of discoverable game records (including `needs-curation`) and therefore matches `GET /api/client/games?platform={platform}`; dependency files such as Dreamcast GDI tracks and Saturn CUE tracks never contribute to the count. When one platform contains multiple ROM-set names, formats, or emulator hints, the corresponding aggregate field is an empty string instead of producing duplicate platform rows.
 
-This is an inventory endpoint, not a declaration of every platform the server could recognize. A platform with no indexed launchable ROMs is omitted. Use the platform catalog below when a client needs the complete server-owned list.
+This is an inventory endpoint, not a declaration of every platform the server could recognize. A platform with no indexed discoverable games is omitted. Use the platform catalog below when a client needs the complete server-owned list.
 
 ### `GET /api/client/games/platforms`
 
@@ -691,7 +738,7 @@ Nintendo 3DS scans use `platform: "3ds"`, `romSetName: "Nintendo 3DS"`, `emulato
 
 PSP scans use `platform: "psp"`, `romSetName: "PSP"`, `emulatorHint: "ppsspp"`, and `inputProfile: "standard"`. PSP `.iso` and `.cso` images are exposed as single-file manifests.
 
-Nintendo GameCube scans use `platform: "ngc"`, `romSetName: "NGC"`, `emulatorHint: "dolphin"`, and `inputProfile: "standard"`. GameCube `.iso`, `.gcm`, and `.rvz` images are exposed as single-file manifests.
+Nintendo GameCube scans use `platform: "ngc"`, `romSetName: "NGC"`, `emulatorHint: "dolphin"`, and `inputProfile: "standard"`. GameCube `.iso`, `.gcm`, and `.rvz` images are exposed as single-file manifests. Release 1.02 also recognizes an exact Triforce library/directory segment for those extensions: it uses the existing `platform: "ngc"` / `emulatorHint: "dolphin"` route while retaining `romSetName: "Triforce"` and the original entry filename/bytes. It does not invent a `triforce` client platform or establish gameplay/BIOS compatibility; the client must supply an appropriate runtime and user-managed system configuration.
 
 PlayStation 2 scans use `platform: "ps2"`, `romSetName: "PS2"`, `emulatorHint: "pcsx2"`, and `inputProfile: "standard"`. PS2 `.iso` and `.chd` images are exposed as single-file manifests.
 
@@ -703,7 +750,9 @@ PC-98 scans use `platform: "pc98"`, `romSetName: "PC-98"`, `emulatorHint: "np2ka
 
 The scanner computes CRC32 and SHA-1 over the raw image, not the ZIP container. Byte-identical mirrors are represented by one catalog record while the backend retains every physical source for incremental scans and recovery. Floppy files in the same parent directory with explicit disk suffixes such as `Disk 1`, `Disk 2`, `Data 1`, `FD 2`, or their Japanese equivalents are grouped into one launchable game. Catalog `size` is the sum of every delivered package file. A multi-floppy manifest exposes the ordered media as one `entry` followed by `disk` files with zero-based contiguous `diskIndex` values; the first floppy also includes `driveHint: "FDD1"`.
 
-A same-directory `FONT.bmp` or `PC98_CN.bmp` is packaged only when it is a valid uncompressed 2048 x 2048 1-bit BMP. It is returned as `role: "font"`, contributes to package `size`, remains beside the downloaded entry image, and never receives `diskIndex` or `driveHint`. Invalid bitmaps and fonts under firmware, emulator, tools, cache, or DOS roots remain excluded. Firmware, emulator binaries, DOS support roots, unsafe archive paths, symlinks, encrypted entries, and archive-bomb patterns are rejected or excluded. RAR, `.7z`, and TAR containers remain outside the PC-98 contract.
+Release 1.02 selects exactly one PC-98 font in the source media's own directory, in priority order: `<full-ROM-filename>.font.json` (for example `GameCN.hdi.font.json` with `{"file":"MyFont.bmp"}`), `<ROM-stem>.font.bmp`, then `FONT.bmp`, then legacy `PC98_CN.bmp`. Names are case-insensitive; candidates must be unambiguous regular sibling files, not paths or symlinks. JSON is limited to 4 KiB; fonts must be uncompressed 2048 × 2048 1-bit BMPs of at most 1 MiB. Missing/invalid candidates fall through; parent directories and arbitrary BMPs are not guessed. Grouped media are considered in launch order. The active manifest font has logical name `FONT.bmp`, role `font`, and its own size/SHA-1; it contributes to package size but has no `diskIndex` or `driveHint`. Font-only changes are detected even if size/mtime are unchanged. Refresh the manifest/package after a targeted scan; the ROM hash alone cannot detect a changed font. See [per-game font configuration](../operations/pc98-per-game-font.md). Fonts are user-provided, and delivery does not prove correct client rendering.
+
+Firmware, emulator binaries, DOS support roots, unsafe archive paths, symlinks, encrypted entries, and archive-bomb patterns are rejected or excluded. RAR, `.7z`, and TAR containers remain outside the PC-98 contract.
 
 ## Game Catalog Administration
 
@@ -737,7 +786,7 @@ Use `GET /api/games/curation?summary=1` for aggregate counts, including `fileCou
 
 ### `POST /api/games/curation/checksums`
 
-Starts one exclusive, bounded checksum-backfill task for canonical launch files. The optional request body is `{"limit": 100}`; the default is 100 and the maximum is 500. Pass `{"gameId": 18726, "limit": 32}` to repair one blocked game's files without hashing unrelated games. Files are processed sequentially, source identity is checked before and after reading, and a checksum is committed only if path, size, and modification time still match the indexed record. Repeat the global task while `checksumPending` is greater than zero. The resolver does not hash files synchronously.
+Starts one exclusive, bounded checksum-backfill task for canonical launch files. The optional request body is `{"limit": 100}`; the default is 100 and the maximum is 500. Pass `{"gameId": 18726, "limit": 32}` to repair one blocked game's files without hashing unrelated games. Files are processed sequentially, source identity is checked before and after reading, and a checksum is committed only if path, size, and modification time still match the indexed record. Repeat the global task while `checksumPending` is greater than zero. Ordinary resolution relies on persisted checksums; MAME cross-version equivalence additionally verifies the selected source bytes during resolution.
 
 ### `POST /api/games/curation/analyze`
 
@@ -800,6 +849,29 @@ Response:
 }
 ```
 
+### Movie-library and playback APIs (1.03)
+
+The original flat video catalog remains available. Enhanced clients can use
+`/api/client/video-works` with `q`, `kind`, `libraryId`, `sort=title|recent`, and
+bounded `limit`/`offset` (cap 100), then `/video-works/{id}/files`, `/seasons`,
+`/episodes`, and `/availability`. Works expose poster URLs and file/version/episode
+counts; associations preserve original video IDs and file URLs.
+
+Discover the five `video*V1` flags above before using these routes. Missing/false
+means retain old file browsing/local progress; an authentication error is not
+an old-server signal. `GET /api/client/videos/{id}/playback-state` and
+`POST .../playback-events` use file identity, profile, revision, session sequence
+and event ID. A retry reuses the same event; 409 conflicts return `{code,state}`
+and must not be silently rebased. `GET /api/client/video-playback?kind=continue`
+or `kind=next-up` provides bounded feeds. Completion is explicit, not a 95% rule.
+
+See [local metadata/TMDB operations](video-library-v1.md), the exact
+[season/progress/availability contract](video-library-p1-p2.md), and
+[operator-owned TMDB setup](../tmdb-setup.md). Online matching is optional;
+playback and local browsing do not require a TMDB token. No credentials are
+returned to clients. The legacy thumbnail endpoint is not automatically bridged
+to the new poster API: new clients should use the returned poster URL.
+
 ### `GET /api/client/videos/{videoId}/manifest`
 
 Returns client-safe video playback metadata. It does not expose the real NAS path.
@@ -833,9 +905,13 @@ Returns client-safe video playback metadata. It does not expose the real NAS pat
 
 `fileUrl` streams the local file through FolioSpace Library using `http.ServeFile`, so clients can use HTTP Range requests while keeping NAS paths hidden.
 
-If `playbackMode` is `hls`, clients should open `hlsUrl`. The first request to `hlsUrl` starts an on-demand `ffmpeg` transcode into `/config/cache/video-transcodes`; subsequent playback reuses the cached HLS playlist and segments until the source file changes. The built-in transcoder keeps one active video transcode at a time and downscales wide 4K sources to 1080p H.264/AAC HLS for NAS-friendly playback.
+If `playbackMode` is `hls`, request `hlsUrl` with GET. Only a request to the `index.m3u8` playlist starts/reuses a transcode; manifests and status polling do not start it. Cache identity uses the indexed source path, size, and mtime, so cache invalidation follows indexed changes rather than a complete source hash.
 
-While HLS is still being generated, timeline seeking is limited to segments that already exist. Once the playlist is fully cached, clients can seek normally within the generated HLS output. If another video is already occupying the single transcode slot, the HLS playlist request returns `409` and clients should poll the per-video and global status endpoints below.
+The process has one active transcode slot. Current ffmpeg output uses the first video stream and optional first audio stream, H.264/AAC stereo, width at most 1920 with proportional height, and approximately six-second MPEG-TS segments. It does not preserve every audio track, subtitles, or Blu-ray menus. Device playback still depends on codec support. The official image includes ffmpeg; custom installations must provide it.
+
+A playlist request waits up to 15 seconds for initial output. If a different video occupies the slot, it returns `409 {"error":"another video transcode is running"}`. Poll status with bounded backoff, then **request the playlist again** when the slot is available. There is no durable pending-work queue. If the initial playlist is still absent after the wait, the current route returns `500 {"error":"video transcode is starting"}`, not `202`; inspect status and retry the playlist after a delay. Missing ffmpeg or actual processing failures can also return `500`, so do not treat every server error as a normal startup condition.
+
+Until all segments are generated, seeking is limited to available segments. A cached playlist is not proof of a complete or successful transcode; use the playlist's end marker and available media before offering full-duration seeking.
 
 ### `GET /api/client/videos/{videoId}/transcode/status`
 
@@ -850,7 +926,13 @@ Returns the current HLS cache/transcode state for a video.
 }
 ```
 
-`status` is one of `idle`, `starting`, `running`, `queued`, `ready`, or `failed`. Clients can poll this endpoint while opening HLS playback to show `转码中`, `已缓存`, or a failure state. If another video is already being transcoded, the HLS playlist request can return `409` and this endpoint reports `queued`.
+`status` is one of `idle`, `starting`, `running`, `queued`, `ready`, or `failed`:
+
+- `queued` means another video occupies the slot; it does not register or persist this video's request. Polling never schedules it. Re-request `hlsUrl` when the slot becomes available.
+- `ready` is checked first and means `index.m3u8` exists, even while ffmpeg is still running or after a partial-output failure. It is not a completion signal.
+- `running` means this job occupies the slot before a playlist is visible. `starting` means a start marker exists with no active job/playlist; it is not a reliable promise of eventual output.
+- `failed` is inferred from ffmpeg log patterns only when no playlist/active job takes precedence. Use playback/playlist errors as well as status for diagnostics.
+- `segmentCount` counts existing segments, not percent complete.
 
 ### `GET /api/client/videos/transcode/status`
 
@@ -1011,10 +1093,10 @@ Resolves a stable launch profile for the exact client and emulator runtime inven
 
 Resolution is risk-tiered:
 
-- Ordinary console and computer platforms reuse the existing validated canonical manifest. Every returned launch file has a persisted SHA-1; the resolver never computes large-file hashes synchronously.
+- Ordinary console and computer platforms reuse the existing validated canonical manifest. Every returned ordinary launch file has a persisted SHA-1; ordinary resolution does not compute large-file hashes synchronously. MAME cross-version verification is the exception described below.
 - Ordinary console and computer runtimes do not require a hash of the containing application. PSP uses normalized core id `ppsspp`; DOS uses `dosboxpure` (the input alias `dosbox-pure` is accepted). Desktop standalone PPSSPP 1.20.4+ and DOSBox Staging 0.82.2+ remain supported.
 - Curated DOS packages reuse their existing `dosLaunch` object. An ambiguous or unknown inner executable is not promoted to a launchable profile.
-- MAME and FBNeo remain strict: runtime/content-set or core/hash mismatches return `409`, and every audited dependency must be present.
+- MAME and FBNeo retain audited client/runtime/content checks and require every dependency. Supported official FBNeo build/hash fields are diagnostic; MAME may use trusted cross-version content evidence. A policy conflict returns `409`.
 - Ordinary SFC/SNES entries accept the known Libretro `bsnes`, `bsnes-mercury`, `snes9x`, `snes9x-current`, and Mesen-S core identifiers. They do not require the per-ROM arcade audit table.
 
 Pragmatic profiles accept these canonical native client identities:
@@ -1032,7 +1114,7 @@ Pragmatic profiles accept these canonical native client identities:
 
 Apple mobile identities describe physical-device builds. Simulator identities and generic placeholders such as `SpatialEMU.Apple` are intentionally rejected, because they do not identify a deployable runtime ABI. The client must report only runtimes actually bundled in that target. Ordinary console, computer, and disc platforms can then resolve through the same deterministic manifest-backed route used by desktop clients.
 
-Runtime descriptors accept the optional additive `coreBuildId` field. For supported official SpatialEMU Windows, macOS, iOS, iPadOS, visionOS, tvOS, and GameEMU Android FBNeo requests, `coreBuildId` and legacy `coreSha256` are diagnostic fields and do not gate resolution. Approval still requires the exact client/platform/architecture, `libretro/fbneo` route, immutable ROM profile, and complete dependency closure. Other cores keep their existing identity rules. MAME remains strict through its audited runtime version and `contentSet`.
+Runtime descriptors accept the optional additive `coreBuildId` field. For supported official SpatialEMU Windows, macOS, iOS, iPadOS, visionOS, tvOS, and GameEMU Android FBNeo requests, `coreBuildId` and legacy `coreSha256` are diagnostic fields and do not gate resolution. Approval still requires the exact client/platform/architecture, `libretro/fbneo` route, immutable ROM profile, and complete dependency closure. Other cores keep their existing identity rules. MAME requires an audited runtime/content set or trusted content-equivalence evidence as described below.
 
 `coreBuildId` must identify the core source revision, compatibility-affecting patch/configuration digest, ABI, and build configuration. It must not include the application version, signature, or unrelated UI object code. When the resolver is enabled, the server advertises `stableRuntimeIdentityV1: true`; deployed clients must require both that flag and `gameLaunchResolver: true` before sending stable build identities, and must retain the legacy manifest fallback for `404`, `405`, or `501` responses.
 
@@ -1130,7 +1212,11 @@ For a successful Windows 1.302 request, `runtime` is the exact selected request 
 
 Ordinary profiles are deterministic wrappers over the current canonical manifest. Their IDs and revisions are stable until the indexed game changes. Multi-file games use `/api/client/games/{gameId}/files/{position}` URLs and preserve descriptor-relative filenames. DOS responses keep the downloadable archive as `manifest.game.fileName`, use the inner `.bat`/`.com`/`.exe` as `entryFile`, and include the validated `dosLaunch` object.
 
-The server never chooses an unreported runtime or substitutes the newest or closest MAME/FBNeo profile. An installed resolver returns `409` with a stable structured error when it cannot safely produce a launch package:
+The server never chooses an unreported runtime or a numerically closest version. Since 1.01, MAME prefers an exact audited profile, then may reuse a profile when trusted listxml evidence proves content equivalence and the existing client/platform checks still pass. It preserves `launchProfileId` and `profileRevision`, echoes the selected **requested** runtime, and adds optional `contentAudit` with `method`, `policy`, `sourceRuntime`, `sourceListxmlSha256`, `requestedListxmlSha256`, and `definitionSha256`. The method is `mame-content-equivalence-v1`. Custom administrator evidence replaces the bundled bounded registry; clients cannot submit evidence. Cross-version reuse reads and checks selected container bytes; changed bytes return `409 content-checksum-mismatch`. Missing dependencies remain `dependency-missing`; unknown/unequal evidence remains `content-set-mismatch`. This proves a content contract, not emulator performance or gameplay. See [MAME content compatibility](../operations/mame-content-equivalence.md).
+
+Third-party clients must report their real client/runtime inventory and obtain support/audited profiles for it; do not impersonate an official SpatialEMU identity from the examples to bypass policy. Catalog and manifest access remains available independently.
+
+An installed resolver returns `409` with a stable structured error when it cannot safely produce a launch package:
 
 ```json
 {
@@ -1146,10 +1232,11 @@ The server never chooses an unreported runtime or substitutes the newest or clos
 Current error codes are:
 
 - `runtime-unsupported`: the client identity, architecture, runtime, or core family is unsupported.
-- `core-fingerprint-unknown`: a physical Apple client omitted or supplied an unrecognized Libretro core SHA-256.
+- `core-fingerprint-unknown`: a core fingerprint required by the applicable non-FBNeo runtime policy is missing or unknown; supported official FBNeo build/hash fields are diagnostic as described above.
 - `launch-profile-missing`: a launchable profile has not been curated for this game/runtime.
 - `dependency-missing`: an entry, track, BIOS, parent, device, or other required file is missing or invalid.
 - `manifest-checksum-unavailable`: a required file has no persisted SHA-1 or changed after it was checksummed.
+- `content-checksum-mismatch`: selected source bytes no longer match the MAME cross-version content audit.
 - `content-set-mismatch`: a MAME content set does not match an installed audited profile.
 - `content-mode-unsupported`: the selected asset is an install action rather than launchable content, or the client did not advertise the required install capability. CIA clients should use the dedicated install action below instead of retrying the launch resolver.
 
@@ -1570,7 +1657,7 @@ Streams the book cover image.
 
 ### `GET /api/books/{bookId}/pages/{pageIndex}`
 
-Streams one CBZ/ZIP page image.
+Streams one CBZ/ZIP page image, or the whole PDF when `pageIndex` is `0`. PDF delivery supports byte ranges; archive page image delivery is not a generic Range/HEAD contract.
 
 Optional query:
 
@@ -1759,6 +1846,8 @@ Backward compatibility rules:
 - If `GET /api/books/{bookId}/reading-position` is unavailable, clients can fall back to legacy `GET /api/books/{bookId}/progress`; when `locator` starts with `webtoon:`, parse the fraction as display progress and estimate a starting page from it.
 
 ## Optional Collection Browsing
+
+These legacy routes share authentication but are not uniformly sanitized client DTOs: collection lists include `directoryPath`, and `volumes`/`assets` can return source path metadata. Use `/api/client/books` and `/api/client/games` for client-safe item browsing when possible; never turn returned path fields into download URLs.
 
 The native home screen can start from `/api/client/home`, but collection browsing can use the existing collection route.
 
@@ -1975,7 +2064,7 @@ Optional query:
 
 ## Error Format
 
-Errors currently use a simple JSON envelope:
+Many handler errors use this JSON envelope:
 
 ```json
 {
@@ -1983,13 +2072,21 @@ Errors currently use a simple JSON envelope:
 }
 ```
 
+Check HTTP status and `Content-Type` before decoding. Resolver/install conflicts use `{code,message,details?}` instead of `{error}`; video playback conflicts use `{code,state}`. Router and `http.ServeFile` errors may be plain text, and method errors can have an empty body.
+
 Common statuses:
 
 - `400`: invalid request, bad path parameter, or malformed JSON.
 - `401`: token auth is enabled and the token/cookie is missing or invalid.
 - `404`: unknown book, collection, library, or route.
 - `405`: wrong HTTP method.
-- `500`: archive, scan, database, or file streaming failure.
+- `409`: already initialized setup, conflicting work, busy HLS slot, or a structured resolver/install compatibility conflict.
+- `416`: unsatisfiable byte range on Range-capable resources.
+- `500`: archive, scan, database, file processing, missing ffmpeg, or HLS startup timeout.
+
+Resolver fallback for `404`, `405`, or `501` is a compatibility rule for older/unavailable implementations, not a statement that this resolver currently emits `501`. Never bypass a `409` conflict.
+
+Original book and direct video downloads support GET and HEAD. Game files, HLS, PDF pages, and EPUB/page resources are documented GET routes; do not assume HEAD is implemented for every media URL. Range-capable byte downloads return `206` with `Content-Range` for satisfiable ranges; handle `200` as full delivery and `416` as a resume-range failure.
 
 ## Swift Sketch
 
@@ -1999,7 +2096,13 @@ struct FolioSpaceClient {
     let token: String?
 
     func request(_ path: String) throws -> URLRequest {
-        var request = URLRequest(url: baseURL.appending(path: path))
+        guard let url = URL(string: path, relativeTo: baseURL)?.absoluteURL,
+              url.scheme == baseURL.scheme,
+              url.host == baseURL.host,
+              url.port == baseURL.port else {
+            throw URLError(.badURL)
+        }
+        var request = URLRequest(url: url)
         if let token, !token.isEmpty {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
@@ -2010,7 +2113,11 @@ struct FolioSpaceClient {
 
 For image or EPUB resource loading, make sure the same bearer header is applied. If the platform loader cannot attach custom headers for subresources, fetch bytes through the app networking layer and feed them to the renderer from local cache.
 
-## MCP Opportunities
+<a id="mcp-opportunities"></a>
+
+## MCP Opportunities (Design Notes)
+
+This section is a proposal, not a list of guaranteed tools. The implemented tool names and scope are in the [MCP usage guide](../mcp/usage.md). HTTP remains the media transport; download-and-play orchestration is future work.
 
 MCP is useful for assistant-driven operations, diagnostics, and library management. It should not sit in the hot path of the Vision Pro reading UI; the native app should use the HTTP API directly for reading.
 
