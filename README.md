@@ -30,7 +30,7 @@ FolioSpace Library is a self-hosted Docker service for indexing and accessing yo
 
 ### Is FolioSpace a cloud storage service?
 
-No. FolioSpace runs with Docker on a computer or compatible NAS that you control. Your files remain under your control, and clients receive authenticated service URLs instead of exposed host paths.
+No. FolioSpace runs with Docker on a computer or compatible NAS that you control. Your files remain under your control, and media is delivered through authenticated service URLs. Legacy collection/admin metadata can still contain path fields; see the [API privacy notes](docs/api/client-v1.md#covers-thumbnails-and-cache-compatibility).
 
 ### Which clients can connect to FolioSpace?
 
@@ -44,7 +44,9 @@ The fastest deployment path is the published multi-architecture Docker image. Fo
 
 No. FolioSpace indexes and serves files that you provide and have the right to use. It does not bundle books, films, games, ROMs, BIOS, firmware, or a third-party download catalog.
 
-![FolioSpace Library web reader with English controls](docs/screenshots/web-reader-en.png)
+![FolioSpace Library English web reader displaying Pepper and Carrot](docs/screenshots/demo-reader-en.jpg)
+
+Pepper&Carrot by David Revoy, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Real test-instance capture; [source, credits, and capture notes](docs/screenshots/README.md).
 
 ## Clients and Downloads
 
@@ -65,15 +67,29 @@ All three apps can be used independently of Library. Library serves files you pr
 
 ## Screenshots
 
-These existing English web UI captures were published in August 2026; they illustrate reading and administration, not native apps or every current feature.
+These English web UI captures were taken on 2026-10-11 from an owner-confirmed test instance using public-domain and openly licensed demonstration files. They show the bundled reading and administration experience. [Capture notes and content credits](docs/screenshots/README.md) distinguish the test deployment's video UI preview from the public 1.02 API contract.
+
+### EPUB reading
+
+![English EPUB reader displaying Alice's Adventures in Wonderland](docs/screenshots/demo-epub-en.jpg)
+
+Lewis Carroll's *Alice's Adventures in Wonderland*, from [Project Gutenberg](https://www.gutenberg.org/ebooks/11).
+
+### Homebrew game catalog
+
+![English Game Shelf displaying the openly licensed UCity homebrew](docs/screenshots/demo-games-en.jpg)
+
+UCity by Antonio Niño Díaz / SkyLyrac; original author screenshot, [CC BY-SA 4.0 artwork](https://creativecommons.org/licenses/by-sa/4.0/). Catalog indexing and checksums were verified; emulator gameplay was not tested.
 
 ### Transparent scan jobs
 
-![FolioSpace Library scan worker settings and completed job details](docs/screenshots/scan-jobs-en.png)
+![English scan workers and completed open-movie demonstration scan](docs/screenshots/demo-scan-jobs-en.jpg)
 
-### Game catalog curation
+### Service capabilities
 
-![FolioSpace Library game compatibility and metadata curation](docs/screenshots/game-curation-en.png)
+![English About screen with formats and service capability labels](docs/screenshots/library-capabilities-en.jpg)
+
+Use `/api/client/info` for the complete, machine-readable capabilities of your own running instance.
 
 ## License
 

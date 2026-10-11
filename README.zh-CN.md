@@ -43,4 +43,10 @@ Library 不提供第三方内容目录、书籍、影片、ROM、BIOS 或固件�
 
 ## 界面截图
 
-现有公开英文截图和说明见 [Screenshots](README.md#screenshots)。它们展示内置 Web 阅读与管理界面，不代表原生客户端截图或所有最新版本功能。
+以下为 2026-10-11 从用户确认的测试环境取得的真实英文界面截图，内容采用公有领域或开放许可演示素材。完整英文截图见 [Screenshots](README.md#screenshots)，素材来源、署名和视频预览界面的版本区别见 [截图记录](docs/screenshots/README.md)。它们展示内置 Web 阅读与管理界面，不代表原生客户端互通或模拟器可玩性验证；API 文档仍以公开 main / 1.02 为准。
+
+![英文 Web 阅读器展示 Pepper and Carrot](docs/screenshots/demo-reader-en.jpg)
+
+Pepper&Carrot 作者 David Revoy，采用 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)；英文校对 Amireeti、Alex Gryson。
+
+![英文任务界面展示开放影片扫描结果](docs/screenshots/demo-scan-jobs-en.jpg)
