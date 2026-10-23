@@ -477,6 +477,7 @@ type VideoAsset struct {
 	ID              int64     `json:"id"`
 	LibraryID       int64     `json:"libraryId"`
 	Title           string    `json:"title"`
+	DisplayTitle    string    `json:"displayTitle"`
 	Format          string    `json:"format"`
 	FilePath        string    `json:"filePath,omitempty"`
 	RelPath         string    `json:"relPath,omitempty"`

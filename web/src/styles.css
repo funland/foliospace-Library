@@ -554,7 +554,7 @@ button:hover {
 
 .libraryDashboard {
   display: grid;
-  grid-template-columns: minmax(380px, 0.9fr) minmax(620px, 1.45fr);
+  grid-template-columns: minmax(0, 1fr);
   align-items: start;
   gap: 16px;
   padding: 16px;
@@ -1032,6 +1032,10 @@ button:hover {
   overflow: visible;
 }
 
+.quickShelfPanel.singleColumn {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .quickShelfColumn {
   display: grid;
   align-content: start;
@@ -1049,7 +1053,7 @@ button:hover {
 .quickShelfPanel .shelfScroller {
   grid-auto-flow: unset;
   grid-auto-columns: unset;
-  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
   overflow: visible;
   padding-bottom: 0;
 }
@@ -3221,6 +3225,28 @@ button.danger:hover {
 .errorRow span,
 .errorRow small {
   overflow-wrap: anywhere;
+}
+
+@media (max-width: 1100px) {
+  .quickShelfPanel,
+  .libraryForm,
+  .libraryRows,
+  .libraryRows .row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .quickShelfDivider {
+    display: none;
+  }
+
+  .libraryRows .row strong,
+  .libraryRows .row small {
+    overflow-wrap: anywhere;
+  }
+
+  .libraryRows .rowActions {
+    flex-wrap: wrap;
+  }
 }
 
 @media (max-width: 760px) {

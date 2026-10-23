@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ComicBrowser, ComicTitleRules } from "./ComicBrowser";
 import { VideoLibrary } from "./VideoLibrary";
 import { VideoPoster } from "./VideoPoster";
+import { isContinueReading, readingProgress } from "./reading-progress";
 import { homeLibrarySections, isReadingOrGameCollection } from "./home-library";
 import type { CSSProperties, FormEvent, MouseEvent, ReactNode, SyntheticEvent, TouchEvent } from "react";
 import { GlobalWorkerOptions, getDocument } from "pdfjs-dist";
@@ -26,12 +28,13 @@ import {
   type ReaderImageDisplayMode,
 } from "./reader-layout";
 import { resolveEpubOpenPosition, type EpubChapterOpenPosition } from "./epub-navigation";
+import { observeEpubViewport } from "./epub-viewport";
 import { gamePlatformFilterOptions, gamePlatformFilterOptionsFromFacets } from "./game-platform-options";
 import { setupOnboardingCopy, setupOnboardingLinks } from "./setup-onboarding";
 
 GlobalWorkerOptions.workerSrc = pdfWorkerURL;
 
-type View = "library" | "favorites" | "reader" | "games" | "game-curation" | "videos" | "jobs" | "errors" | "about";
+type View = "library" | "favorites" | "reader" | "games" | "game-curation" | "videos" | "jobs" | "errors" | "about" | "settings";
 type ReaderPageMode = "single" | "double" | "webtoon";
 type EpubPageMode = "single" | "double";
 type EpubTheme = "light" | "sepia" | "dark";
@@ -77,6 +80,7 @@ export function App() {
   const [collectionLoading, setCollectionLoading] = useState(false);
   const [allCollectionsLoaded, setAllCollectionsLoaded] = useState(false);
   const [books, setBooks] = useState<Book[]>([]);
+  const [comicRevision, setComicRevision] = useState(0);
   const [continueBooks, setContinueBooks] = useState<Book[]>([]);
   const [recentBooks, setRecentBooks] = useState<Book[]>([]);
   const [favoriteBooks, setFavoriteBooks] = useState<Book[]>([]);
@@ -285,7 +289,7 @@ export function App() {
         }),
         settle(api.libraries({ timeoutMs: BOOTSTRAP_TIMEOUT_MS }), (nextLibraries) => setLibraries(arrayOrEmpty(nextLibraries))),
         settle(api.clientHome(12, { timeoutMs: BOOTSTRAP_TIMEOUT_MS }), (home) => {
-          setContinueBooks(arrayOrEmpty(home.continueReading));
+          setContinueBooks(arrayOrEmpty(home.continueReading).filter(isContinueReading));
           setRecentBooks(arrayOrEmpty(home.recentBooks));
           setFavoriteBooks(arrayOrEmpty(home.favoriteBooks));
           setWantBooks(arrayOrEmpty(home.wantToRead));
@@ -1072,7 +1076,7 @@ export function App() {
     if (useWebtoonMode) {
       if (!webtoonPosition || !webtoonUserActivated.current) return;
       const timer = window.setTimeout(() => {
-        api.saveWebtoonReadingPosition(selectedBook.id, webtoonPosition).catch(() =>
+        api.saveWebtoonReadingPosition(selectedBook.id, webtoonPosition).then(() => updateReadingShelf(selectedBook, webtoonPosition.pageIndex, webtoonPosition.documentProgress)).catch(() =>
           api
             .progressDetail(
               selectedBook.id,
@@ -1080,6 +1084,7 @@ export function App() {
               `webtoon:${webtoonPosition.documentProgress}`,
               webtoonPosition.documentProgress,
             )
+            .then(() => updateReadingShelf(selectedBook, webtoonPosition.pageIndex, webtoonPosition.documentProgress))
             .catch(() => undefined),
         );
       }, 650);
@@ -1102,6 +1107,7 @@ export function App() {
           "",
           progressFraction,
         )
+        .then(() => updateReadingShelf(selectedBook, pageIndex, progressFraction))
         .catch(() => undefined);
     }, 450);
 
@@ -1119,6 +1125,7 @@ export function App() {
           String(epubPagePosition),
           epubPageCount > 1 ? epubPagePosition / (epubPageCount - 1) : 0,
         )
+        .then(() => updateReadingShelf(selectedBook, pageIndex, epubPageCount > 1 ? epubPagePosition / (epubPageCount - 1) : 0))
         .catch(() => undefined);
     }, 450);
 
@@ -1755,10 +1762,16 @@ export function App() {
     }
   }
 
+  function updateReadingShelf(book: Book, currentPage: number, progressFraction: number) {
+    const updated = { ...book, currentPage, progressFraction, lastReadAt: new Date().toISOString() };
+    setContinueBooks(items => replaceBook(items, updated).filter(isContinueReading));
+    setRecentBooks(items => replaceBook(items, updated));
+  }
+
   function mergeBookState(updatedBook: Book) {
     setSelectedBook((currentBook) => (currentBook?.id === updatedBook.id ? updatedBook : currentBook));
     setBooks((items) => replaceBook(items, updatedBook));
-    setContinueBooks((items) => replaceBook(items, updatedBook));
+    setContinueBooks((items) => replaceBook(items, updatedBook).filter(isContinueReading));
     setRecentBooks((items) => replaceBook(items, updatedBook));
     setFavoriteBooks((items) => mergeShelfBook(items, updatedBook, (book) => book.favorite));
     setWantBooks((items) => mergeShelfBook(items, updatedBook, (book) => book.privateStatus === "want"));
@@ -1782,7 +1795,8 @@ export function App() {
     };
     try {
       const updatedCollection = await api.collectionPrivateState(collection.id, nextState);
-      mergeCollectionState(updatedCollection);
+      mergeCollectionState({ ...updatedCollection, title: collection.title });
+      setComicRevision(n => n + 1);
       setStatus(t.collectionStateSaved);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : t.collectionStateFailed);
@@ -2303,7 +2317,7 @@ export function App() {
       const section = sections.find((candidate) => candidate.key === kind);
       section?.items.push(item);
     }
-    return sections.filter((section) => section.items.length > 0);
+    return sections.filter((section) => section.key !== "comic" && section.items.length > 0);
   }, [sortedSeries, libraries, t]);
   const favoriteCollections = useMemo(() => series.filter((item) => item.favorite), [series]);
   const likedCollections = useMemo(() => series.filter((item) => item.liked), [series]);
@@ -2359,13 +2373,15 @@ export function App() {
   // A video-only library must not surface stale book records from a former
   // mixed scan (for example a subtitle ZIP) as recently added reading material.
   const showRecentBooks = recentBooks.length > 0 && libraries.some(library => library.assetType !== "video");
+  const hasPersonalShelves = visibleContinueBooks.length > 0 || favoriteBooks.length > 0 || wantBooks.length > 0;
+  const hasRecentShelves = gameShelf.length > 0 || videoShelf.length > 0 || showRecentBooks;
   const homeSections = homeLibrarySections(libraries, videoShelf.length > 0);
 
   return (
     <main className={view === "reader" ? "app readerMode" : "app"}>
       <aside className="sidebar">
         <div className="brand">FolioSpace Library</div>
-        <button className={view === "library" ? "active" : ""} onClick={returnToLibrary}>
+        <button className={view === "library" ? "active" : ""} onClick={() => { setSelectedSeries(null); void returnToLibrary(); }}>
           {t.library}
         </button>
         <button className={view === "favorites" ? "active" : ""} onClick={openFavorites}>
@@ -2389,6 +2405,7 @@ export function App() {
         <button className={view === "errors" ? "active" : ""} onClick={openErrorsView}>
           {t.errors}
         </button>
+        <button className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}>{t.settings}</button>
         <button className={view === "about" ? "active" : ""} onClick={() => setView("about")}>
           {t.about}
         </button>
@@ -2528,7 +2545,7 @@ export function App() {
             <option value="ja">日本語</option>
             <option value="ko">한국어</option>
           </select>
-          <span className="statusText">{activeScan ? `Scanning: ${scanProgressLabel} · ${t.elapsed} ${activeScanElapsed}` : status}</span>
+          <span className="statusText">{activeScan ? `${t.scanning}: ${scanProgressLabel} · ${t.elapsed} ${activeScanElapsed}` : status === "Ready" ? t.ready : status}</span>
         </header>
 
         {activeScan && (
@@ -2580,6 +2597,248 @@ export function App() {
               </section>
             )}
 
+            {libraries.length === 0 && <section className="panel wide"><h1>{t.libraries}</h1><button onClick={() => setView("settings")}>{t.manageLibraries}</button></section>}
+
+            {!selectedSeries && (hasPersonalShelves || hasRecentShelves) && (
+              <section className={`homeRows quickShelfPanel panel wide${hasPersonalShelves && hasRecentShelves ? "" : " singleColumn"}`} aria-label="Reading shortcuts">
+                {hasPersonalShelves && <div className="quickShelfColumn">
+                  {visibleContinueBooks.length > 0 && (
+                    <BookShelf
+                      title={t.continueReading}
+                      subtitle={t.continueSubtitle}
+                      books={visibleContinueBooks}
+                      onOpen={openBook}
+                      meta={(book) => continueMeta(book, t)}
+                      largeCovers={visibleContinueBooks.length < 4}
+                      labels={t}
+                      onAddToCollection={(book) => addAssetToManualCollection("book", book.id, book.title)}
+                      progress
+                    />
+                  )}
+                  {favoriteBooks.length > 0 && (
+                    <BookShelf
+                      title={t.favorites}
+                      subtitle={t.favoriteSubtitle}
+                      books={favoriteBooks.slice(0, 4)}
+                      onOpen={openBook}
+                      meta={(book) => privateShelfMeta(book, t)}
+                      labels={t}
+                      onAddToCollection={(book) => addAssetToManualCollection("book", book.id, book.title)}
+                    />
+                  )}
+                  {wantBooks.length > 0 && (
+                    <BookShelf
+                      title={t.wantToRead}
+                      subtitle={t.wantSubtitle}
+                      books={wantBooks.slice(0, 4)}
+                      onOpen={openBook}
+                      meta={(book) => privateShelfMeta(book, t)}
+                      labels={t}
+                      onAddToCollection={(book) => addAssetToManualCollection("book", book.id, book.title)}
+                    />
+                  )}
+                </div>}
+                {hasPersonalShelves && hasRecentShelves && <span className="quickShelfDivider" aria-hidden="true" />}
+                {hasRecentShelves && <div className="quickShelfColumn">
+                  {gameShelf.length > 0 && (
+                    <GameShelf
+                      title={t.gameShelf}
+                      subtitle={t.gameShelfSubtitle}
+                      games={gameShelf.slice(0, 4)}
+                      meta={(game) => gameMeta(game, t)}
+                      moreLabel={t.more}
+                      onMore={openGameCatalog}
+                      labels={t}
+                      onStateChange={updateGameState}
+                      onAddToCollection={(game) => addAssetToManualCollection("game", game.id, game.title)}
+                    />
+                  )}
+                  {videoShelf.length > 0 && (
+                    <VideoShelf
+                      title={t.videoShelf}
+                      subtitle={t.recentSubtitle}
+                      videos={videoShelf.slice(0, 4)}
+                      meta={(video) => videoMeta(video, t)}
+                      onOpen={(video) => {
+                        setSelectedVideo(video);
+                        void openVideoCatalog();
+                      }}
+                      moreLabel={t.more}
+                      onMore={openVideoCatalog}
+                      labels={t}
+                      onAddToCollection={(video) => addAssetToManualCollection("video", video.id, video.displayTitle || video.title)}
+                    />
+                  )}
+                  {showRecentBooks && (
+                    <BookShelf
+                      title={t.recentlyAddedTitle}
+                      subtitle={t.recentSubtitle}
+                      books={recentBooks.slice(0, 4)}
+                      onOpen={openBook}
+                      meta={(book) => recentMeta(book, t)}
+                      labels={t}
+                      onAddToCollection={(book) => addAssetToManualCollection("book", book.id, book.title)}
+                    />
+                  )}
+                </div>}
+              </section>
+            )}
+
+            {!selectedSeries && homeSections.video && (
+              <VideoLibrary presentation="home" locale={locale} onPlay={(video) => {
+                setSelectedVideo(video);
+                void openVideoCatalog();
+              }} />
+            )}
+
+            {homeSections.legacy && <>
+            <section className="collectionPanel panel" style={{ display: selectedSeries ? "none" : undefined }}>
+              <div className="collectionPanelHeader">
+                <div>
+                  <h1>{t.collections}</h1>
+                  <small>{t.catalogLoadedCount(filteredSeries.length, collectionTotal)}</small>
+                </div>
+                <div className="collectionSortTools">
+                  <label>
+                    <span>{t.sort}</span>
+                    <select value={collectionSort} onChange={(event) => changeCollectionSort(event.target.value as CollectionSort)}>
+                      <option value="title">{t.sortTitle}</option>
+                      <option value="recently_added">{t.sortRecentlyAdded}</option>
+                      <option value="count">{t.sortCount}</option>
+                      <option value="type">{t.sortType}</option>
+                    </select>
+                  </label>
+                  <select value={collectionSortDirection} onChange={(event) => setCollectionSortDirection(event.target.value as SortDirection)} aria-label={t.sortDirection}>
+                    <option value="asc">{t.sortAscending}</option>
+                    <option value="desc">{t.sortDescending}</option>
+                  </select>
+                </div>
+              </div>
+              <ComicBrowser libraries={libraries} locale={locale} onOpen={openSeries} refreshKey={`${activeProfileId}-${comicRevision}-${jobs[0]?.status || ""}`} renderCover={(id, url) => <ThumbnailImage src={url || `/api/books/${id}/thumbnail?size=small`} thumbnailStatus="pending" alt="" loading="lazy" />} />
+              <div
+                className="collectionSections"
+                ref={collectionSectionsRef}
+                onScroll={(event) => {
+                  collectionScrollTop.current = event.currentTarget.scrollTop;
+                }}
+              >
+                {collectionLoading && (
+                  <div className="catalogInitialProgress collectionLoadProgress" role="status" aria-live="polite">
+                    <div>
+                      <strong>{series.length === 0 ? `${t.collections}...` : t.loadingMoreVolumes}</strong>
+                      <span>{t.catalogLoadedCount(series.length, collectionTotal)}</span>
+                    </div>
+                    <div className="catalogInitialProgressTrack">
+                      <span
+                        style={{
+                          width: collectionTotal > 0
+                            ? `${Math.max(8, Math.min(100, (series.length / collectionTotal) * 100))}%`
+                            : "28%",
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+                {collectionSections.map((section) => (
+                  <section className="collectionSection" key={section.key} aria-label={section.title}>
+                    <h2>{section.title}</h2>
+                    <div className="collectionGrid">
+                      {section.items.map((item) => (
+                        <CollectionCard
+                          key={item.id}
+                          item={item}
+                          selected={selectedSeries?.id === item.id}
+                          labels={t}
+                          onOpen={openSeries}
+                          onStateChange={updateCollectionState}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                ))}
+                {collectionHasMore && (
+                  <div className="collectionLoadMore" ref={collectionLoadMoreRef}>
+                    <button
+                      className="catalogLoadMore"
+                      type="button"
+                      disabled={collectionLoading}
+                      onClick={() => loadCollectionsPage(series.length, false)}
+                    >
+                      {collectionLoading ? t.loadingMoreVolumes : t.loadMore}
+                    </button>
+                  </div>
+                )}
+              </div>
+            </section>
+
+            {selectedSeries && <section className="coverWall panel collectionContent" ref={collectionContentRef}>
+              <button className="collectionBack" onClick={() => setSelectedSeries(null)}>← {t.collections}</button>
+              <div className="collectionDetailActions">
+                <button aria-pressed={selectedSeries.favorite} title={t.favorite} onClick={() => void updateCollectionState(selectedSeries, { favorite: !selectedSeries.favorite })}>★ {t.favorite}</button>
+                <button aria-pressed={selectedSeries.liked} title={t.collectionLike} onClick={() => void updateCollectionState(selectedSeries, { liked: !selectedSeries.liked })}>♥ {t.collectionLike}</button>
+              </div>
+              <div className="coverWallHeader">
+                <div>
+                  <h1>{selectedSeries ? selectedSeries.title : t.volumeWall}</h1>
+                  <small>
+                    {selectedSeries ? loadedCollectionCountLabel(selectedSeries, books.length, 0, 0, t) : t.selectCollection}
+                  </small>
+                </div>
+                <div className="coverWallTools">
+                  {selectedSeries && <span>{collectionCountLabel(selectedSeries, t)}</span>}
+                  {selectedSeries && (
+                    <label>
+                      <span>{t.sort}</span>
+                      <select value={bookSort} onChange={(event) => setBookSort(event.target.value as BookSort)}>
+                        <option value="title">{t.sortTitle}</option>
+                        <option value="recently_added">{t.sortRecentlyAdded}</option>
+                        <option value="last_read">{t.sortLastRead}</option>
+                        <option value="progress">{t.sortProgress}</option>
+                        <option value="unread">{t.sortUnread}</option>
+                      </select>
+                    </label>
+                  )}
+                </div>
+              </div>
+              {selectedSeries && books.length > 0 ? (
+                <div className="books">
+                  {books.map((book) => (
+                    <button className="book" key={book.id} onClick={() => openBook(book)} title={book.title}>
+                      <span className="coverFrame">
+                        <BookCover book={book} />
+                        <span className="coverBadge">{book.format.toUpperCase()}</span>
+                      </span>
+                      <strong>{book.title}</strong>
+                      {book.creator && <small className="bookCreator">{book.creator}</small>}
+                      <small>
+                        {t.singleVolume} · {book.pageCount ? t.pageCount(book.pageCount) : t.notAnalyzed}
+                      </small>
+                      {book.description && <small className="bookDescription">{book.description}</small>}
+                      {privateMeta(book, t) && <small className="privateMeta">{privateMeta(book, t)}</small>}
+                    </button>
+                  ))}
+                  <div className="bookLoadMore" ref={bookLoadMoreRef} aria-live="polite">
+                    {bookListLoading
+                      ? t.loadingMoreVolumes
+                      : bookHasMore
+                        ? t.scrollToLoadMore
+                        : t.volumesLoaded(books.length)}
+                  </div>
+                </div>
+              ) : (
+                <div className="coverEmpty">
+                  <strong>{selectedSeries ? (bookListLoading ? t.loadingVolumes : t.noMatchingVolumes) : t.noCollectionSelected}</strong>
+                  <small>
+                    {selectedSeries ? t.clearSearchHint : t.chooseCollectionHint}
+                  </small>
+                </div>
+              )}
+            </section>}
+            </>}
+          </div>
+        )}
+
+        {view === "settings" && <div className="libraryDashboard">
             <section className="libraryDirectory panel">
               <h1>{t.libraries}</h1>
               <form className="libraryForm" onSubmit={addLibrary}>
@@ -2640,238 +2899,8 @@ export function App() {
               </div>
             </section>
 
-            {(visibleContinueBooks.length > 0 || favoriteBooks.length > 0 || wantBooks.length > 0 || gameShelf.length > 0 || videoShelf.length > 0 || recentBooks.length > 0) && (
-              <section className="homeRows quickShelfPanel panel wide" aria-label="Reading shortcuts">
-                <div className="quickShelfColumn">
-                  {visibleContinueBooks.length > 0 && (
-                    <BookShelf
-                      title={t.continueReading}
-                      subtitle={t.continueSubtitle}
-                      books={visibleContinueBooks}
-                      onOpen={openBook}
-                      meta={(book) => continueMeta(book, t)}
-                      largeCovers={visibleContinueBooks.length < 4}
-                      labels={t}
-                      onAddToCollection={(book) => addAssetToManualCollection("book", book.id, book.title)}
-                      progress
-                    />
-                  )}
-                  {favoriteBooks.length > 0 && (
-                    <BookShelf
-                      title={t.favorites}
-                      subtitle={t.favoriteSubtitle}
-                      books={favoriteBooks.slice(0, 4)}
-                      onOpen={openBook}
-                      meta={(book) => privateShelfMeta(book, t)}
-                      labels={t}
-                      onAddToCollection={(book) => addAssetToManualCollection("book", book.id, book.title)}
-                    />
-                  )}
-                  {wantBooks.length > 0 && (
-                    <BookShelf
-                      title={t.wantToRead}
-                      subtitle={t.wantSubtitle}
-                      books={wantBooks.slice(0, 4)}
-                      onOpen={openBook}
-                      meta={(book) => privateShelfMeta(book, t)}
-                      labels={t}
-                      onAddToCollection={(book) => addAssetToManualCollection("book", book.id, book.title)}
-                    />
-                  )}
-                </div>
-                <span className="quickShelfDivider" aria-hidden="true" />
-                <div className="quickShelfColumn">
-                  {gameShelf.length > 0 && (
-                    <GameShelf
-                      title={t.gameShelf}
-                      subtitle={t.gameShelfSubtitle}
-                      games={gameShelf.slice(0, 4)}
-                      meta={(game) => gameMeta(game, t)}
-                      moreLabel={t.more}
-                      onMore={openGameCatalog}
-                      labels={t}
-                      onStateChange={updateGameState}
-                      onAddToCollection={(game) => addAssetToManualCollection("game", game.id, game.title)}
-                    />
-                  )}
-                  {videoShelf.length > 0 && (
-                    <VideoShelf
-                      title={t.videoShelf}
-                      subtitle={t.recentSubtitle}
-                      videos={videoShelf.slice(0, 4)}
-                      meta={(video) => videoMeta(video, t)}
-                      onOpen={(video) => {
-                        setSelectedVideo(video);
-                        void openVideoCatalog();
-                      }}
-                      moreLabel={t.more}
-                      onMore={openVideoCatalog}
-                      labels={t}
-                      onAddToCollection={(video) => addAssetToManualCollection("video", video.id, video.title)}
-                    />
-                  )}
-                  {showRecentBooks && (
-                    <BookShelf
-                      title={t.recentlyAddedTitle}
-                      subtitle={t.recentSubtitle}
-                      books={recentBooks.slice(0, 4)}
-                      onOpen={openBook}
-                      meta={(book) => recentMeta(book, t)}
-                      labels={t}
-                      onAddToCollection={(book) => addAssetToManualCollection("book", book.id, book.title)}
-                    />
-                  )}
-                </div>
-              </section>
-            )}
-
-            {homeSections.video && (
-              <VideoLibrary presentation="home" locale={locale} onPlay={(video) => {
-                setSelectedVideo(video);
-                void openVideoCatalog();
-              }} />
-            )}
-
-            {homeSections.legacy && <>
-            <section className="collectionPanel panel">
-              <div className="collectionPanelHeader">
-                <div>
-                  <h1>{t.collections}</h1>
-                  <small>{t.catalogLoadedCount(filteredSeries.length, collectionTotal)}</small>
-                </div>
-                <div className="collectionSortTools">
-                  <label>
-                    <span>{t.sort}</span>
-                    <select value={collectionSort} onChange={(event) => changeCollectionSort(event.target.value as CollectionSort)}>
-                      <option value="title">{t.sortTitle}</option>
-                      <option value="recently_added">{t.sortRecentlyAdded}</option>
-                      <option value="count">{t.sortCount}</option>
-                      <option value="type">{t.sortType}</option>
-                    </select>
-                  </label>
-                  <select value={collectionSortDirection} onChange={(event) => setCollectionSortDirection(event.target.value as SortDirection)} aria-label={t.sortDirection}>
-                    <option value="asc">{t.sortAscending}</option>
-                    <option value="desc">{t.sortDescending}</option>
-                  </select>
-                </div>
-              </div>
-              <div
-                className="collectionSections"
-                ref={collectionSectionsRef}
-                onScroll={(event) => {
-                  collectionScrollTop.current = event.currentTarget.scrollTop;
-                }}
-              >
-                {collectionLoading && (
-                  <div className="catalogInitialProgress collectionLoadProgress" role="status" aria-live="polite">
-                    <div>
-                      <strong>{series.length === 0 ? `${t.collections}...` : t.loadingMoreVolumes}</strong>
-                      <span>{t.catalogLoadedCount(series.length, collectionTotal)}</span>
-                    </div>
-                    <div className="catalogInitialProgressTrack">
-                      <span
-                        style={{
-                          width: collectionTotal > 0
-                            ? `${Math.max(8, Math.min(100, (series.length / collectionTotal) * 100))}%`
-                            : "28%",
-                        }}
-                      />
-                    </div>
-                  </div>
-                )}
-                {collectionSections.map((section) => (
-                  <section className="collectionSection" key={section.key} aria-label={section.title}>
-                    <h2>{section.title}</h2>
-                    <div className="collectionGrid">
-                      {section.items.map((item) => (
-                        <CollectionCard
-                          key={item.id}
-                          item={item}
-                          selected={selectedSeries?.id === item.id}
-                          labels={t}
-                          onOpen={openSeries}
-                          onStateChange={updateCollectionState}
-                        />
-                      ))}
-                    </div>
-                  </section>
-                ))}
-                {collectionHasMore && (
-                  <div className="collectionLoadMore" ref={collectionLoadMoreRef}>
-                    <button
-                      className="catalogLoadMore"
-                      type="button"
-                      disabled={collectionLoading}
-                      onClick={() => loadCollectionsPage(series.length, false)}
-                    >
-                      {collectionLoading ? t.loadingMoreVolumes : t.loadMore}
-                    </button>
-                  </div>
-                )}
-              </div>
-            </section>
-
-            <section className="coverWall panel collectionContent" ref={collectionContentRef}>
-              <div className="coverWallHeader">
-                <div>
-                  <h1>{selectedSeries ? selectedSeries.title : t.volumeWall}</h1>
-                  <small>
-                    {selectedSeries ? loadedCollectionCountLabel(selectedSeries, books.length, 0, 0) : t.selectCollection}
-                  </small>
-                </div>
-                <div className="coverWallTools">
-                  {selectedSeries && <span>{collectionCountLabel(selectedSeries)}</span>}
-                  {selectedSeries && (
-                    <label>
-                      <span>{t.sort}</span>
-                      <select value={bookSort} onChange={(event) => setBookSort(event.target.value as BookSort)}>
-                        <option value="title">{t.sortTitle}</option>
-                        <option value="recently_added">{t.sortRecentlyAdded}</option>
-                        <option value="last_read">{t.sortLastRead}</option>
-                        <option value="progress">{t.sortProgress}</option>
-                        <option value="unread">{t.sortUnread}</option>
-                      </select>
-                    </label>
-                  )}
-                </div>
-              </div>
-              {selectedSeries && books.length > 0 ? (
-                <div className="books">
-                  {books.map((book) => (
-                    <button className="book" key={book.id} onClick={() => openBook(book)} title={book.title}>
-                      <span className="coverFrame">
-                        <BookCover book={book} />
-                        <span className="coverBadge">{book.format.toUpperCase()}</span>
-                      </span>
-                      <strong>{book.title}</strong>
-                      {book.creator && <small className="bookCreator">{book.creator}</small>}
-                      <small>
-                        {t.singleVolume} · {book.pageCount ? t.pageCount(book.pageCount) : t.notAnalyzed}
-                      </small>
-                      {book.description && <small className="bookDescription">{book.description}</small>}
-                      {privateMeta(book, t) && <small className="privateMeta">{privateMeta(book, t)}</small>}
-                    </button>
-                  ))}
-                  <div className="bookLoadMore" ref={bookLoadMoreRef} aria-live="polite">
-                    {bookListLoading
-                      ? t.loadingMoreVolumes
-                      : bookHasMore
-                        ? t.scrollToLoadMore
-                        : t.volumesLoaded(books.length)}
-                  </div>
-                </div>
-              ) : (
-                <div className="coverEmpty">
-                  <strong>{selectedSeries ? (bookListLoading ? t.loadingVolumes : t.noMatchingVolumes) : t.noCollectionSelected}</strong>
-                  <small>
-                    {selectedSeries ? t.clearSearchHint : t.chooseCollectionHint}
-                  </small>
-                </div>
-              )}
-            </section>
-            </>}
-          </div>
-        )}
+            <ComicTitleRules libraries={libraries} locale={locale} onSaved={() => setComicRevision(n => n + 1)} />
+        </div>}
 
         {view === "favorites" && (
           <section className="favoritesPage">
@@ -3120,7 +3149,7 @@ export function App() {
                 <label><input type="checkbox" checked={gameCatalogSettings.enableLibretroCovers} onChange={(event) => setGameCatalogSettings((value) => ({ ...value, enableLibretroCovers: event.target.checked }))} />{locale === "zh" || locale === "zht" ? "允许 Libretro 封面匹配" : "Allow Libretro cover matching"}</label>
               </div>
               <div className="policyStatusList">
-                {gameCurationSummary?.policies.map((policy) => <span className={policy.available ? "ready" : "missing"} key={policy.id}><strong>{policy.id}</strong>{policy.available ? "Ready" : "Missing"}<code>{policy.path}</code></span>)}
+                {gameCurationSummary?.policies.map((policy) => <span className={policy.available ? "ready" : "missing"} key={policy.id}><strong>{policy.id}</strong>{policy.available ? t.ready : t.missing}<code>{policy.path}</code></span>)}
               </div>
             </section>
 
@@ -3214,7 +3243,7 @@ export function App() {
             {selectedVideo && (
               <div className="inlineVideoPlayer">
                 <div>
-                  <strong>{selectedVideo.title}</strong>
+                  <strong>{selectedVideo.displayTitle || selectedVideo.title}</strong>
                   <small>{videoMeta(selectedVideo, t)}</small>
                 </div>
                 <video
@@ -3671,7 +3700,7 @@ export function App() {
         {view === "jobs" && (
           <div className="jobLayout">
             <section className="panel">
-              <h1>Jobs</h1>
+              <h1>{t.jobs}</h1>
               <div className="scanSettings">
                 <div>
                   <strong>{t.scanWorkers}</strong>
@@ -3695,7 +3724,7 @@ export function App() {
                     <strong>{t.thumbnailWorker}</strong>
                     <small>{t.thumbnailWorkerHint}</small>
                   </div>
-                  <span className={`workerBadge ${thumbnailWorkerStatus?.status || "idle"}`}>{thumbnailWorkerStatus?.status || "idle"}</span>
+                  <span className={`workerBadge ${thumbnailWorkerStatus?.status || "idle"}`}>{jobStatusLabel(thumbnailWorkerStatus?.status || "idle", locale)}</span>
                 </div>
                 <div className="thumbnailStats">
                   <span>{t.thumbnailQueued}<strong>{thumbnailWorkerStatus?.queued ?? 0}</strong></span>
@@ -3786,10 +3815,10 @@ export function App() {
               </div>
               {jobs.map((job) => (
                 <button className="jobRow" key={job.id} onClick={() => openJob(job)}>
-                  <strong>Job #{job.id}</strong>
+                  <strong>{t.job} #{job.id}</strong>
                   <small>
-                    {job.status} · {job.discoveredFiles} discovered · {job.indexedFiles} indexed · {job.skippedFiles} skipped ·{" "}
-                    {job.errorCount} errors · {job.metadataUpdatedFiles} metadata · {job.reclassifiedFiles} moved · {t.elapsed} {formatElapsed(job, nowTick)}
+                    {jobStatusLabel(job.status, locale)} · {t.discovered} {job.discoveredFiles} · {t.indexed} {job.indexedFiles} · {t.skipped} {job.skippedFiles} ·{" "}
+                    {t.errors} {job.errorCount} · {t.metadata} {job.metadataUpdatedFiles} · {t.moved} {job.reclassifiedFiles} · {t.elapsed} {formatElapsed(job, nowTick)}
                   </small>
                   {job.currentPath && <span>{job.currentPath}</span>}
                 </button>
@@ -3797,17 +3826,17 @@ export function App() {
             </section>
 
             <section className="panel">
-              <h1>{selectedJobLatest ? `Job #${selectedJobLatest.id}` : "Job Detail"}</h1>
+              <h1>{selectedJobLatest ? `${t.job} #${selectedJobLatest.id}` : t.jobDetail}</h1>
               {selectedJobLatest ? (
                 <div className="jobDetail">
                   <div className="statGrid">
-                    <span>Status<strong>{selectedJobLatest.status}</strong></span>
-                    <span>Discovered<strong>{selectedJobLatest.discoveredFiles}</strong></span>
-                    <span>Indexed<strong>{selectedJobLatest.indexedFiles}</strong></span>
-                    <span>Skipped<strong>{selectedJobLatest.skippedFiles}</strong></span>
-                    <span>Errors<strong>{selectedJobLatest.errorCount}</strong></span>
-                    <span>Metadata<strong>{selectedJobLatest.metadataUpdatedFiles}</strong></span>
-                    <span>Moved<strong>{selectedJobLatest.reclassifiedFiles}</strong></span>
+                    <span>{t.jobStatus}<strong>{jobStatusLabel(selectedJobLatest.status, locale)}</strong></span>
+                    <span>{t.discovered}<strong>{selectedJobLatest.discoveredFiles}</strong></span>
+                    <span>{t.indexed}<strong>{selectedJobLatest.indexedFiles}</strong></span>
+                    <span>{t.skipped}<strong>{selectedJobLatest.skippedFiles}</strong></span>
+                    <span>{t.errors}<strong>{selectedJobLatest.errorCount}</strong></span>
+                    <span>{t.metadata}<strong>{selectedJobLatest.metadataUpdatedFiles}</strong></span>
+                    <span>{t.moved}<strong>{selectedJobLatest.reclassifiedFiles}</strong></span>
                     <span>{t.elapsed}<strong>{formatElapsed(selectedJobLatest, nowTick)}</strong></span>
                   </div>
                   <div className="jobActions">
@@ -3816,7 +3845,7 @@ export function App() {
                     {canCancelJob(selectedJobLatest) && <button className="danger" onClick={() => controlJob(selectedJobLatest, "cancel")}>{t.cancel}</button>}
                   </div>
                   {selectedJobLatest.currentPath && <code className="currentPath">{selectedJobLatest.currentPath}</code>}
-                  <h2>Events</h2>
+                  <h2>{t.events}</h2>
                   <div className="eventList">
                     {jobEvents.map((event) => (
                       <div className={`event ${event.level}`} key={event.id}>
@@ -3825,7 +3854,7 @@ export function App() {
                       </div>
                     ))}
                   </div>
-                  <h2>Errors</h2>
+                  <h2>{t.errors}</h2>
                   <div className="table compact">
                     {jobErrors.map((item) => (
                       <div className="errorRow" key={item.id}>
@@ -3837,7 +3866,7 @@ export function App() {
                   </div>
                 </div>
               ) : (
-                <div className="empty">Select a job to inspect events and errors.</div>
+                <div className="empty">{t.selectJob}</div>
               )}
             </section>
           </div>
@@ -4180,8 +4209,8 @@ function CollectionCard({
           <span className="collectionInitials">{collectionInitials(item.title)}</span>
         </span>
         <strong>{item.title}</strong>
-        <small>{item.directoryPath || "."}</small>
-        <em>{collectionCountLabel(item)}</em>
+        {item.primaryType !== "book" && <small>{item.directoryPath || "."}</small>}
+        <em>{collectionCountLabel(item, labels)}</em>
       </button>
       <div className="collectionActions">
         <button
@@ -4776,13 +4805,13 @@ function VideoTile({
   className?: string;
 }) {
   return (
-    <div className={`${className} videoCard`} title={video.title}>
+    <div className={`${className} videoCard`} title={(video.displayTitle || video.title)}>
       <button className="videoCardButton" type="button" onClick={() => onOpen(video)}>
         <span className="shelfCover videoCover">
           <VideoPoster videoId={video.id} />
           <span className="videoCoverFormat">{video.format.toUpperCase()}</span>
         </span>
-        <strong>{video.title}</strong>
+        <strong>{(video.displayTitle || video.title)}</strong>
         <small>{meta}</small>
       </button>
       <button
@@ -4799,7 +4828,7 @@ function VideoTile({
 }
 
 function compareVideosByTitle(a: VideoAsset, b: VideoAsset) {
-  return a.title.localeCompare(b.title, undefined, { sensitivity: "base", numeric: true });
+  return (a.displayTitle || a.title).localeCompare(b.displayTitle || b.title, undefined, { sensitivity: "base", numeric: true });
 }
 
 function compareGamesByPlatform(a: GameAsset, b: GameAsset) {
@@ -4925,9 +4954,9 @@ function gamePlatformLabel(game: GameAsset) {
   }
 }
 
-function collectionCountLabel(item: Series) {
-  if (item.primaryType === "video") return `${item.bookCount} videos`;
-  return item.collectionType === "game_platform" ? `${item.bookCount} games` : `${item.bookCount} volumes`;
+function collectionCountLabel(item: Series, labels: Translation) {
+  if (item.primaryType === "video") return labels.videoCount(item.bookCount);
+  return item.collectionType === "game_platform" ? labels.gameCount(item.bookCount) : labels.volumeCount(item.bookCount);
 }
 
 function collectionThumbClass(item: Series) {
@@ -4945,20 +4974,12 @@ function collectionKind(item: Series, libraries: Library[]) {
   return "comic";
 }
 
-function loadedCollectionCountLabel(item: Series, bookCount: number, gameCount: number, videoCount: number) {
-  if (item.primaryType === "video") {
-    return `${videoCount} videos`;
-  }
-  if (item.collectionType === "game_platform") {
-    return `${gameCount} games`;
-  }
-  if (videoCount > 0) {
-    return `${bookCount} volumes · ${videoCount} videos`;
-  }
-  if (gameCount > 0) {
-    return `${bookCount} volumes · ${gameCount} games`;
-  }
-  return `${bookCount} of ${item.bookCount} volumes`;
+function loadedCollectionCountLabel(item: Series, bookCount: number, gameCount: number, videoCount: number, labels: Translation) {
+  if (item.primaryType === "video") return labels.videoCount(videoCount);
+  if (item.collectionType === "game_platform") return labels.gameCount(gameCount);
+  if (videoCount > 0) return `${labels.volumeCount(bookCount)} · ${labels.videoCount(videoCount)}`;
+  if (gameCount > 0) return `${labels.volumeCount(bookCount)} · ${labels.gameCount(gameCount)}`;
+  return labels.loadedVolumes(bookCount, item.bookCount);
 }
 
 function collectionInitials(title: string) {
@@ -4998,7 +5019,12 @@ function EpubFrame({
   useEffect(() => {
     applyEpubLayout();
     const timer = window.setTimeout(applyEpubLayout, 80);
-    return () => window.clearTimeout(timer);
+    const frame = iframeRef.current;
+    const stopObserving = frame ? observeEpubViewport(frame, applyEpubLayout) : undefined;
+    return () => {
+      window.clearTimeout(timer);
+      stopObserving?.();
+    };
   }, [pageMode, fontSize, theme, pagePosition, spineItem?.href]);
 
   function applyEpubLayout() {
@@ -5486,6 +5512,21 @@ const translations = {
     gameCollections: "游戏",
     videoCollections: "视频",
     libraries: "资源目录",
+    scanning: "扫描中",
+    job: "任务",
+    jobDetail: "任务详情",
+    jobStatus: "状态",
+    discovered: "发现",
+    indexed: "已索引",
+    skipped: "已跳过",
+    metadata: "元数据",
+    moved: "已移动",
+    events: "事件",
+    selectJob: "选择任务查看事件和错误。",
+    missing: "缺失",
+    settings: "设置", manageLibraries: "管理资源库", ready: "就绪",
+    volumeCount: (n: number) => `${n} 本`,
+    loadedVolumes: (n: number, total: number) => `已加载 ${n} / ${total} 本`,
     name: "名称",
     add: "添加",
     scan: "扫描",
@@ -5727,6 +5768,21 @@ const translations = {
     gameCollections: "遊戲",
     videoCollections: "影片",
     libraries: "資源目錄",
+    scanning: "掃描中",
+    job: "任務",
+    jobDetail: "任務詳情",
+    jobStatus: "狀態",
+    discovered: "發現",
+    indexed: "已索引",
+    skipped: "已跳過",
+    metadata: "中繼資料",
+    moved: "已移動",
+    events: "事件",
+    selectJob: "選擇任務查看事件和錯誤。",
+    missing: "缺少",
+    settings: "設定", manageLibraries: "管理資源庫", ready: "就緒",
+    volumeCount: (n: number) => `${n} 本`,
+    loadedVolumes: (n: number, total: number) => `已載入 ${n} / ${total} 本`,
     name: "名稱",
     add: "新增",
     scan: "掃描",
@@ -5968,6 +6024,21 @@ const translations = {
     gameCollections: "Games",
     videoCollections: "Videos",
     libraries: "Resource Directories",
+    scanning: "Scanning",
+    job: "Job",
+    jobDetail: "Job details",
+    jobStatus: "Status",
+    discovered: "Discovered",
+    indexed: "Indexed",
+    skipped: "Skipped",
+    metadata: "Metadata",
+    moved: "Moved",
+    events: "Events",
+    selectJob: "Select a job to inspect events and errors.",
+    missing: "Missing",
+    settings: "Settings", manageLibraries: "Manage libraries", ready: "Ready",
+    volumeCount: (n: number) => `${n} volumes`,
+    loadedVolumes: (n: number, total: number) => `Loaded ${n} / ${total} volumes`,
     name: "Name",
     add: "Add",
     scan: "Scan",
@@ -6209,6 +6280,21 @@ const translations = {
     gameCollections: "ゲーム",
     videoCollections: "ビデオ",
     libraries: "リソース",
+    scanning: "スキャン中",
+    job: "ジョブ",
+    jobDetail: "ジョブ詳細",
+    jobStatus: "状態",
+    discovered: "検出",
+    indexed: "登録済み",
+    skipped: "スキップ",
+    metadata: "メタデータ",
+    moved: "移動済み",
+    events: "イベント",
+    selectJob: "ジョブを選択してイベントとエラーを確認します。",
+    missing: "不足",
+    settings: "設定", manageLibraries: "ライブラリを管理", ready: "準備完了",
+    volumeCount: (n: number) => `${n} 冊`,
+    loadedVolumes: (n: number, total: number) => `読み込み済み ${n} / ${total} 冊`,
     name: "名前",
     add: "追加",
     scan: "スキャン",
@@ -6450,6 +6536,21 @@ const translations = {
     gameCollections: "게임",
     videoCollections: "비디오",
     libraries: "리소스",
+    scanning: "스캔 중",
+    job: "작업",
+    jobDetail: "작업 상세",
+    jobStatus: "상태",
+    discovered: "발견",
+    indexed: "색인 완료",
+    skipped: "건너뜀",
+    metadata: "메타데이터",
+    moved: "이동",
+    events: "이벤트",
+    selectJob: "작업을 선택하여 이벤트와 오류를 확인하세요.",
+    missing: "누락",
+    settings: "설정", manageLibraries: "라이브러리 관리", ready: "준비됨",
+    volumeCount: (n: number) => `${n} 권`,
+    loadedVolumes: (n: number, total: number) => `불러옴 ${n} / ${total} 권`,
     name: "이름",
     add: "추가",
     scan: "스캔",
@@ -6958,9 +7059,7 @@ function canResumeJob(job: ScanJob) {
   return job.status === "paused";
 }
 
-function readingProgress(book: Book) {
-  return Math.max(0, Math.min(100, Math.round((book.progressFraction || 0) * 100)));
-}
+
 
 function privateShelfMeta(book: Book, t: Translation) {
   const meta = privateMeta(book, t);
@@ -6970,7 +7069,7 @@ function privateShelfMeta(book: Book, t: Translation) {
 
 function gameMeta(game: GameAsset, t: Translation) {
   return [game.platform || game.format, game.region, game.romSetName, game.compatibility]
-    .filter(Boolean)
+    .filter(value => value && value.toLowerCase() !== "unknown")
     .join(" · ") || t.assetTypeGame;
 }
 
@@ -7102,4 +7201,18 @@ function validFinishedAt(value?: string) {
   if (!value || value.startsWith("0001-")) return null;
   const parsed = new Date(value).getTime();
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function jobStatusLabel(status: string, locale: Locale): string {
+  const states: Record<string, Record<Locale, string>> = {
+    idle: { zh: "空闲", zht: "閒置", en: "Idle", ja: "待機", ko: "유휴" },
+    queued: { zh: "排队中", zht: "排隊中", en: "Queued", ja: "待機中", ko: "대기 중" },
+    running: { zh: "运行中", zht: "執行中", en: "Running", ja: "実行中", ko: "실행 중" },
+    paused: { zh: "已暂停", zht: "已暫停", en: "Paused", ja: "一時停止", ko: "일시 중지" },
+    stopped: { zh: "已停止", zht: "已停止", en: "Stopped", ja: "停止", ko: "중지됨" },
+    completed: { zh: "已完成", zht: "已完成", en: "Completed", ja: "完了", ko: "완료" },
+    failed: { zh: "失败", zht: "失敗", en: "Failed", ja: "失敗", ko: "실패" },
+    cancelled: { zh: "已取消", zht: "已取消", en: "Cancelled", ja: "キャンセル済み", ko: "취소됨" },
+  };
+  return states[status]?.[locale] || status;
 }

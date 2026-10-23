@@ -1,10 +1,12 @@
 import { useState } from "react";
+import { videoPosterSource } from "./video-poster-cache";
 
 // All video browsing surfaces share the metadata artwork endpoint. Unlike the
 // legacy thumbnail endpoint, it never starts ffmpeg to generate a frame grab.
 export function VideoPoster({ videoId, revision = 0 }: { videoId: number; revision?: number }) {
-  const [mountedAt] = useState(() => Date.now());
-  const src = `/api/videos/${videoId}/artwork/poster?r=${revision}&view=${mountedAt}`;
+  // The endpoint revalidates with ETag / private,no-cache. A mount timestamp
+  // defeated that cache and downloaded the same poster on every navigation.
+  const src = videoPosterSource(videoId, revision);
   return <PosterImage key={src} src={src} />;
 }
 

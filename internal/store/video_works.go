@@ -222,7 +222,12 @@ func videoPage(limit, offset int) (int, int) {
 const videoWorkFrom = ` FROM video_works w JOIN video_work_details d ON d.work_id=w.id
  WHERE EXISTS(SELECT 1 FROM video_versions v JOIN video_file_links f ON f.version_id=v.id WHERE v.work_id=w.id)`
 const videoWorkAdded = `COALESCE((SELECT MAX(a.created_at) FROM video_versions v JOIN video_file_links f ON f.version_id=v.id JOIN videos a ON a.id=f.video_id WHERE v.work_id=w.id),w.created_at)`
-const videoWorkSelect = `SELECT w.id,w.library_id,w.kind,w.title,w.year,d.overview,d.provider,d.provider_id,
+
+// Movie cards and file rows resolve the same representative title without changing grouping keys.
+const videoWorkRepresentative = `(SELECT MIN(f.video_id) FROM video_versions v JOIN video_file_links f ON f.version_id=v.id WHERE v.work_id=w.id)`
+const videoWorkDisplayTitle = `CASE WHEN w.kind='movie' THEN COALESCE((SELECT ` + videoDisplayTitleSQL + ` FROM videos WHERE videos.id=` + videoWorkRepresentative + `),w.title) ELSE w.title END`
+const videoWorkDisplayYear = `COALESCE(NULLIF((SELECT json_extract(o.value_json,'$') FROM video_metadata_overrides o WHERE o.video_id=` + videoWorkRepresentative + ` AND o.field='year'),0),NULLIF(w.year,0),NULLIF((SELECT json_extract(m.local_json,'$.year') FROM video_metadata_inputs m WHERE m.video_id=` + videoWorkRepresentative + `),0),0)`
+const videoWorkSelect = `SELECT w.id,w.library_id,w.kind,` + videoWorkDisplayTitle + `,` + videoWorkDisplayYear + `,d.overview,d.provider,d.provider_id,
  (SELECT MIN(f.video_id) FROM video_versions v JOIN video_file_links f ON f.version_id=v.id WHERE v.work_id=w.id),
  (SELECT COUNT(DISTINCT f.video_id) FROM video_versions v JOIN video_file_links f ON f.version_id=v.id WHERE v.work_id=w.id),
  (SELECT COUNT(DISTINCT f.version_id) FROM video_versions v JOIN video_file_links f ON f.version_id=v.id WHERE v.work_id=w.id),
@@ -240,12 +245,12 @@ func (s *Store) VideoWorks(q, kind string, limit, offset int) (domain.VideoWorkP
 func (s *Store) VideoWorksFiltered(q, kind string, libraryID int64, sort string, limit, offset int) (domain.VideoWorkPage, error) {
 	limit, offset = videoPage(limit, offset)
 	p := domain.VideoWorkPage{Items: []domain.VideoWork{}, Limit: limit, Offset: offset}
-	where := videoWorkFrom + ` AND (?='' OR w.kind=?) AND (?='' OR instr(lower(w.title),lower(?))>0) AND (?=0 OR w.library_id=?)`
+	where := videoWorkFrom + ` AND (?='' OR w.kind=?) AND (?='' OR instr(lower(` + videoWorkDisplayTitle + `),lower(?))>0) AND (?=0 OR w.library_id=?)`
 	args := []any{kind, kind, q, q, libraryID, libraryID}
 	if err := s.db.QueryRow(`SELECT COUNT(*)`+where, args...).Scan(&p.Total); err != nil {
 		return p, err
 	}
-	order := `w.title COLLATE NOCASE,w.id`
+	order := videoWorkDisplayTitle + ` COLLATE NOCASE,w.id`
 	if sort == "recent" {
 		order = videoWorkAdded + ` DESC,w.id DESC`
 	}
@@ -289,7 +294,7 @@ func (s *Store) VideoWorkEpisodeFiles(id int64, season *int, episodeID int64, li
 	if err := s.db.QueryRow(`SELECT COUNT(*)`+from, args...).Scan(&p.Total); err != nil {
 		return p, err
 	}
-	rows, err := s.db.Query(`SELECT a.id,COALESCE((SELECT json_extract(o.value_json,'$') FROM video_metadata_overrides o WHERE o.video_id=a.id AND o.field='title'),a.title),v.label,s.number,e.number,a.format,s.id,e.id,v.id`+from+` ORDER BY s.number,e.number,v.label,a.id LIMIT ? OFFSET ?`, append(args, limit, offset)...)
+	rows, err := s.db.Query(`SELECT a.id,`+strings.ReplaceAll(videoDisplayTitleSQL, "videos.", "a.")+`,v.label,s.number,e.number,a.format,s.id,e.id,v.id`+from+` ORDER BY s.number,e.number,v.label,a.id LIMIT ? OFFSET ?`, append(args, limit, offset)...)
 	if err != nil {
 		return p, err
 	}

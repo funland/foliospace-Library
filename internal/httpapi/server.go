@@ -49,6 +49,7 @@ func NewWithOptions(service *service.Service, static http.Handler, options Optio
 
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
+	s.registerComicRoutes(mux)
 	mux.HandleFunc("/api/auth/status", s.handleAuthStatus)
 	mux.HandleFunc("/api/auth/check", s.handleAuthCheck)
 	mux.HandleFunc("/api/auth/logout", s.handleAuthLogout)
@@ -112,7 +113,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/errors", s.handleErrors)
 	mux.HandleFunc("/favicon.ico", s.handleFavicon)
 	mux.HandleFunc("/", s.handleStatic)
-	return s.authMiddleware(mux)
+	return boundedRequestTimings(s.authMiddleware(mux), log.Printf)
 }
 
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
@@ -586,7 +587,7 @@ func (s *Server) handleClientHome(w http.ResponseWriter, r *http.Request) {
 		WantToRead:      clientBooks(wantBooks),
 		GameShelf:       clientGames(gameShelf),
 		VideoShelf:      clientVideos(videoShelf),
-		Collections:     clientCollections(collections),
+		Collections:     s.clientCollections(collections),
 	})
 }
 
@@ -1563,7 +1564,7 @@ func (s *Server) clientBookManifest(bookID int64, profileID int64) (clientBookMa
 	out := clientBookManifestResponse{
 		Book:              clientBookItem(book),
 		Format:            book.Format,
-		CoverURL:          clientCoverURL(book.ID),
+		CoverURL:          clientCoverURL(book.ID) + bookArtworkRevision(book),
 		FileURL:           clientBookDownloadURL(book.ID),
 		Progress:          progress,
 		ReaderModes:       readerModesForBookFormat(book.Format),
@@ -1581,7 +1582,7 @@ func (s *Server) clientBookManifest(bookID int64, profileID int64) (clientBookMa
 			Spine:           manifest.Spine,
 			TOC:             manifest.TOC,
 			ResourceBaseURL: fmt.Sprintf("/api/books/%d/epub/resources/", book.ID),
-			CoverURL:        clientCoverURL(book.ID),
+			CoverURL:        clientCoverURL(book.ID) + bookArtworkRevision(book),
 		}
 		return out, nil
 	}
@@ -1742,11 +1743,11 @@ func (s *Server) handleSeries(w http.ResponseWriter, r *http.Request) {
 			Direction:   r.URL.Query().Get("direction"),
 			Query:       r.URL.Query().Get("q"),
 		})
-		writeJSONOrError(w, clientCollectionListPage(page), err)
+		writeJSONOrError(w, s.clientCollectionListPage(page), err)
 		return
 	}
 	items, err := s.service.ListSeriesForProfile(s.requestProfileID(r))
-	writeJSONOrError(w, clientCollections(items), err)
+	writeJSONOrError(w, s.clientCollections(items), err)
 }
 
 func (s *Server) handleSeriesAction(w http.ResponseWriter, r *http.Request) {
@@ -2829,6 +2830,7 @@ type clientVideo struct {
 	ID                 int64   `json:"id"`
 	AssetType          string  `json:"assetType"`
 	Title              string  `json:"title"`
+	DisplayTitle       string  `json:"displayTitle"`
 	Format             string  `json:"format"`
 	Size               int64   `json:"size"`
 	DurationSeconds    float64 `json:"durationSeconds"`
@@ -2897,7 +2899,14 @@ type clientEPUBOpenInfo struct {
 	CoverURL        string                 `json:"coverUrl"`
 }
 
-func clientCollections(collections []domain.Series) []clientCollection {
+func (s *Server) clientCollections(collections []domain.Series) []clientCollection {
+	ids := make([]int64, 0, len(collections))
+	for _, c := range collections {
+		if c.CoverBookID > 0 {
+			ids = append(ids, c.CoverBookID)
+		}
+	}
+	revisions := s.service.BookArtworkRevisions(ids)
 	out := make([]clientCollection, 0, len(collections))
 	for _, collection := range collections {
 		item := clientCollection{
@@ -2915,16 +2924,16 @@ func clientCollections(collections []domain.Series) []clientCollection {
 		}
 		if collection.CoverBookID > 0 {
 			item.ThumbnailStatus = "pending"
-			item.ThumbnailURL = clientThumbnailURL(collection.CoverBookID, "small")
+			item.ThumbnailURL = clientThumbnailURL(collection.CoverBookID, "small") + revisions[collection.CoverBookID]
 		}
 		out = append(out, item)
 	}
 	return out
 }
 
-func clientCollectionListPage(page domain.CollectionListPage) clientCollectionListPageResponse {
+func (s *Server) clientCollectionListPage(page domain.CollectionListPage) clientCollectionListPageResponse {
 	return clientCollectionListPageResponse{
-		Items:   clientCollections(page.Items),
+		Items:   s.clientCollections(page.Items),
 		Total:   page.Total,
 		Limit:   page.Limit,
 		Offset:  page.Offset,
@@ -2955,7 +2964,7 @@ func bookListPageWithThumbnails(page domain.BookListPage) domain.BookListPage {
 
 func bookWithThumbnail(book domain.Book) domain.Book {
 	book.ThumbnailStatus = thumbnailStatus(book)
-	book.ThumbnailURL = clientThumbnailURL(book.ID, "small")
+	book.ThumbnailURL = clientThumbnailURL(book.ID, "small") + bookArtworkRevision(book)
 	return book
 }
 
@@ -3365,6 +3374,7 @@ func clientVideoItem(video domain.VideoAsset) clientVideo {
 		ID:                 video.ID,
 		AssetType:          "video",
 		Title:              video.Title,
+		DisplayTitle:       video.DisplayTitle,
 		Format:             video.Format,
 		Size:               video.Size,
 		DurationSeconds:    video.DurationSeconds,
@@ -3440,9 +3450,9 @@ func clientBookItem(book domain.Book) clientBook {
 		Format:               book.Format,
 		PageCount:            book.PageCount,
 		CoverStatus:          book.CoverStatus,
-		CoverURL:             clientCoverURL(book.ID),
+		CoverURL:             clientCoverURL(book.ID) + bookArtworkRevision(book),
 		ThumbnailStatus:      thumbnailStatus(book),
-		ThumbnailURL:         clientThumbnailURL(book.ID, "small"),
+		ThumbnailURL:         clientThumbnailURL(book.ID, "small") + bookArtworkRevision(book),
 		ManifestURL:          fmt.Sprintf("/api/client/books/%d/manifest", book.ID),
 		DownloadURL:          clientBookDownloadURL(book.ID),
 		Analyzed:             book.Analyzed,
@@ -3497,4 +3507,11 @@ func privateStateFromBook(book domain.Book) domain.BookPrivateState {
 		Tags:     book.Tags,
 		Summary:  book.Summary,
 	}
+}
+
+func bookArtworkRevision(book domain.Book) string {
+	if book.UpdatedAt.IsZero() {
+		return ""
+	}
+	return fmt.Sprintf("&r=%d", book.UpdatedAt.UnixNano())
 }

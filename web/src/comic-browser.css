@@ -1,0 +1,16 @@
+.comicBrowser{margin:16px 0 24px;min-width:0}.comicTools,.comicBreadcrumbs,.comicPagination{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:12px 0}.comicTools form{display:flex;gap:8px;flex:1;min-width:180px}.comicTools input{width:100%;min-width:80px}.comicBreadcrumbs button{max-width:100%;overflow-wrap:anywhere}.comicNodes{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}.comicNodes article{min-width:0;border:1px solid var(--line,#ddd);border-radius:12px;padding:8px}.comicNode{display:flex;text-align:left;align-items:center;width:100%;gap:12px;background:transparent;border:0;padding:0}.comicNodeCover{width:60px;min-width:60px;height:84px;display:grid;place-items:center;overflow:hidden;border-radius:6px;background:var(--soft,#ddd)}.comicNodeCover img{width:100%;height:100%;object-fit:cover}.comicNodeText{min-width:0;display:grid;gap:5px}.comicNodeText strong{overflow-wrap:anywhere}.comicNodes details{font-size:12px;margin-top:8px}.comicNodes code{display:block;overflow-wrap:anywhere;white-space:normal}.comicRules p{max-width:80ch}.comicRule{display:flex;gap:12px;align-items:end;margin:12px 0}.comicRule label{display:grid;gap:6px;flex:1;min-width:0}.comicRule input{width:100%;min-width:0}.comicSamples>div{padding:8px 0;border-bottom:1px solid var(--line,#ddd);overflow-wrap:anywhere}.comicSamples span{opacity:.7}.collectionContent .collectionBack{margin-bottom:16px}@media(max-width:600px){.comicNodes{grid-template-columns:1fr}.comicRule{flex-wrap:wrap}.comicRule label{flex-basis:100%}.comicTools select{max-width:100%}}
+
+.collectionDetailActions{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 16px}.collectionDetailActions button[aria-pressed="true"]{background:var(--accent,#337c76);color:white}
+
+.libraryDashboard .collectionContent {
+  grid-column: 1 / -1;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+}
+.collectionContent .collectionBack {
+  justify-self: start;
+  margin: 16px 16px 8px;
+}
+.collectionContent .collectionDetailActions {
+  align-items: center;
+  margin: 0 16px 8px;
+}

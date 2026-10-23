@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { request } from "./api";
+import { invalidateVideoPoster } from "./video-poster-cache";
 import { message, type Metadata, type Job } from "./video-library-types";
 
 export function VideoMetadataEditor({ videoId, zh, onClose, onChange }: { videoId: number; zh: boolean; onClose: () => void; onChange: () => void }) {
@@ -21,12 +22,12 @@ export function VideoMetadataEditor({ videoId, zh, onClose, onChange }: { videoI
   useEffect(() => {
     if (!job || !["queued", "running"].includes(job.status)) return;
     const abort = new AbortController();
-    const timer = window.setTimeout(() => { request<Job>(`/api/video-metadata-jobs/${job.id}`, { signal: abort.signal }).then(j => { if (abort.signal.aborted) return; setJob(j); if (j.status === "ready" && j.candidates.length) setCandidateJob(j); if (!["queued", "running"].includes(j.status)) { void request<Metadata>(`${base}/metadata`, { signal: abort.signal }).then(setMeta).catch(() => {}); onChange(); } }).catch(e => { if (!abort.signal.aborted) setError(message(e)); }); }, 1500);
+    const timer = window.setTimeout(() => { request<Job>(`/api/video-metadata-jobs/${job.id}`, { signal: abort.signal }).then(j => { if (abort.signal.aborted) return; setJob(j); if (j.status === "ready" && j.candidates.length) setCandidateJob(j); if (!["queued", "running"].includes(j.status)) { void request<Metadata>(`${base}/metadata`, { signal: abort.signal }).then(setMeta).catch(() => {}); invalidateVideoPoster(videoId); onChange(); } }).catch(e => { if (!abort.signal.aborted) setError(message(e)); }); }, 1500);
     return () => { abort.abort(); window.clearTimeout(timer); };
   }, [job, base, onChange]);
   async function action(fn: () => Promise<unknown>) {
     setBusy(true); setError("");
-    try { await fn(); setMeta(await request<Metadata>(`${base}/metadata`)); onChange(); }
+    try { await fn(); invalidateVideoPoster(videoId); onChange(); setMeta(await request<Metadata>(`${base}/metadata`)); }
     catch (e) { setError(message(e)); } finally { setBusy(false); }
   }
   function matchBody() { return { title: matchTitle, kind, year: Number(year), overview, workId: Number(workId || 0), generation: meta?.generation, version, ...(kind === "series" ? { season: Number(season), episode: Number(episode) } : {}) }; }

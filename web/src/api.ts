@@ -143,6 +143,7 @@ export type VideoAsset = {
   id: number;
   assetType?: "video";
   title: string;
+  displayTitle?: string;
   format: string;
   size: number;
   durationSeconds: number;

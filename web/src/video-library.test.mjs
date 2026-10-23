@@ -7,6 +7,7 @@ const editor = readFileSync(new URL('./VideoMetadataEditor.tsx', import.meta.url
 const css = readFileSync(new URL('./video-library.css', import.meta.url), 'utf8');
 const app = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
 const poster = readFileSync(new URL('./VideoPoster.tsx', import.meta.url), 'utf8');
+const posterCache = readFileSync(new URL('./video-poster-cache.ts', import.meta.url), 'utf8');
 const styles = readFileSync(new URL('./styles.css', import.meta.url), 'utf8');
 const homeSource = readFileSync(new URL('./home-library.ts', import.meta.url), 'utf8');
 const homeJS = ts.transpileModule(homeSource, { compilerOptions: { module: ts.ModuleKind.ES2020 } }).outputText;
@@ -29,7 +30,7 @@ test('stale video-directory records never enter reading collections, even in mix
   }
 });
 test('home replaces BOTH legacy collections and volume wall with shared video works', () => {
-  const home = app.slice(app.indexOf('{homeSections.video && ('), app.indexOf('{view === "favorites" && ('));
+  const home = app.slice(app.indexOf('{!selectedSeries && homeSections.video && ('), app.indexOf('{view === "favorites" && ('));
   assert.match(home, /<VideoLibrary presentation="home"/);
   assert.match(home, /setSelectedVideo\(video\)/);
   assert.match(home, /openVideoCatalog\(\)/);
@@ -48,11 +49,28 @@ test('home and catalog use shared posters, never video frame thumbnails', () => 
   assert.doesNotMatch(tile, /thumbnailUrl|thumbnailFailed|Now Showing/);
   assert.match(library, /<VideoPoster videoId=\{w.videoId\} revision=\{revision\}/);
   assert.match(library, /<VideoPoster videoId=\{id\} revision=\{revision\}/);
-  assert.match(poster, /\/artwork\/poster/);
+  assert.match(posterCache, /\/artwork\/poster/);
   assert.doesNotMatch(poster, /\/thumbnail|ffmpeg\(/);
   assert.match(poster, /key=\{src\}/);
-  assert.match(poster, /useState\(\(\) => Date.now\(\)\)/);
+  assert.doesNotMatch(poster, /Date.now|&view=/);
+  assert.match(posterCache, /poster\?r=\$\{revision\}/);
   assert.match(styles, /\.videoCover \{[\s\S]*?aspect-ratio: 2 \/ 3/);
+});
+test('poster URLs survive remount but explicit edits and refresh revisions invalidate them', async () => {
+  const js = ts.transpileModule(posterCache, { compilerOptions: { module: ts.ModuleKind.ES2020 } }).outputText;
+  const { videoPosterSource, invalidateVideoPoster, invalidateAllVideoPosters } = await import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`);
+  const original = videoPosterSource(1);
+  assert.equal(videoPosterSource(1), original);
+  invalidateVideoPoster(2);
+  assert.equal(videoPosterSource(1), original);
+  invalidateVideoPoster(1);
+  assert.notEqual(videoPosterSource(1), original);
+  assert.notEqual(videoPosterSource(1, 1), videoPosterSource(1));
+  const beforeReset = [videoPosterSource(1), videoPosterSource(2)];
+  invalidateAllVideoPosters();
+  assert.notEqual(videoPosterSource(1), beforeReset[0]);
+  assert.notEqual(videoPosterSource(2), beforeReset[1]);
+  assert.match(editor, /await fn\(\); invalidateVideoPoster\(videoId\); onChange\(\)/);
 });
 test('home recent video shelf uses existing newest-first data and hides stale books in video-only libraries', () => {
   assert.match(app, /setVideoShelf\(arrayOrEmpty\(home.videoShelf\)\)/);

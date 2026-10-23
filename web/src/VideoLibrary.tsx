@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { request, type VideoAsset } from "./api";
 import { VideoMetadataEditor } from "./VideoMetadataEditor";
 import { VideoPoster } from "./VideoPoster";
+import { invalidateAllVideoPosters } from "./video-poster-cache";
 import { message, type Page, type Work, type WorkFile } from "./video-library-types";
 import "./video-library.css";
 
@@ -59,7 +60,7 @@ export function VideoLibrary({ locale, onPlay, presentation = "catalog" }: { loc
           <VideoPoster videoId={w.videoId} revision={revision} /><strong>{w.title}</strong><small>{w.year || "—"} · {w.kind === "series" ? text("Series", "剧集") : text("Movie", "电影")}</small>
         </button>; }
         const f = item as WorkFile; const v = item as VideoAsset; const id = work ? f.videoId : v.id;
-        return <article key={id}><VideoPoster videoId={id} revision={revision} /><div><strong>{item.title}</strong>
+        return <article key={id}><VideoPoster videoId={id} revision={revision} /><div><strong>{work ? f.title : v.displayTitle || v.title}</strong>
           <small>{work ? `${f.season !== null ? `S${f.season} E${f.episode} · ` : ""}${f.version}` : v.format}</small>
           <button onClick={() => void play(id)}>{text("Play", "播放")}</button> <a href={`/api/client/videos/${id}/file`}>{text("Original file", "原文件")}</a> <button onClick={() => setEditing(id)}>{text("Manage metadata", "管理元数据")}</button>
         </div></article>;
@@ -72,7 +73,7 @@ export function VideoLibrary({ locale, onPlay, presentation = "catalog" }: { loc
     </nav>
     {editing !== null ? <VideoMetadataEditor key={editing} videoId={editing} zh={zh} onClose={() => setEditing(null)} onChange={changed} /> : null}
     <footer><a href="https://www.themoviedb.org" target="_blank" rel="noreferrer"><img src="/tmdb.svg" width="130" height="32" alt="The Movie Database (TMDB)" /></a><p>This product uses the TMDB API but is not endorsed or certified by TMDB.</p><small>{text("Online matching is optional. Bring your own TMDB read token; commercial permission is separate. No movies are provided or downloaded by FolioSpace.", "在线匹配为可选功能，需自备 TMDB 读取令牌；商业授权需另行核实。FolioSpace 不提供或下载影片。")}</small>
-      {presentation === "catalog" ? <p><button onClick={async () => { if (!window.confirm(text("Clear all TMDB metadata, artwork and candidates? Your files, local sidecars and manual fields will be kept.", "清除所有 TMDB 元数据、图片和候选？保留原文件、本地附属文件及人工字段。"))) return; try { await request("/api/videos/metadata/provider", { method: "DELETE" }); setWork(null); changed(); } catch(e) { setError(message(e)); } }}>{text("Clear TMDB cache", "清除 TMDB 缓存")}</button></p> : null}
+      {presentation === "catalog" ? <p><button onClick={async () => { if (!window.confirm(text("Clear all TMDB metadata, artwork and candidates? Your files, local sidecars and manual fields will be kept.", "清除所有 TMDB 元数据、图片和候选？保留原文件、本地附属文件及人工字段。"))) return; try { await request("/api/videos/metadata/provider", { method: "DELETE" }); invalidateAllVideoPosters(); setWork(null); changed(); } catch(e) { setError(message(e)); } }}>{text("Clear TMDB cache", "清除 TMDB 缓存")}</button></p> : null}
     </footer>
   </section>;
 }

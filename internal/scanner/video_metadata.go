@@ -16,6 +16,7 @@ import (
 const maxVideoNFOBytes = 1 << 20
 
 var videoYearPattern = regexp.MustCompile(`^(.*?)\s*[\(\[]((?:19|20)\d{2})[\)\]]`)
+var videoReleaseYearPattern = regexp.MustCompile(`(?:19|20)\d{2}`)
 var videoEpisodePattern = regexp.MustCompile(`(?i)^(.*?)\s*[ ._-]*s(\d{1,3})e(\d{1,4})(?:\D|$)`)
 
 func readVideoLocalMetadata(path string) (domain.VideoLocalMetadata, string, error) {
@@ -24,7 +25,16 @@ func readVideoLocalMetadata(path string) (domain.VideoLocalMetadata, string, err
 func readVideoLocalMetadataWithin(path, root string) (domain.VideoLocalMetadata, string, error) {
 	stem := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	m := domain.VideoLocalMetadata{Title: stem, Kind: "unknown", Source: "filename"}
-	if p := videoYearPattern.FindStringSubmatch(stem); p != nil {
+	p := videoYearPattern.FindStringSubmatch(stem)
+	if p == nil {
+		for _, match := range videoReleaseYearPattern.FindAllStringIndex(stem, -1) {
+			start, end := match[0], match[1]
+			if start > 1 && strings.ContainsRune(" ._-", rune(stem[start-1])) && (end == len(stem) || strings.ContainsRune(" ._-", rune(stem[end]))) {
+				p = []string{stem, strings.TrimRight(stem[:start], " ._-"), stem[start:end]}
+			}
+		}
+	}
+	if p != nil {
 		m.Kind = "movie"
 		m.Title = strings.TrimSpace(p[1])
 		m.Year, _ = strconv.Atoi(p[2])
@@ -33,7 +43,8 @@ func readVideoLocalMetadataWithin(path, root string) (domain.VideoLocalMetadata,
 		season, _ := strconv.Atoi(p[2])
 		episode, _ := strconv.Atoi(p[3])
 		m.Kind = "episode"
-		m.ShowTitle = strings.TrimSpace(p[1])
+		m.Title = stem
+		m.ShowTitle = cleanVideoFilenameTitle(p[1])
 		if m.ShowTitle == "" {
 			dir := filepath.Dir(path)
 			if regexp.MustCompile(`(?i)^(season[ ._-]*|s)\d+$`).MatchString(filepath.Base(dir)) {
@@ -44,8 +55,9 @@ func readVideoLocalMetadataWithin(path, root string) (domain.VideoLocalMetadata,
 		m.Season = &season
 		m.Episode = &episode
 	}
+	m.Title = cleanVideoFilenameTitle(m.Title)
 	h := sha256.New()
-	io.WriteString(h, "video-local-v2\x00"+stem+"\x00"+m.ShowTitle)
+	io.WriteString(h, "video-local-v4\x00"+stem+"\x00"+m.ShowTitle)
 	candidates := []string{strings.TrimSuffix(path, filepath.Ext(path)) + ".nfo"}
 	// Folder movie.nfo is ambiguous when a directory contains multiple videos.
 	folderNFO := filepath.Join(filepath.Dir(path), "movie.nfo")
@@ -168,6 +180,33 @@ func readVideoLocalMetadataWithin(path, root string) (domain.VideoLocalMetadata,
 	}
 	inheritVideoSeries(path, root, &m, h)
 	return m, hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// Only filename-derived titles use this cleanup; NFO and user/provider titles
+// retain their punctuation. A bare "Sample" or "Sample Movie" is a title.
+func cleanVideoFilenameTitle(title string) string {
+	original := title
+	title = strings.TrimSpace(title)
+	const sample = "sample"
+	if len(title) > len(sample) && strings.EqualFold(title[:len(sample)], sample) && strings.ContainsRune("._-", rune(title[len(sample)])) {
+		if rest := strings.TrimLeft(title[len(sample)+1:], " ._-"); rest != "" {
+			title = rest
+		}
+	}
+	var cleaned strings.Builder
+	for i := 0; i < len(title); i++ {
+		// Keep decimal/numeric-title punctuation, for example "3.14".
+		numericDot := i > 0 && i+1 < len(title) && title[i-1] >= '0' && title[i-1] <= '9' && title[i+1] >= '0' && title[i+1] <= '9'
+		if title[i] == '.' && !numericDot {
+			cleaned.WriteByte(' ')
+		} else {
+			cleaned.WriteByte(title[i])
+		}
+	}
+	if result := strings.Join(strings.Fields(cleaned.String()), " "); result != "" {
+		return result
+	}
+	return original
 }
 
 func (s *Scanner) refreshVideoLocalMetadata(path string) error {

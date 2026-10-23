@@ -3018,6 +3018,9 @@ func (s *Service) OpenCover(bookID int64) (PageStream, error) {
 	if book.FilePath == "" {
 		return PageStream{}, fmt.Errorf("book has no indexed file")
 	}
+	if cover, err := s.calibreCover(book); err == nil {
+		return cover, nil
+	}
 	if book.Format == "epub" {
 		body, contentType, err := archive.OpenEPUBCover(book.FilePath)
 		if err != nil {

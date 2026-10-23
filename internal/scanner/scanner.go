@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha1"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -29,6 +30,7 @@ import (
 	"unicode/utf8"
 
 	"foliospace-reader/internal/archive"
+	"foliospace-reader/internal/bookmeta"
 	"foliospace-reader/internal/domain"
 	"foliospace-reader/internal/launchcatalog"
 	"foliospace-reader/internal/naomi2catalog"
@@ -37,6 +39,7 @@ import (
 )
 
 type Scanner struct {
+	bookIndexMu     sync.Mutex
 	store           *store.Store
 	workerCount     func() int
 	completionHook  func(domain.Library, domain.ScanJob)
@@ -46,9 +49,11 @@ type Scanner struct {
 }
 
 type scanScope struct {
-	rootPath       string
-	fullScan       bool
-	deferPageIndex bool
+	rootPath         string
+	fullScan         bool
+	deferPageIndex   bool
+	bookMetadata     *bookmeta.Resolver
+	metadataWarnings *sync.Map
 }
 
 type scanDirState struct {
@@ -177,6 +182,8 @@ func (s *Scanner) RunRecentScanJobPath(library domain.Library, job domain.ScanJo
 }
 
 func (s *Scanner) runScanJob(library domain.Library, job domain.ScanJob, scope scanScope) (domain.ScanJob, error) {
+	scope.bookMetadata = bookmeta.NewResolver(library.RootPath)
+	scope.metadataWarnings = &sync.Map{}
 	_ = s.store.AddJobEvent(job.ID, "info", "scan started")
 	_ = s.store.AddJobEvent(job.ID, "info", "walking "+scope.rootPath)
 
@@ -278,6 +285,33 @@ func (s *Scanner) runScanJob(library domain.Library, job domain.ScanJob, scope s
 			_ = s.store.UpdateScanJob(job)
 			return nil
 		}
+		if _, unchanged := s.unchangedMetadataOnlyFile(fileIndexes, path, info, ext); unchanged {
+			if metadata, found, metadataErr := scope.bookMetadata.Lookup(path); found || metadataErr != nil {
+				if found {
+					result, err := s.indexResolvedFileMetadata(library, path, info, ext, importedBookMetadata(path, metadata))
+					if err != nil {
+						metadataErr = err
+						found = false
+					} else {
+						job.SkippedFiles++
+						if result.MetadataUpdated {
+							job.MetadataUpdatedFiles++
+						}
+						if result.Reclassified {
+							job.ReclassifiedFiles++
+						}
+					}
+				}
+				if metadataErr != nil {
+					s.recordBookMetadataWarning(job.ID, scope, metadataErr)
+					if !found {
+						job.ErrorCount++
+					}
+				}
+				_ = s.store.UpdateScanJob(job)
+				return nil
+			}
+		}
 		if ext != ".epub" {
 			if index, ok := s.unchangedMetadataOnlyFile(fileIndexes, path, info, ext); ok && canSkipUnchangedBook(library, path, index, ext) {
 				if err := s.cleanupStaleNonBookAssets(path); err != nil {
@@ -306,7 +340,7 @@ func (s *Scanner) runScanJob(library domain.Library, job domain.ScanJob, scope s
 				_ = s.store.UpdateScanJob(job)
 				return nil
 			}
-			result, err := s.indexFileMetadata(library, path, info, ext)
+			result, err := s.indexFileMetadata(library, path, info, ext, scope.bookMetadata)
 			if err != nil {
 				job.ErrorCount++
 				_ = s.recordPathError(library.ID, job.ID, path, domain.ErrorUnknownIO, err.Error())
@@ -408,6 +442,8 @@ func (s *Scanner) runScanJob(library domain.Library, job domain.ScanJob, scope s
 }
 
 func (s *Scanner) runRecentScanJob(library domain.Library, job domain.ScanJob, scope scanScope, limit int) (domain.ScanJob, error) {
+	scope.bookMetadata = bookmeta.NewResolver(library.RootPath)
+	scope.metadataWarnings = &sync.Map{}
 	limit = NormalizeRecentScanLimit(limit)
 	scope.fullScan = false
 	scope.deferPageIndex = true
@@ -416,6 +452,14 @@ func (s *Scanner) runRecentScanJob(library domain.Library, job domain.ScanJob, s
 
 	dirStates := map[string]*scanDirState{}
 	fileIndexes, _ := s.store.ListFileIndexesByLibrary(library.ID)
+	// Existing sidecars can change without a directory or book mtime change.
+	// Refresh them independently of directory pruning and the newest-file limit.
+	if err := s.refreshRecentBookMetadata(library, &job, scope, fileIndexes); err != nil {
+		if errors.Is(err, errScanPaused) || errors.Is(err, errScanCancelled) {
+			return job, nil
+		}
+		return job, err
+	}
 	directoryIndexes, _ := s.store.ListScanDirectoriesByLibrary(library.ID)
 	candidates := make([]recentScanCandidate, 0, limit)
 	visitedDirs := 0
@@ -878,6 +922,35 @@ func (s *Scanner) processScanTask(library domain.Library, jobID int64, task scan
 		})
 		return
 	}
+	if _, unchanged := s.unchangedMetadataOnlyFile(fileIndexes, task.path, task.info, task.ext); unchanged && scope.bookMetadata != nil {
+		if metadata, found, metadataErr := scope.bookMetadata.Lookup(task.path); found || metadataErr != nil {
+			if found {
+				result, err := s.indexResolvedFileMetadata(library, task.path, task.info, task.ext, importedBookMetadata(task.path, metadata))
+				if err != nil {
+					metadataErr = err
+					found = false
+				} else {
+					updateJob(func(job *domain.ScanJob) {
+						setCurrent(job)
+						job.SkippedFiles++
+						if result.MetadataUpdated {
+							job.MetadataUpdatedFiles++
+						}
+						if result.Reclassified {
+							job.ReclassifiedFiles++
+						}
+					})
+				}
+			}
+			if metadataErr != nil {
+				s.recordBookMetadataWarning(jobID, scope, metadataErr)
+				if !found {
+					updateJob(func(job *domain.ScanJob) { setCurrent(job); job.ErrorCount++ })
+				}
+			}
+			return
+		}
+	}
 	if task.ext != ".epub" {
 		if index, ok := s.unchangedMetadataOnlyFile(fileIndexes, task.path, task.info, task.ext); ok && canSkipUnchangedBook(library, task.path, index, task.ext) {
 			if err := s.cleanupStaleNonBookAssets(task.path); err != nil {
@@ -904,7 +977,7 @@ func (s *Scanner) processScanTask(library domain.Library, jobID int64, task scan
 			})
 			return
 		}
-		result, err := s.indexFileMetadata(library, task.path, task.info, task.ext)
+		result, err := s.indexFileMetadata(library, task.path, task.info, task.ext, scope.bookMetadata)
 		if err != nil {
 			s.recordTaskError(library.ID, jobID, task.path, domain.ErrorUnknownIO, "metadata update failed: ", err, updateJob)
 			return
@@ -1400,8 +1473,8 @@ func canSkipUnchangedBook(library domain.Library, path string, index store.FileI
 	return strings.TrimSpace(index.Book.Creator) != "" || strings.TrimSpace(index.Book.Description) != ""
 }
 
-func (s *Scanner) indexFile(library domain.Library, jobID int64, path string, info fs.FileInfo, ext string) (indexedBookResult, error) {
-	result, err := s.indexFileMetadata(library, path, info, ext)
+func (s *Scanner) indexFile(library domain.Library, jobID int64, path string, info fs.FileInfo, ext string, resolver *bookmeta.Resolver) (indexedBookResult, error) {
+	result, err := s.indexFileMetadata(library, path, info, ext, resolver)
 	if err != nil {
 		return result, err
 	}
@@ -1417,13 +1490,18 @@ func (s *Scanner) indexFile(library domain.Library, jobID int64, path string, in
 }
 
 func (s *Scanner) indexScanFile(library domain.Library, jobID int64, path string, info fs.FileInfo, ext string, scope scanScope) (indexedBookResult, error) {
+	if scope.bookMetadata != nil {
+		if _, _, err := scope.bookMetadata.Lookup(path); err != nil {
+			s.recordBookMetadataWarning(jobID, scope, err)
+		}
+	}
 	if scope.deferPageIndex {
 		if ext != ".epub" {
-			return s.indexBasicFileMetadata(library, path, info, ext)
+			return s.indexBasicFileMetadata(library, path, info, ext, scope.bookMetadata)
 		}
-		return s.indexFileMetadata(library, path, info, ext)
+		return s.indexFileMetadata(library, path, info, ext, scope.bookMetadata)
 	}
-	return s.indexFile(library, jobID, path, info, ext)
+	return s.indexFile(library, jobID, path, info, ext, scope.bookMetadata)
 }
 
 func (s *Scanner) unchangedMetadataOnlyFile(fileIndexes map[string]store.FileIndex, path string, info fs.FileInfo, ext string) (store.FileIndex, bool) {
@@ -4128,18 +4206,40 @@ type indexedBookResult struct {
 	Reclassified    bool
 }
 
-func (s *Scanner) indexFileMetadata(library domain.Library, path string, info fs.FileInfo, ext string) (indexedBookResult, error) {
+func (s *Scanner) indexFileMetadata(library domain.Library, path string, info fs.FileInfo, ext string, resolver *bookmeta.Resolver) (indexedBookResult, error) {
+	if resolver != nil {
+		metadata, found, err := resolver.Lookup(path)
+		if found {
+			return s.indexResolvedFileMetadata(library, path, info, ext, importedBookMetadata(path, metadata))
+		}
+		if err != nil {
+			if _, lookupErr := s.store.FileIndexByPath(path); !errors.Is(lookupErr, sql.ErrNoRows) {
+				return indexedBookResult{}, err
+			}
+		}
+	}
+	metadata, err := bookMetadataForPath(path, ext)
+	if err != nil {
+		return indexedBookResult{}, err
+	}
+	return s.indexResolvedFileMetadata(library, path, info, ext, metadata)
+}
+
+func (s *Scanner) indexResolvedFileMetadata(library domain.Library, path string, info fs.FileInfo, ext string, metadata bookMetadata) (indexedBookResult, error) {
+	// Title disambiguation can rename another book. Serialize that decision with
+	// the identity update so concurrent formats cannot collapse distinct books.
+	s.bookIndexMu.Lock()
+	defer s.bookIndexMu.Unlock()
 	relPath, err := filepath.Rel(library.RootPath, path)
 	if err != nil {
 		return indexedBookResult{}, fmt.Errorf("relative path: %w", err)
 	}
 
 	seriesTitle, seriesDirectoryPath := seriesIdentityForRelPath(library.RootPath, relPath)
-	metadata, err := bookMetadataForPath(path, ext)
-	if err != nil {
-		return indexedBookResult{}, err
+	if strings.EqualFold(strings.TrimSpace(library.AssetType), "comic") {
+		metadata.DirectoryCollection = true
 	}
-	if metadata.Creator != "" {
+	if metadata.Creator != "" && !metadata.DirectoryCollection {
 		seriesTitle = metadata.Creator
 		seriesDirectoryPath = filepath.ToSlash(filepath.Dir(relPath))
 		if seriesDirectoryPath == "." || seriesDirectoryPath == "/" {
@@ -4147,6 +4247,10 @@ func (s *Scanner) indexFileMetadata(library domain.Library, path string, info fs
 		}
 	}
 	format := strings.TrimPrefix(ext, ".")
+	existing, existingErr := s.store.FileIndexByPath(path)
+	if existingErr == nil && existing.File.Size == info.Size() && existing.File.Ext == ext && existing.File.MTime.Equal(info.ModTime()) && s.importedBookUnchanged(existing, metadata, seriesTitle) {
+		return indexedBookResult{Book: existing.Book}, nil
+	}
 
 	series, err := s.store.UpsertSeries(library.ID, seriesTitle, seriesDirectoryPath)
 	if err != nil {
@@ -4154,9 +4258,8 @@ func (s *Scanner) indexFileMetadata(library domain.Library, path string, info fs
 	}
 
 	var book domain.Book
-	existing, err := s.store.FileIndexByPath(path)
-	if err == nil {
-		previous, previousErr := s.store.BookByID(existing.File.BookID)
+	if existingErr == nil {
+		previous, previousErr := s.store.BookSharedMetadata(existing.File.BookID)
 		title, err := s.disambiguateBookTitle(library, series.ID, metadata.Title, format, relPath, existing.File.BookID)
 		if err != nil {
 			return indexedBookResult{}, err
@@ -4167,8 +4270,11 @@ func (s *Scanner) indexFileMetadata(library domain.Library, path string, info fs
 		}
 		result := indexedBookResult{Book: book}
 		if previousErr == nil {
-			result.MetadataUpdated = previous.Title != metadata.Title || previous.Creator != metadata.Creator || previous.Description != metadata.Description || !sameStringList(previous.Tags, metadata.Tags)
+			result.MetadataUpdated = previous.Title != title || previous.Creator != metadata.Creator || previous.Description != metadata.Description || !sameStringList(previous.Tags, metadata.Tags)
 			result.Reclassified = previous.SeriesID != series.ID
+		}
+		if metadata.SourceRevision != "" {
+			result.MetadataUpdated = true
 		}
 		book, err = s.store.UpdateBookMetadata(book.ID, metadata.Creator, metadata.Description, metadata.Tags)
 		if err != nil {
@@ -4179,7 +4285,12 @@ func (s *Scanner) indexFileMetadata(library domain.Library, path string, info fs
 		if err != nil {
 			return indexedBookResult{}, err
 		}
+		if err := s.rememberImportedBook(book, metadata); err != nil {
+			return indexedBookResult{}, err
+		}
 		return result, nil
+	} else if !errors.Is(existingErr, sql.ErrNoRows) {
+		return indexedBookResult{}, existingErr
 	} else {
 		title, titleErr := s.disambiguateBookTitle(library, series.ID, metadata.Title, format, relPath, 0)
 		if titleErr != nil {
@@ -4198,22 +4309,25 @@ func (s *Scanner) indexFileMetadata(library domain.Library, path string, info fs
 	if err != nil {
 		return indexedBookResult{}, err
 	}
-	return indexedBookResult{Book: book}, nil
-}
-
-func (s *Scanner) indexBasicFileMetadata(library domain.Library, path string, info fs.FileInfo, ext string) (indexedBookResult, error) {
-	relPath, err := filepath.Rel(library.RootPath, path)
-	if err != nil {
-		return indexedBookResult{}, fmt.Errorf("relative path: %w", err)
-	}
-	seriesTitle, seriesDirectoryPath := seriesIdentityForRelPath(library.RootPath, relPath)
-	title := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-	format := strings.TrimPrefix(ext, ".")
-	book, err := s.store.UpsertBasicBookFile(library.ID, seriesTitle, seriesDirectoryPath, title, format, path, relPath, info.Size(), info.ModTime(), ext)
-	if err != nil {
+	if err := s.rememberImportedBook(book, metadata); err != nil {
 		return indexedBookResult{}, err
 	}
 	return indexedBookResult{Book: book}, nil
+}
+
+func (s *Scanner) indexBasicFileMetadata(library domain.Library, path string, info fs.FileInfo, ext string, resolver *bookmeta.Resolver) (indexedBookResult, error) {
+	metadata := bookMetadata{Title: strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))}
+	if resolver != nil {
+		external, found, err := resolver.Lookup(path)
+		if found {
+			metadata = importedBookMetadata(path, external)
+		} else if err != nil {
+			if _, lookupErr := s.store.FileIndexByPath(path); !errors.Is(lookupErr, sql.ErrNoRows) {
+				return indexedBookResult{}, err
+			}
+		}
+	}
+	return s.indexResolvedFileMetadata(library, path, info, ext, metadata)
 }
 
 func (s *Scanner) disambiguateBookTitle(library domain.Library, seriesID int64, title string, format string, relPath string, currentBookID int64) (string, error) {
@@ -4232,6 +4346,9 @@ func (s *Scanner) disambiguateBookTitle(library domain.Library, seriesID int64, 
 	existingTitle := disambiguatedTitle(title, existingRelPath)
 	if existingTitle != existing.Title {
 		if _, err := s.store.UpdateBookIdentity(existing.ID, seriesID, existingTitle, format); err != nil {
+			return "", err
+		}
+		if err := s.rememberImportedBookTitle(existing.ID, existingTitle); err != nil {
 			return "", err
 		}
 	}
@@ -4254,10 +4371,12 @@ func disambiguatedTitle(title string, relPath string) string {
 }
 
 type bookMetadata struct {
-	Title       string
-	Creator     string
-	Description string
-	Tags        []string
+	Title               string
+	Creator             string
+	Description         string
+	Tags                []string
+	DirectoryCollection bool
+	SourceRevision      string
 }
 
 func bookMetadataForPath(path string, ext string) (bookMetadata, error) {

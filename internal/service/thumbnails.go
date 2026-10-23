@@ -20,12 +20,13 @@ import (
 	"time"
 
 	"foliospace-reader/internal/archive"
+	"foliospace-reader/internal/bookmeta"
 	"foliospace-reader/internal/domain"
 	_ "golang.org/x/image/webp"
 )
 
 const thumbnailAlgorithmVersion = "v1"
-const thumbnailClientCacheVersion = thumbnailAlgorithmVersion + "-cover-refresh-4"
+const thumbnailClientCacheVersion = thumbnailAlgorithmVersion + "-calibre-cover-5"
 const thumbnailCacheKeyProfile = "portrait-1x-3x4.15-macos-resource-filter"
 const thumbnailJPEGQuality = 90
 const thumbnailTargetAspectRatio = 3.0 / 4.15
@@ -543,6 +544,9 @@ func (s *Service) writeThumbnailImage(jobID int64, cachePath string, img image.I
 }
 
 func (s *Service) openBookThumbnailSource(book domain.Book) (PageStream, error) {
+	if cover, err := s.calibreCover(book); err == nil {
+		return cover, nil
+	}
 	if book.Format == "epub" {
 		body, contentType, err := archive.OpenEPUBCover(book.FilePath)
 		if err != nil {
@@ -573,6 +577,11 @@ func (s *Service) bookThumbnailCacheKey(book domain.Book, size string) (string, 
 		return "", err
 	}
 	source := fmt.Sprintf("%d|%s|%s|%d|%s|%s|%s|%s", book.ID, book.FilePath, book.Format, info.Size(), info.ModTime().UTC().Format(time.RFC3339Nano), normalizeBookThumbnailSize(size), thumbnailAlgorithmVersion, thumbnailCacheKeyProfile)
+	if root, err := s.bookLibraryRoot(book); err == nil {
+		if revision, err := bookmeta.CoverRevision(root, book.FilePath); err == nil {
+			source += "|" + revision
+		}
+	}
 	if marker := bookThumbnailSourceCacheMarker(book); marker != "" {
 		source += "|" + marker
 	}

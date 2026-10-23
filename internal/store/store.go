@@ -347,15 +347,31 @@ func (s *Store) ListSeriesPageForProfile(profileID int64, options domain.Collect
 	}
 	where, args := collectionListWhere(options)
 	countArgs := append([]any(nil), args...)
+	countQuery := `SELECT COUNT(*) FROM (` + collectionListBaseSQL() + `) c` + where
+	base := collectionListBaseSQL()
+	pageSuffix := where + collectionListOrderBy(options.Sort, options.Direction) + ` LIMIT ? OFFSET ?`
+	primaryType := strings.ToLower(strings.TrimSpace(options.PrimaryType))
+	if primaryType == "" || primaryType == "all" {
+		// Title/search and total do not depend on book aggregates. In the common
+		// home-page path, aggregate only this page, not the entire library twice.
+		countQuery = `SELECT COUNT(*) FROM series c JOIN libraries l ON l.id=c.library_id` + where
+		switch strings.ToLower(strings.TrimSpace(options.Sort)) {
+		case "recent", "recently_added", "book_count", "count", "type", "primary_type":
+			// These orders depend on aggregates; keep their complete semantics.
+		default:
+			selection := ` WHERE s.id IN (SELECT c.id FROM series c JOIN libraries l ON l.id=c.library_id` + where + collectionListOrderBy(options.Sort, options.Direction) + ` LIMIT ? OFFSET ?)`
+			base = collectionListBaseSQLSelected(selection)
+			pageSuffix = collectionListOrderBy(options.Sort, options.Direction)
+		}
+	}
 	var total int64
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM (`+collectionListBaseSQL()+`) c`+where, countArgs...).Scan(&total); err != nil {
+	if err := s.db.QueryRow(countQuery, countArgs...).Scan(&total); err != nil {
 		return domain.CollectionListPage{}, err
 	}
 	queryArgs := append([]any(nil), args...)
 	queryArgs = append(queryArgs, options.Limit, options.Offset)
 	rows, err := s.db.Query(`SELECT c.id, c.library_id, c.title, c.directory_path, c.collection_type, c.primary_type, c.book_count, c.cover_book_id, c.created_at
-		FROM (`+collectionListBaseSQL()+`) c`+where+collectionListOrderBy(options.Sort, options.Direction)+`
-		LIMIT ? OFFSET ?`, queryArgs...)
+		FROM (`+base+`) c`+pageSuffix, queryArgs...)
 	if err != nil {
 		return domain.CollectionListPage{}, err
 	}
@@ -414,6 +430,10 @@ func (s *Store) listSeriesForProfile(profileID int64, limit int) ([]domain.Serie
 }
 
 func collectionListBaseSQL() string {
+	return collectionListBaseSQLSelected("")
+}
+
+func collectionListBaseSQLSelected(selection string) string {
 	return `SELECT s.id AS id, s.library_id AS library_id, s.title AS title,
 			COALESCE(NULLIF(s.directory_path, ''), MIN(CASE
 				WHEN f.rel_path IS NULL THEN ''
@@ -438,7 +458,7 @@ func collectionListBaseSQL() string {
 		FROM series s
 		JOIN libraries l ON l.id = s.library_id
 		LEFT JOIN books b ON b.series_id = s.id
-		LEFT JOIN files f ON f.book_id = b.id
+		LEFT JOIN files f ON f.book_id = b.id` + selection + `
 		GROUP BY s.id, s.library_id, s.title, s.created_at, l.asset_type`
 }
 
@@ -1041,7 +1061,7 @@ func mergeCollectionPrivateStatesTx(tx *sql.Tx, fromSeriesID int64, toSeriesID i
 
 func (s *Store) UpdateBookMetadata(bookID int64, creator string, description string, tags []string) (domain.Book, error) {
 	_, err := s.db.Exec(`UPDATE books
-		SET creator = ?, description = ?, tags = ?, updated_at = CURRENT_TIMESTAMP
+		SET creator = ?, description = ?, tags = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
 		WHERE id = ?`, strings.TrimSpace(creator), strings.TrimSpace(description), encodeTags(tags), bookID)
 	if err != nil {
 		return domain.Book{}, err
@@ -1084,8 +1104,8 @@ func (s *Store) UpdateBookPrivateStateForProfile(bookID int64, profileID int64, 
 	}
 	if profileID == defaultProfileID {
 		_, err = s.db.Exec(`UPDATE books
-			SET private_status = ?, favorite = ?, rating = ?, tags = ?, summary = ?, updated_at = CURRENT_TIMESTAMP
-			WHERE id = ?`, status, favorite, rating, encodeTags(state.Tags), summary, bookID)
+			SET private_status = ?, favorite = ?, rating = ?, summary = ?, updated_at = CURRENT_TIMESTAMP
+			WHERE id = ?`, status, favorite, rating, summary, bookID)
 	}
 	return err
 }
@@ -1401,7 +1421,9 @@ func (s *Store) ListContinueReadingForProfile(profileID int64, limit int) ([]dom
 		limit = 12
 	}
 	rows, err := s.db.Query(bookSelectSQL(profileID)+`
-		WHERE rp.book_id IS NOT NULL
+		WHERE rp.book_id IS NOT NULL AND (COALESCE(rp.progress_fraction, 0) < 1
+          OR (b.format = 'epub' AND (b.page_count <= 0 OR rp.page_index < b.page_count - 1)))
+          AND COALESCE(ps.private_status, '') <> 'finished'
 		ORDER BY rp.updated_at DESC, b.updated_at DESC
 		LIMIT ?`, limit)
 	if err != nil {
@@ -1462,7 +1484,7 @@ func (s *Store) ListFavoriteBooksForProfile(profileID int64, limit int) ([]domai
 	}
 	limit = normalizeShelfLimit(limit)
 	rows, err := s.db.Query(bookSelectSQL(profileID)+`
-		WHERE COALESCE(ps.favorite, 0) = 1
+		WHERE ps.favorite = 1
 		ORDER BY ps.updated_at DESC, b.title
 		LIMIT ?`, limit)
 	if err != nil {
@@ -1482,10 +1504,16 @@ func (s *Store) ListBooksByPrivateStatusForProfile(profileID int64, status strin
 		return nil, err
 	}
 	limit = normalizeShelfLimit(limit)
+	status = strings.TrimSpace(status)
+	statusPredicate := "ps.private_status = ?"
+	if status == "" {
+		// Empty status also includes books with no per-profile state row.
+		statusPredicate = "COALESCE(ps.private_status, '') = ?"
+	}
 	rows, err := s.db.Query(bookSelectSQL(profileID)+`
-		WHERE COALESCE(ps.private_status, '') = ?
+		WHERE `+statusPredicate+`
 		ORDER BY ps.updated_at DESC, b.title
-		LIMIT ?`, strings.TrimSpace(status), limit)
+		LIMIT ?`, status, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -3478,8 +3506,8 @@ func videoListWhere(options domain.VideoListOptions) (string, []any) {
 	args := make([]any, 0, 5)
 	if query := strings.TrimSpace(options.Query); query != "" {
 		like := "%" + strings.ToLower(query) + "%"
-		clauses = append(clauses, `(LOWER(title) LIKE ? OR LOWER(rel_path) LIKE ? OR LOWER(format) LIKE ?)`)
-		args = append(args, like, like, like)
+		clauses = append(clauses, `(LOWER(`+videoDisplayTitleSQL+`) LIKE ? OR LOWER(title) LIKE ? OR LOWER(rel_path) LIKE ? OR LOWER(format) LIKE ?)`)
+		args = append(args, like, like, like, like)
 	}
 	if format := strings.TrimSpace(options.Format); format != "" {
 		clauses = append(clauses, `LOWER(format) = LOWER(?)`)
@@ -3494,7 +3522,7 @@ func videoListWhere(options domain.VideoListOptions) (string, []any) {
 func videoListOrderBy(sort string) string {
 	switch strings.ToLower(strings.TrimSpace(sort)) {
 	case "title":
-		return ` ORDER BY LOWER(title), id`
+		return ` ORDER BY LOWER(` + videoDisplayTitleSQL + `), id`
 	default:
 		return ` ORDER BY updated_at DESC, id DESC`
 	}
@@ -5080,7 +5108,7 @@ func scanGameArtwork(row scanner) (domain.GameArtwork, error) {
 }
 
 func videoSelectSQL() string {
-	return `SELECT id, library_id, title, format, file_path, rel_path, size, mtime, duration_seconds, width, height, video_codec, audio_codec, thumbnail_status, last_played_at, created_at, updated_at FROM videos`
+	return `SELECT id, library_id, title, format, file_path, rel_path, size, mtime, duration_seconds, width, height, video_codec, audio_codec, thumbnail_status, last_played_at, created_at, updated_at, ` + videoDisplayTitleSQL + ` FROM videos`
 }
 
 func scanVideos(rows *sql.Rows) ([]domain.VideoAsset, error) {
@@ -5119,6 +5147,7 @@ func scanVideo(row scanner) (domain.VideoAsset, error) {
 		&lastPlayedAt,
 		&createdAt,
 		&updatedAt,
+		&video.DisplayTitle,
 	); err != nil {
 		return video, err
 	}
