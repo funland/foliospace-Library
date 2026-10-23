@@ -31,6 +31,10 @@ func Open(configDir string) (*sql.DB, error) {
 }
 
 func Migrate(conn *sql.DB) error {
+	var bookPrivateStatesExisted bool
+	if err := conn.QueryRow(`SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'book_private_states')`).Scan(&bookPrivateStatesExisted); err != nil {
+		return fmt.Errorf("inspect book private state migration: %w", err)
+	}
 	stmts := []string{
 		`PRAGMA foreign_keys = ON`,
 		`PRAGMA busy_timeout = 5000`,
@@ -589,10 +593,14 @@ func Migrate(conn *sql.DB) error {
 		SELECT 1, book_id, page_index, locator, progress_fraction, updated_at FROM read_progress`); err != nil {
 		return fmt.Errorf("migrate default profile progress: %w", err)
 	}
+	// Public book tags remain available via the shared metadata projection. Only
+	// the first upgrade may need to preserve tag-only legacy personal state;
+	// later imported metadata must not create new personal state on every startup.
 	if _, err := conn.Exec(`INSERT OR IGNORE INTO book_private_states(profile_id, book_id, private_status, favorite, rating, tags, summary, updated_at)
 		SELECT 1, id, private_status, favorite, rating, tags, summary, updated_at
 		FROM books
-		WHERE private_status <> '' OR favorite <> 0 OR rating <> 0 OR tags <> '' OR summary <> ''`); err != nil {
+		WHERE private_status <> '' OR favorite <> 0 OR rating <> 0 OR summary <> ''
+			OR (? AND tags <> '')`, !bookPrivateStatesExisted); err != nil {
 		return fmt.Errorf("migrate default profile private state: %w", err)
 	}
 	if _, err := conn.Exec(`INSERT OR IGNORE INTO profile_client_preferences(profile_id, locale, reader_page_mode, epub_page_mode, epub_theme, epub_font_size, updated_at)

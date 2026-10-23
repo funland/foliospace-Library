@@ -114,7 +114,7 @@ test("webtoon structured progress falls back to the legacy progress API", async 
 
   assert.match(
     appSource,
-    /api\.saveWebtoonReadingPosition\(selectedBook\.id,\s*webtoonPosition\)[\s\S]*api\s*\.\s*progressDetail\([\s\S]*`webtoon:\$\{webtoonPosition\.documentProgress\}/,
+    /const locator = position \? `webtoon:\$\{fraction\}`[\s\S]*await api\.saveWebtoonReadingPosition\(book\.id, position\);\s*\} catch \(error\) \{[\s\S]*await api\.progressDetail\(book\.id, index, locator, fraction\)/,
     "webtoon saves should fall back to legacy progress when the structured endpoint is unavailable",
   );
 });
@@ -193,7 +193,7 @@ test("switching comic page modes does not immediately overwrite legacy progress"
   assert.ok(appSource.includes("const suppressPagedProgressSave = useRef(false);"), "paged progress saves should be suppressible during mode-only switches");
   assert.match(
     appSource,
-    /if\s*\(\s*suppressPagedProgressSave\.current\s*\)\s*\{\s*suppressPagedProgressSave\.current\s*=\s*false;\s*return;\s*\}/s,
+    /if\s*\([^)]*suppressPagedProgressSave\.current\s*\)\s*\{\s*suppressPagedProgressSave\.current\s*=\s*false;\s*return;\s*\}/s,
     "the next non-webtoon progress save after a mode-only switch should be skipped",
   );
   assert.match(

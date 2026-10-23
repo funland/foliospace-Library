@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ComicBrowser, ComicTitleRules } from "./ComicBrowser";
 import { VideoLibrary } from "./VideoLibrary";
 import { VideoPoster } from "./VideoPoster";
-import { isContinueReading, readingProgress } from "./reading-progress";
+import { isContinueReading, readingProgress, shouldRestoreWebtoonPosition } from "./reading-progress";
+import { resolveEpubProgress } from "./epub-progress";
+import { ReaderProgressSessions } from "./reader-progress-session";
 import { homeLibrarySections, isReadingOrGameCollection } from "./home-library";
 import type { CSSProperties, FormEvent, MouseEvent, ReactNode, SyntheticEvent, TouchEvent } from "react";
 import { GlobalWorkerOptions, getDocument } from "pdfjs-dist";
@@ -27,8 +29,9 @@ import {
   type ReaderDevicePreferences,
   type ReaderImageDisplayMode,
 } from "./reader-layout";
-import { resolveEpubOpenPosition, type EpubChapterOpenPosition } from "./epub-navigation";
+import { epubChapterLabel, epubFragment, findEpubFragment, isEpubInlineGlyph, normalizeEPUBLink, resolveEpubHrefIndex, resolveEpubOpenPosition, type EpubChapterOpenPosition, type EpubNavigationRequest } from "./epub-navigation";
 import { observeEpubViewport } from "./epub-viewport";
+import { placeEpubPage } from "./epub-layout";
 import { gamePlatformFilterOptions, gamePlatformFilterOptionsFromFacets } from "./game-platform-options";
 import { setupOnboardingCopy, setupOnboardingLinks } from "./setup-onboarding";
 
@@ -189,6 +192,8 @@ export function App() {
   const [epubPagePosition, setEpubPagePosition] = useState(0);
   const [epubPageCount, setEpubPageCount] = useState(1);
   const [epubTocOpen, setEpubTocOpen] = useState(false);
+  const [epubNavigation, setEpubNavigation] = useState<EpubNavigationRequest | null>(null);
+  const [epubReturnStack, setEpubReturnStack] = useState<{ pageIndex: number; pagePosition: number }[]>([]);
   const [pdfPageCount, setPdfPageCount] = useState(1);
   const [webtoonProgress, setWebtoonProgress] = useState(0);
   const [webtoonPosition, setWebtoonPosition] = useState<WebtoonPosition | null>(null);
@@ -236,6 +241,10 @@ export function App() {
   const swipeStart = useRef<{ x: number; y: number } | null>(null);
   const epubRestorePosition = useRef<number | null>(null);
   const epubChapterOpenPosition = useRef<EpubChapterOpenPosition>("start");
+  const epubNavigationSequence = useRef(0);
+  const readerProgressSessions = useRef(new ReaderProgressSessions());
+  const readerOpenIntent = useRef(0);
+  const readerTransition = useRef(false);
   const webtoonRestoring = useRef(false);
   const webtoonUserActivated = useRef(false);
   const webtoonUserScrollUntil = useRef(0);
@@ -1068,69 +1077,83 @@ export function App() {
   }, [activeScan?.id]);
 
   useEffect(() => {
-    if (!selectedBook) return;
-    if (selectedBook.format === "epub") return;
-
-    const totalPages = selectedBook.format === "pdf" ? pdfPageCount : pages.length;
-    const useWebtoonMode = readerPageMode === "webtoon" && selectedBook.format !== "pdf";
-    if (useWebtoonMode) {
-      if (!webtoonPosition || !webtoonUserActivated.current) return;
-      const timer = window.setTimeout(() => {
-        api.saveWebtoonReadingPosition(selectedBook.id, webtoonPosition).then(() => updateReadingShelf(selectedBook, webtoonPosition.pageIndex, webtoonPosition.documentProgress)).catch(() =>
-          api
-            .progressDetail(
-              selectedBook.id,
-              webtoonPosition.pageIndex,
-              `webtoon:${webtoonPosition.documentProgress}`,
-              webtoonPosition.documentProgress,
-            )
-            .then(() => updateReadingShelf(selectedBook, webtoonPosition.pageIndex, webtoonPosition.documentProgress))
-            .catch(() => undefined),
-        );
-      }, 650);
-      return () => window.clearTimeout(timer);
+    if (view !== "reader" && readerProgressSessions.current.current) {
+      void finishReaderSession().then((intent) => {
+        if (intent !== null && intent === readerOpenIntent.current) {
+          readerTransition.current = false;
+          setActiveTask(null);
+        }
+      });
     }
-    if (suppressPagedProgressSave.current) {
+  }, [view]);
+
+  // Only explicit navigation makes a session dirty. Layout, restoration and
+  // metadata changes can finish a pending save, but cannot create one.
+  useEffect(() => {
+    if (view !== "reader" || !selectedBook || readerLoadState !== "ready") return;
+    const sessions = readerProgressSessions.current;
+    if (!sessions.canSave(sessions.current, selectedBook.id, getActiveProfileId())) return;
+    const isWebtoon = selectedBook.format !== "epub" && selectedBook.format !== "pdf" && readerPageMode === "webtoon";
+    if (isWebtoon && (!webtoonPosition || !webtoonUserActivated.current)) return;
+    if (selectedBook.format !== "epub" && !isWebtoon && suppressPagedProgressSave.current) {
       suppressPagedProgressSave.current = false;
       return;
     }
-    const progressFraction = useWebtoonMode
-      ? webtoonProgress
-      : totalPages > 1
-        ? pageIndex / (totalPages - 1)
-        : 0;
-    const timer = window.setTimeout(() => {
-      api
-        .progressDetail(
-          selectedBook.id,
-          pageIndex,
-          "",
-          progressFraction,
-        )
-        .then(() => updateReadingShelf(selectedBook, pageIndex, progressFraction))
-        .catch(() => undefined);
-    }, 450);
-
+    const timer = window.setTimeout(() => { void savePendingReaderProgress(); }, isWebtoon ? 650 : 450);
     return () => window.clearTimeout(timer);
-  }, [selectedBook, pageIndex, pages.length, pdfPageCount, readerPageMode, webtoonPosition, webtoonProgress]);
+  }, [view, selectedBook, pageIndex, pages.length, pdfPageCount, readerPageMode, readerLoadState, webtoonPosition, webtoonProgress, epubPagePosition, epubPageCount]);
 
-  useEffect(() => {
-    if (!selectedBook || selectedBook.format !== "epub") return;
+  function savePendingReaderProgress(): Promise<void> {
+    const sessions = readerProgressSessions.current;
+    const session = sessions.current;
+    if (!session) return Promise.resolve();
+    if (!selectedBook || (selectedBook.format === "epub" && readerLoadState !== "ready") || !sessions.canSave(session, selectedBook.id, getActiveProfileId())) return sessions.whenIdle(session);
+    const book = selectedBook;
+    const isEpub = book.format === "epub";
+    const isWebtoon = !isEpub && book.format !== "pdf" && readerPageMode === "webtoon";
+    if (isWebtoon && (!webtoonPosition || !webtoonUserActivated.current)) return sessions.whenIdle(session);
+    const position = isWebtoon ? webtoonPosition : null;
+    const totalPages = book.format === "pdf" ? pdfPageCount : pages.length;
+    const index = position?.pageIndex ?? pageIndex;
+    const fraction = position?.documentProgress ?? (isEpub
+      ? epubPageCount > 1 ? epubPagePosition / (epubPageCount - 1) : 0
+      : totalPages > 1 ? pageIndex / (totalPages - 1) : 0);
+    const locator = position ? `webtoon:${fraction}` : isEpub ? String(epubPagePosition) : "";
+    // Consume before queuing: a later user action must remain dirty while this
+    // snapshot is in flight. Saves for the same book/profile run in order.
+    if (!sessions.consume(session)) return sessions.whenIdle(session);
+    const revision = session.revision;
+    return sessions.enqueueSave(session, async () => {
+      if (getActiveProfileId() !== session.profileId) return;
+      try {
+        if (position) {
+          try {
+            await api.saveWebtoonReadingPosition(book.id, position);
+          } catch (error) {
+            if (!sessions.isCurrent(session) || getActiveProfileId() !== session.profileId) throw error;
+            await api.progressDetail(book.id, index, locator, fraction);
+          }
+        } else {
+          await api.progressDetail(book.id, index, locator, fraction);
+        }
+        if (sessions.isCurrent(session) && getActiveProfileId() === session.profileId) updateReadingShelf(book, index, fraction, locator);
+      } catch {
+        sessions.restoreDirtyAfterFailure(session, revision);
+      }
+    });
+  }
 
-    const timer = window.setTimeout(() => {
-      api
-        .progressDetail(
-          selectedBook.id,
-          pageIndex,
-          String(epubPagePosition),
-          epubPageCount > 1 ? epubPagePosition / (epubPageCount - 1) : 0,
-        )
-        .then(() => updateReadingShelf(selectedBook, pageIndex, epubPageCount > 1 ? epubPagePosition / (epubPageCount - 1) : 0))
-        .catch(() => undefined);
-    }, 450);
-
-    return () => window.clearTimeout(timer);
-  }, [selectedBook, pageIndex, epubPagePosition, epubPageCount]);
+  async function finishReaderSession() {
+    const intent = ++readerOpenIntent.current;
+    readerTransition.current = true;
+    const sessions = readerProgressSessions.current;
+    const session = sessions.current;
+    await savePendingReaderProgress();
+    if (session) await sessions.whenIdle(session);
+    if (intent !== readerOpenIntent.current) return null;
+    if (sessions.isCurrent(session)) sessions.invalidate();
+    return intent;
+  }
 
   async function scan(library: Library) {
     const existingJob = jobs.find((job) => job.libraryId === library.id && job.targetPath === normalizeQuickScanTarget(library, library.rootPath) && isActiveScanStatus(job.status));
@@ -1422,6 +1445,9 @@ export function App() {
   }, [loadBooksPage, selectedSeries]);
 
   function resetProfileScopedViewState() {
+    ++readerOpenIntent.current;
+    readerTransition.current = false;
+    readerProgressSessions.current.invalidate();
     setView("library");
     setSelectedBook(null);
     setSelectedVideo(null);
@@ -1429,6 +1455,8 @@ export function App() {
     setVideoTranscodeQueueStatus(null);
     setPages([]);
     setEpubManifest(null);
+    setEpubNavigation(null);
+    setEpubReturnStack([]);
     setBookDetailsOpen(false);
     setPrivateDraft(emptyPrivateState());
     setPageIndex(0);
@@ -1457,7 +1485,7 @@ export function App() {
     setGlobalBooks([]);
   }
 
-  async function leaveProfileScopedSurface() {
+  async function leaveProfileScopedSurface(expectedReaderIntent?: number) {
     try {
       if (document.fullscreenElement) {
         await document.exitFullscreen();
@@ -1465,6 +1493,7 @@ export function App() {
     } catch {
       // The profile switch still needs to continue and return to Home.
     }
+    if (expectedReaderIntent !== undefined && expectedReaderIntent !== readerOpenIntent.current) return;
     setReaderFullscreen(false);
     resetProfileScopedViewState();
   }
@@ -1479,9 +1508,14 @@ export function App() {
     const targetProfile = profiles.find((profile) => profile.id === profileID) ?? null;
     setProfileMenuOpen(false);
     setProfileSaving(true);
+    const intent = await finishReaderSession();
+    if (intent === null) {
+      setProfileSaving(false);
+      return;
+    }
     persistActiveProfileId(profileID);
     setActiveProfileId(profileID);
-    await leaveProfileScopedSurface();
+    await leaveProfileScopedSurface(intent);
     setStatus(t.profileSwitching);
     try {
       await refreshAll(true);
@@ -1502,9 +1536,11 @@ export function App() {
     try {
       const preset = profilePresetForIndex(profiles.length);
       const profile = await api.createProfile(trimmedName, preset.avatar, preset.color);
+      const intent = await finishReaderSession();
+      if (intent === null) return;
       persistActiveProfileId(profile.id);
       setActiveProfileId(profile.id);
-      await leaveProfileScopedSurface();
+      await leaveProfileScopedSurface(intent);
       await refreshAll(true);
       await reloadSelectedSeries();
       setStatus(t.profileCreated(profile.name));
@@ -1688,10 +1724,21 @@ export function App() {
   }, [authRequired, view]);
 
   async function openBook(book: Book) {
+    const intent = ++readerOpenIntent.current;
+    readerTransition.current = true;
+    const sessions = readerProgressSessions.current;
+    const previousSession = sessions.current;
     setActiveTask(`Opening ${book.title}`);
+    await savePendingReaderProgress();
+    if (previousSession) await sessions.whenIdle(previousSession);
+    if (intent !== readerOpenIntent.current) return;
+    const session = sessions.start(book.id, getActiveProfileId());
+    const isCurrentOpen = () => sessions.isCurrent(session) && intent === readerOpenIntent.current && getActiveProfileId() === session.profileId;
     setSelectedBook(book);
     setView("reader");
     setEpubManifest(null);
+    setEpubNavigation(null);
+    setEpubReturnStack([]);
     setPageIndex(0);
     setDisplayedPageIndex(0);
     setEpubPagePosition(0);
@@ -1709,26 +1756,36 @@ export function App() {
     setReaderLoadState("loading");
     try {
       await nextFrame();
+      if (!isCurrentOpen()) return;
       const nextPages = await api.pages(book.id);
+      if (!isCurrentOpen()) return;
       setPages(nextPages);
       if (book.format === "epub") {
         const [manifestResult, progressResult] = await Promise.allSettled([api.epubManifest(book.id), api.readProgress(book.id)]);
+        if (!isCurrentOpen()) return;
+        if (progressResult.status === "rejected") throw progressResult.reason;
         const manifest = manifestResult.status === "fulfilled" ? manifestResult.value : fallbackEpubManifest(book, nextPages);
-        const progress = progressResult.status === "fulfilled" ? progressResult.value : null;
-        const restoredPosition = readEpubLocator(progress?.locator ?? "");
-        epubRestorePosition.current = restoredPosition;
+        const restored = resolveEpubProgress(progressResult.value, manifest);
+        epubRestorePosition.current = restored.locatorKind === "page" ? restored.pagePosition : null;
+        epubChapterOpenPosition.current = "start";
         setEpubManifest(manifest);
-        setPageIndex(Math.max(0, Math.min(progress?.pageIndex ?? 0, Math.max(0, nextPages.length - 1))));
-        setEpubPagePosition(restoredPosition);
+        setPageIndex(restored.chapterIndex);
+        setDisplayedPageIndex(restored.chapterIndex);
+        setEpubPagePosition(restored.pagePosition);
+        if (restored.fragment) {
+          setEpubNavigation({ id: ++epubNavigationSequence.current, pageIndex: restored.chapterIndex, fragment: restored.fragment });
+        }
         if (manifestResult.status === "rejected") {
           setStatus(`EPUB metadata fallback: ${manifestResult.reason instanceof Error ? manifestResult.reason.message : "manifest unavailable"}`);
         }
         setReaderLoadState("ready");
       } else {
         const [progressResult, positionsResult] = await Promise.allSettled([api.readProgress(book.id), api.readingPositions(book.id)]);
-        const progress = progressResult.status === "fulfilled" ? progressResult.value : { pageIndex: 0, locator: "", progressFraction: 0 };
-        const restoredWebtoonPosition =
-          book.format !== "pdf" && positionsResult.status === "fulfilled" ? positionsResult.value.positions.webtoon ?? null : null;
+        if (!isCurrentOpen()) return;
+        if (progressResult.status === "rejected") throw progressResult.reason;
+        const progress = progressResult.value;
+        const candidateWebtoonPosition = book.format !== "pdf" && positionsResult.status === "fulfilled" ? positionsResult.value.positions.webtoon ?? null : null;
+        const restoredWebtoonPosition = shouldRestoreWebtoonPosition(progress, candidateWebtoonPosition, readerPageMode) ? candidateWebtoonPosition : null;
         const restoredPage = book.format === "pdf" ? Math.max(0, progress.pageIndex) : Math.max(0, Math.min(progress.pageIndex, Math.max(0, nextPages.length - 1)));
         if (restoredWebtoonPosition) {
           const restoredWebtoonPage = webtoonInitialPageIndex(restoredWebtoonPosition, nextPages);
@@ -1738,7 +1795,7 @@ export function App() {
           setPageIndex(restoredWebtoonPage);
           setDisplayedPageIndex(restoredWebtoonPage);
         } else {
-          const restoredWebtoonProgress = readWebtoonLocator(progress.locator);
+          const restoredWebtoonProgress = readerPageMode === "webtoon" && book.format !== "pdf" ? readWebtoonLocator(progress.locator) : null;
           if (restoredWebtoonProgress !== null) {
             const legacyWebtoonPosition = legacyWebtoonProgressPosition(restoredWebtoonProgress, nextPages.length);
             const restoredWebtoonPage = webtoonInitialPageIndex(legacyWebtoonPosition, nextPages);
@@ -1748,22 +1805,34 @@ export function App() {
             setPageIndex(restoredWebtoonPage);
             setDisplayedPageIndex(restoredWebtoonPage);
           } else {
+            if (readerPageMode === "webtoon" && book.format !== "pdf") {
+              const position = webtoonPositionForPage(restoredPage, nextPages);
+              setWebtoonPosition(position);
+              setWebtoonRestorePosition(position);
+              setWebtoonProgress(position.documentProgress);
+            }
             setPageIndex(restoredPage);
             setDisplayedPageIndex(restoredPage);
           }
         }
         setReaderLoadState("ready");
       }
+      sessions.markReady(session);
     } catch (error) {
+      if (!isCurrentOpen()) return;
+      setPages([]);
       setReaderLoadState("error");
       setStatus(error instanceof Error ? error.message : `Failed to open ${book.title}`);
     } finally {
-      setActiveTask(null);
+      if (sessions.isCurrent(session) && intent === readerOpenIntent.current) {
+        readerTransition.current = false;
+        setActiveTask(null);
+      }
     }
   }
 
-  function updateReadingShelf(book: Book, currentPage: number, progressFraction: number) {
-    const updated = { ...book, currentPage, progressFraction, lastReadAt: new Date().toISOString() };
+  function updateReadingShelf(book: Book, currentPage: number, progressFraction: number, progressLocator: string) {
+    const updated = { ...book, currentPage, progressFraction, progressLocator, lastReadAt: new Date().toISOString() };
     setContinueBooks(items => replaceBook(items, updated).filter(isContinueReading));
     setRecentBooks(items => replaceBook(items, updated));
   }
@@ -1854,6 +1923,8 @@ export function App() {
   }
 
   async function setReaderPage(book: Book, nextIndex: number) {
+    if (readerTransition.current) return;
+    readerProgressSessions.current.markUserChange();
     const totalPages = book.format === "pdf" ? pdfPageCount : pages.length;
     const clamped = Math.max(0, Math.min(nextIndex, Math.max(0, totalPages - 1)));
     if (book.format === "epub") {
@@ -2076,9 +2147,11 @@ export function App() {
   }
 
   function goReaderPrevious() {
+    if (readerTransition.current) return;
     if (!selectedBook) return;
     if (selectedBook.format === "epub") {
       if (epubPagePosition > 0) {
+        readerProgressSessions.current.markUserChange();
         epubChapterOpenPosition.current = "start";
         setEpubPagePosition((value) => Math.max(0, value - 1));
         return;
@@ -2094,9 +2167,11 @@ export function App() {
   }
 
   function goReaderNext() {
+    if (readerTransition.current) return;
     if (!selectedBook) return;
     if (selectedBook.format === "epub") {
       if (epubPagePosition < epubPageCount - 1) {
+        readerProgressSessions.current.markUserChange();
         epubChapterOpenPosition.current = "start";
         setEpubPagePosition((value) => Math.min(epubPageCount - 1, value + 1));
         return;
@@ -2112,10 +2187,12 @@ export function App() {
   }
 
   function setEpubChapter(nextIndex: number, openPosition: EpubChapterOpenPosition = "start") {
+    if (readerTransition.current) return;
     const chapterCount = epubManifest?.spine.length || pages.length;
     if (chapterCount <= 0) return;
     const clamped = Math.max(0, Math.min(nextIndex, chapterCount - 1));
     if (clamped === pageIndex) return;
+    readerProgressSessions.current.markUserChange();
     epubChapterOpenPosition.current = openPosition;
     setEpubPagePosition(0);
     setEpubPageCount(1);
@@ -2139,6 +2216,7 @@ export function App() {
   }
 
   function markWebtoonUserScroll() {
+    if (readerTransition.current) return;
     webtoonUserScrollUntil.current = Date.now() + 1200;
   }
 
@@ -2149,6 +2227,7 @@ export function App() {
   }
 
   function updateWebtoonPosition(userInitiated = false) {
+    if (userInitiated && readerTransition.current) return;
     const node = webtoonRef.current;
     if (!node) return;
     if (webtoonRestorePosition !== null && !userInitiated) return;
@@ -2164,6 +2243,7 @@ export function App() {
       metrics,
     );
     if (userInitiated) {
+      readerProgressSessions.current.markUserChange();
       webtoonUserActivated.current = true;
       setWebtoonPosition(position);
       setPageIndex((value) => (value === position.pageIndex ? value : position.pageIndex));
@@ -2216,21 +2296,49 @@ export function App() {
     jumpToEpubHref(item.href, item.label, item.index);
   }
 
-  function jumpToEpubHref(href: string, label?: string, fallbackIndex?: number) {
-    if (!epubManifest) return;
-    const index = resolveEpubHrefIndex(epubManifest, href, fallbackIndex);
+  function requestEpubNavigation(target: Omit<EpubNavigationRequest, "id">) {
+    if (readerTransition.current) return;
+    readerProgressSessions.current.markUserChange();
+    setReaderLoadState("loading");
     epubRestorePosition.current = null;
     epubChapterOpenPosition.current = "start";
     setEpubTocOpen(false);
-    setEpubPagePosition(0);
-    setEpubPageCount(1);
-    setDisplayedPageIndex(index);
-    setReaderLoadState("loading");
-    setPageIndex(index);
+    if (target.pageIndex !== pageIndex) {
+      setEpubPagePosition(0);
+      setEpubPageCount(1);
+      setReaderLoadState("loading");
+    }
+    setEpubNavigation({ ...target, id: ++epubNavigationSequence.current });
+    setDisplayedPageIndex(target.pageIndex);
+    setPageIndex(target.pageIndex);
+  }
+
+  function jumpToEpubHref(href: string, label?: string, fallbackIndex?: number, rememberPosition = false) {
+    if (readerTransition.current) return;
+    if (!epubManifest) return;
+    const index = resolveEpubHrefIndex(epubManifest, href, fallbackIndex);
+    if (index === null) {
+      setStatus(t.epubLinkUnavailable);
+      return;
+    }
+    if (rememberPosition) {
+      setEpubReturnStack((items) => [...items.slice(-31), { pageIndex, pagePosition: epubPagePosition }]);
+    }
+    requestEpubNavigation({ pageIndex: index, fragment: epubFragment(href) });
     setStatus(`Opening ${label || href}`);
   }
 
+  function returnFromEpubLink() {
+    if (readerTransition.current) return;
+    const target = epubReturnStack[epubReturnStack.length - 1];
+    if (!target) return;
+    setEpubReturnStack((items) => items.slice(0, -1));
+    requestEpubNavigation(target);
+  }
+
   async function returnToLibrary() {
+    const intent = await finishReaderSession();
+    if (intent === null) return;
     try {
       if (document.fullscreenElement) {
         await document.exitFullscreen();
@@ -2238,8 +2346,12 @@ export function App() {
     } catch (error) {
       setStatus(error instanceof Error ? `Fullscreen unavailable: ${error.message}` : "Fullscreen unavailable");
     } finally {
-      setReaderFullscreen(false);
-      setView("library");
+      if (intent === readerOpenIntent.current) {
+        readerTransition.current = false;
+        setActiveTask(null);
+        setReaderFullscreen(false);
+        setView("library");
+      }
     }
   }
 
@@ -2387,7 +2499,7 @@ export function App() {
         <button className={view === "favorites" ? "active" : ""} onClick={openFavorites}>
           {t.favorites}
         </button>
-        <button className={view === "reader" ? "active" : ""} onClick={() => setView("reader")}>
+        <button className={view === "reader" ? "active" : ""} onClick={() => selectedBook && view !== "reader" ? void openBook(selectedBook) : setView("reader")}>
           {t.reader}
         </button>
         <button className={view === "games" ? "active" : ""} onClick={openGameCatalog}>
@@ -3357,12 +3469,10 @@ export function App() {
                     <strong>{selectedBook.title}</strong>
                     {selectedBook.creator && <em>{selectedBook.creator}</em>}
                     <span>
-                      {selectedBook.format === "epub" ? "Chapter " : ""}
-                      {pageIndex + 1}
-                      {selectedBook.format !== "epub" && readerPageMode === "double" && pageIndex + 1 < readerTotalPages(selectedBook, pages.length, pdfPageCount)
-                        ? `-${pageIndex + 2}`
-                        : ""} /{" "}
-                      {Math.max(readerTotalPages(selectedBook, pages.length, pdfPageCount), 1)}
+                      {selectedBook.format === "epub"
+                        ? epubChapterLabel(epubManifest, pageIndex) || t.epubChapter(pageIndex + 1)
+                        : <>{pageIndex + 1}{readerPageMode === "double" && pageIndex + 1 < readerTotalPages(selectedBook, pages.length, pdfPageCount)
+                          ? `-${pageIndex + 2}` : ""} / {Math.max(readerTotalPages(selectedBook, pages.length, pdfPageCount), 1)}</>}
                     </span>
                   </div>
                   <div className="readerToolbar" aria-label="Reader options">
@@ -3550,7 +3660,7 @@ export function App() {
                   {readerLoadState === "error" && (
                     <div className="pageLoading errorState" role="alert">
                       <strong>{t.pageFailed(pageIndex + 1)}</strong>
-                      <button onClick={() => setReaderRetryKey((value) => value + 1)}>{t.retry}</button>
+                      <button onClick={() => readerProgressSessions.current.current?.ready ? setReaderRetryKey((value) => value + 1) : void openBook(selectedBook)}>{t.retry}</button>
                     </div>
                   )}
                   {selectedBook.format === "epub" ? (
@@ -3560,7 +3670,7 @@ export function App() {
                           {((epubManifest.toc?.length ?? 0) > 0
                             ? epubManifest.toc
                             : epubManifest.spine.map((item) => ({
-                                label: `Chapter ${item.index + 1}`,
+                                label: t.epubChapter(item.index + 1),
                                 href: item.href,
                                 index: item.index,
                               }))
@@ -3575,6 +3685,9 @@ export function App() {
                           ))}
                         </div>
                       )}
+                      {epubReturnStack.length > 0 && (
+                        <button className="epubReturnButton" onClick={returnFromEpubLink}>{t.epubReturnToText}</button>
+                      )}
                       <EpubFrame
                         book={selectedBook}
                         manifest={epubManifest}
@@ -3583,7 +3696,9 @@ export function App() {
                         fontSize={epubFontSize}
                         theme={epubTheme}
                         pagePosition={epubPagePosition}
-                        onNavigate={jumpToEpubHref}
+                        navigation={epubNavigation}
+                        onNavigate={(href, label) => jumpToEpubHref(href, label, undefined, true)}
+                        onNavigationUnavailable={() => setStatus(t.epubLinkUnavailable)}
                         onMetrics={(count, position) => {
                           const restoredPosition = epubRestorePosition.current;
                           if (restoredPosition !== null) {
@@ -3615,7 +3730,9 @@ export function App() {
                       pageIndex={pageIndex}
                       pageMode={readerPageMode}
                       onPageCount={(count) => setPdfPageCount(count)}
+                      onUserNavigate={() => { if (!readerTransition.current) readerProgressSessions.current.markUserChange(); }}
                       onPageChange={(nextIndex) => {
+                        if (readerTransition.current) return;
                         setPageIndex((value) => (value === nextIndex ? value : nextIndex));
                         setDisplayedPageIndex((value) => (value === nextIndex ? value : nextIndex));
                       }}
@@ -4366,12 +4483,14 @@ function PdfReader({
   pageMode,
   onPageCount,
   onPageChange,
+  onUserNavigate,
 }: {
   book: Book;
   pageIndex: number;
   pageMode: ReaderPageMode;
   onPageCount: (count: number) => void;
   onPageChange?: (pageIndex: number) => void;
+  onUserNavigate?: () => void;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRefs = useRef<Record<number, HTMLCanvasElement | null>>({});
@@ -4556,7 +4675,7 @@ function PdfReader({
   }
 
   return (
-    <div ref={containerRef} className={`pdfReader ${pageMode}`} onScroll={updatePDFWebtoonPosition}>
+    <div ref={containerRef} className={`pdfReader ${pageMode}`} onScroll={updatePDFWebtoonPosition} onWheel={onUserNavigate} onTouchStart={onUserNavigate} onPointerDown={onUserNavigate}>
       {renderError && <div className="pdfReaderError">{renderError}</div>}
       {pages.map((pageNumber) => {
         const shouldRenderCanvas = pageMode !== "webtoon" || renderablePages.has(pageNumber);
@@ -5000,7 +5119,9 @@ function EpubFrame({
   fontSize,
   theme,
   pagePosition,
+  navigation,
   onNavigate,
+  onNavigationUnavailable,
   onMetrics,
 }: {
   book: Book;
@@ -5010,10 +5131,17 @@ function EpubFrame({
   fontSize: number;
   theme: EpubTheme;
   pagePosition: number;
+  navigation: EpubNavigationRequest | null;
   onNavigate: (href: string, label?: string) => void;
+  onNavigationUnavailable: () => void;
   onMetrics: (pageCount: number, pagePosition: number) => void;
 }) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const loadedDocument = useRef<Document | null>(null);
+  const appliedNavigation = useRef<number | null>(null);
+  const layoutFrame = useRef(0);
+  const callbacks = useRef({ onNavigate, onNavigationUnavailable, onMetrics });
+  callbacks.current = { onNavigate, onNavigationUnavailable, onMetrics };
   const spineItem = manifest?.spine[pageIndex] ?? null;
 
   useEffect(() => {
@@ -5024,14 +5152,15 @@ function EpubFrame({
     return () => {
       window.clearTimeout(timer);
       stopObserving?.();
+      window.cancelAnimationFrame(layoutFrame.current);
     };
-  }, [pageMode, fontSize, theme, pagePosition, spineItem?.href]);
+  }, [pageMode, fontSize, theme, pagePosition, spineItem?.href, navigation]);
 
   function applyEpubLayout() {
     const frame = iframeRef.current;
     const doc = frame?.contentDocument;
     const win = frame?.contentWindow;
-    if (!frame || !doc || !win || !spineItem) return;
+    if (!frame || !doc?.body || !win || !spineItem || loadedDocument.current !== doc) return;
 
     const viewportWidth = Math.max(320, frame.clientWidth);
     const viewportHeight = Math.max(320, frame.clientHeight);
@@ -5049,9 +5178,6 @@ function EpubFrame({
       : readableWidth;
     const pageWidth = isDoublePage ? (columnWidth + gap) * 2 : columnWidth + gap;
     const palette = epubThemePalette(theme);
-    const bodyScrollWidth = Math.max(doc.body.scrollWidth, doc.documentElement.scrollWidth, viewportWidth);
-    const estimatedPageCount = Math.max(1, Math.ceil(bodyScrollWidth / pageWidth));
-    const estimatedPosition = Math.max(0, Math.min(pagePosition, estimatedPageCount - 1));
     const style = doc.getElementById("foliospace-epub-style") ?? doc.createElement("style");
     style.id = "foliospace-epub-style";
     style.textContent = `
@@ -5084,7 +5210,7 @@ function EpubFrame({
         column-fill: auto !important;
         position: relative !important;
         transform-origin: top left !important;
-        transform: translateX(-${estimatedPosition * pageWidth}px) !important;
+        transform: translateX(0) !important;
         transition: transform 140ms ease !important;
       }
       html::before {
@@ -5129,9 +5255,25 @@ function EpubFrame({
         max-width: 100% !important;
         height: auto !important;
       }
+      img[data-foliospace-inline-glyph="true"] {
+        display: inline !important;
+        height: 1em !important;
+        width: auto !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        vertical-align: -0.12em !important;
+        break-inside: avoid !important;
+      }
     `;
     if (!style.parentElement) {
       doc.head.appendChild(style);
+    }
+
+    for (const image of Array.from(doc.images)) {
+      const hasTextContext = Boolean(image.closest("p, li")?.textContent?.trim());
+      if (isEpubInlineGlyph(image.naturalWidth, image.naturalHeight, hasTextContext)) {
+        image.dataset.foliospaceInlineGlyph = "true";
+      }
     }
 
     for (const anchor of Array.from(doc.querySelectorAll<HTMLAnchorElement>("a[href]"))) {
@@ -5142,16 +5284,32 @@ function EpubFrame({
         if (!href) return;
         event.preventDefault();
         event.stopPropagation();
-        onNavigate(normalizeEPUBLink(spineItem.href, href), anchor.textContent?.trim() || href);
+        const destination = normalizeEPUBLink(spineItem.href, href, window.location.origin);
+        if (destination === null) {
+          callbacks.current.onNavigationUnavailable();
+          return;
+        }
+        callbacks.current.onNavigate(destination, anchor.textContent?.trim() || undefined);
       });
     }
 
-    window.requestAnimationFrame(() => {
-      const pageCount = Math.max(1, Math.ceil(Math.max(doc.body.scrollWidth, doc.documentElement.scrollWidth) / pageWidth));
-      const nextPosition = Math.max(0, Math.min(pagePosition, pageCount - 1));
-      doc.body.style.transform = `translateX(-${nextPosition * pageWidth}px)`;
+    window.cancelAnimationFrame(layoutFrame.current);
+    layoutFrame.current = window.requestAnimationFrame(() => {
+      if (iframeRef.current?.contentDocument !== doc) return;
+      const pendingNavigation = navigation && navigation.pageIndex === pageIndex && appliedNavigation.current !== navigation.id ? navigation : null;
+      const target = pendingNavigation?.fragment ? findEpubFragment(doc, pendingNavigation.fragment) : null;
+      const { pageCount, pagePosition: nextPosition } = placeEpubPage(doc, {
+        viewportWidth,
+        pageWidth,
+        pagePosition: pendingNavigation ? pendingNavigation.pagePosition ?? 0 : pagePosition,
+        target,
+      });
+      if (pendingNavigation) {
+        if (pendingNavigation.fragment && !target) callbacks.current.onNavigationUnavailable();
+        appliedNavigation.current = pendingNavigation.id;
+      }
       win.scrollTo({ left: 0, top: 0, behavior: "auto" });
-      onMetrics(pageCount, nextPosition);
+      callbacks.current.onMetrics(pageCount, nextPosition);
     });
   }
 
@@ -5168,9 +5326,12 @@ function EpubFrame({
       ref={iframeRef}
       key={`${book.id}-${spineItem.href}`}
       className={`epubFrame ${pageMode === "double" ? "epubDoublePage" : ""}`}
-      title={`${book.title} chapter ${pageIndex + 1}`}
+      title={`${book.title} · ${epubChapterLabel(manifest, pageIndex) || pageIndex + 1}`}
       src={authenticatedResourcePath(`/api/books/${book.id}/epub/spine/${pageIndex}`)}
-      onLoad={applyEpubLayout}
+      onLoad={() => {
+        loadedDocument.current = iframeRef.current?.contentDocument ?? null;
+        applyEpubLayout();
+      }}
     />
   );
 }
@@ -5203,12 +5364,6 @@ function epubThemePalette(theme: EpubTheme) {
   };
 }
 
-function readEpubLocator(locator: string) {
-  const value = Number.parseInt(locator, 10);
-  if (!Number.isFinite(value)) return 0;
-  return Math.max(0, value);
-}
-
 function fallbackEpubManifest(book: Book, pages: Page[]): EpubManifest {
   return {
     title: book.title,
@@ -5222,52 +5377,11 @@ function fallbackEpubManifest(book: Book, pages: Page[]): EpubManifest {
       mediaType: "application/xhtml+xml",
     })),
     toc: pages.map((page) => ({
-      label: page.name || `Chapter ${page.index + 1}`,
+      label: page.name || `EPUB section ${page.index + 1}`,
       href: page.name,
       index: page.index,
     })),
   };
-}
-
-function resolveEpubHrefIndex(manifest: EpubManifest, value: string, fallbackIndex = 0) {
-  const href = stripEPUBFragment(value);
-  const exact = manifest.spine.find((spineItem) => stripEPUBFragment(spineItem.href) === href);
-  if (exact) return exact.index;
-  const clamped = Math.max(0, Math.min(fallbackIndex, Math.max(0, manifest.spine.length - 1)));
-  return Number.isFinite(clamped) ? clamped : 0;
-}
-
-function stripEPUBFragment(value: string) {
-  return value.split("#", 1)[0];
-}
-
-function normalizeEPUBLink(currentHref: string, href: string) {
-  const marker = "/epub/resources/";
-  const markerIndex = href.indexOf(marker);
-  if (markerIndex >= 0) {
-    const resource = href.slice(markerIndex + marker.length).split(/[?#]/, 1)[0];
-    return decodeEPUBPath(resource);
-  }
-  try {
-    const url = new URL(href, `https://foliospace.local/${currentHref}`);
-    return decodeEPUBPath(url.pathname.replace(/^\/+/, "")) + url.hash;
-  } catch {
-    if (href.startsWith("#")) return `${stripEPUBFragment(currentHref)}${href}`;
-    return href;
-  }
-}
-
-function decodeEPUBPath(value: string) {
-  return value
-    .split("/")
-    .map((part) => {
-      try {
-        return decodeURIComponent(part);
-      } catch {
-        return part;
-      }
-    })
-    .join("/");
 }
 
 function readWebtoonLocator(locator: string) {
@@ -5662,6 +5776,9 @@ const translations = {
     next: "下一页",
     epubChapterPageLabel: (current: number, total: number) => `本章第 ${current} / ${total} 页`,
     epubChapterSlider: "章节进度",
+    epubReturnToText: "返回原文",
+    savedReadingPosition: "已保存阅读位置",
+    epubLinkUnavailable: "无法定位此书内链接",
     pageSlider: "页面进度",
     pageLabel: (current: number, total: number) => `第 ${current} / ${total} 页`,
     selectBook: "选择一本书开始阅读。",
@@ -5675,7 +5792,7 @@ const translations = {
     yesterday: "昨天",
     daysAgo: (days: number) => `${days} 天前`,
     recentlyAdded: "最近添加",
-    epubChapter: (chapter: number) => `EPUB 第 ${chapter} 章`,
+    epubChapter: (chapter: number) => `EPUB 内容段 ${chapter}`,
     comicPage: (page: number) => `漫画第 ${page} 页`,
     percentRead: (percent: number) => `${percent}%`,
   },
@@ -5918,6 +6035,9 @@ const translations = {
     next: "下一頁",
     epubChapterPageLabel: (current: number, total: number) => `本章第 ${current} / ${total} 頁`,
     epubChapterSlider: "章節進度",
+    epubReturnToText: "返回原文",
+    savedReadingPosition: "已儲存閱讀位置",
+    epubLinkUnavailable: "無法定位此書內連結",
     pageSlider: "頁面進度",
     pageLabel: (current: number, total: number) => `第 ${current} / ${total} 頁`,
     selectBook: "選擇一本書開始閱讀。",
@@ -5931,7 +6051,7 @@ const translations = {
     yesterday: "昨天",
     daysAgo: (days: number) => `${days} 天前`,
     recentlyAdded: "最近新增",
-    epubChapter: (chapter: number) => `EPUB 第 ${chapter} 章`,
+    epubChapter: (chapter: number) => `EPUB 內容段 ${chapter}`,
     comicPage: (page: number) => `漫畫第 ${page} 頁`,
     percentRead: (percent: number) => `${percent}%`,
   },
@@ -6174,6 +6294,9 @@ const translations = {
     next: "Next",
     epubChapterPageLabel: (current: number, total: number) => `Chapter page ${current} / ${total}`,
     epubChapterSlider: "Chapter progress",
+    epubReturnToText: "Back to text",
+    savedReadingPosition: "Saved reading position",
+    epubLinkUnavailable: "This book link could not be located",
     pageSlider: "Page progress",
     pageLabel: (current: number, total: number) => `Page ${current} / ${total}`,
     selectBook: "Select a book to start reading.",
@@ -6187,7 +6310,7 @@ const translations = {
     yesterday: "Yesterday",
     daysAgo: (days: number) => `${days} days ago`,
     recentlyAdded: "Recently added",
-    epubChapter: (chapter: number) => `EPUB chapter ${chapter}`,
+    epubChapter: (chapter: number) => `EPUB section ${chapter}`,
     comicPage: (page: number) => `Comic page ${page}`,
     percentRead: (percent: number) => `${percent}%`,
   },
@@ -6430,6 +6553,9 @@ const translations = {
     next: "次へ",
     epubChapterPageLabel: (current: number, total: number) => `章内 ${current} / ${total} ページ`,
     epubChapterSlider: "章の進捗",
+    epubReturnToText: "本文に戻る",
+    savedReadingPosition: "保存した読書位置",
+    epubLinkUnavailable: "本内リンクの場所が見つかりません",
     pageSlider: "ページ進捗",
     pageLabel: (current: number, total: number) => `${current} / ${total} ページ`,
     selectBook: "本を選んで読み始めます。",
@@ -6443,7 +6569,7 @@ const translations = {
     yesterday: "昨日",
     daysAgo: (days: number) => `${days}日前`,
     recentlyAdded: "最近追加",
-    epubChapter: (chapter: number) => `EPUB ${chapter}章`,
+    epubChapter: (chapter: number) => `EPUB セクション ${chapter}`,
     comicPage: (page: number) => `漫画 ${page}ページ`,
     percentRead: (percent: number) => `${percent}%`,
   },
@@ -6686,6 +6812,9 @@ const translations = {
     next: "다음",
     epubChapterPageLabel: (current: number, total: number) => `현재 장 ${current} / ${total}페이지`,
     epubChapterSlider: "장 진행률",
+    epubReturnToText: "본문으로 돌아가기",
+    savedReadingPosition: "저장된 읽기 위치",
+    epubLinkUnavailable: "책 내부 링크를 찾을 수 없습니다",
     pageSlider: "페이지 진행률",
     pageLabel: (current: number, total: number) => `${current} / ${total}페이지`,
     selectBook: "읽을 책을 선택하세요.",
@@ -6699,7 +6828,7 @@ const translations = {
     yesterday: "어제",
     daysAgo: (days: number) => `${days}일 전`,
     recentlyAdded: "최근 추가",
-    epubChapter: (chapter: number) => `EPUB ${chapter}장`,
+    epubChapter: (chapter: number) => `EPUB 섹션 ${chapter}`,
     comicPage: (page: number) => `만화 ${page}페이지`,
     percentRead: (percent: number) => `${percent}%`,
   },
@@ -7014,7 +7143,7 @@ function statusLabel(value: string, t: Translation) {
 }
 
 function continueMeta(book: Book, t: Translation) {
-  const location = book.format === "epub" ? t.epubChapter(book.currentPage + 1) : t.comicPage(book.currentPage + 1);
+  const location = book.format === "epub" ? t.savedReadingPosition : t.comicPage(book.currentPage + 1);
   const lastRead = t.lastRead(book.lastReadAt ? formatRelativeDate(book.lastReadAt, t) : t.recentlyAdded);
   return `${t.percentRead(readingProgress(book))} · ${location} · ${lastRead}${book.collectionTitle ? ` · ${book.collectionTitle}` : ""}`;
 }

@@ -67,6 +67,7 @@ export type Book = {
   updatedAt: string;
   currentPage: number;
   progressFraction: number;
+  progressLocator?: string;
   lastReadAt: string;
   privateStatus: string;
   favorite: boolean;
@@ -463,6 +464,7 @@ export type ReadProgress = {
   pageIndex: number;
   locator: string;
   progressFraction: number;
+  updatedAt?: string;
 };
 
 export type WebtoonReadingPosition = {
@@ -890,6 +892,7 @@ export const api = {
   saveWebtoonReadingPosition: (bookId: number, position: WebtoonReadingPosition) =>
     request<WebtoonReadingPosition>(`/api/books/${bookId}/reading-position/webtoon`, {
       method: "PUT",
+      timeoutMs: 10_000,
       body: JSON.stringify(position),
     }),
   progress: (bookId: number, pageIndex: number) =>
@@ -900,6 +903,7 @@ export const api = {
   progressDetail: (bookId: number, pageIndex: number, locator: string, progressFraction: number) =>
     request<{ ok: boolean }>(`/api/books/${bookId}/progress`, {
       method: "PUT",
+      timeoutMs: 10_000,
       body: JSON.stringify({ pageIndex, locator, progressFraction }),
     }),
   privateState: (bookId: number, state: BookPrivateState) =>

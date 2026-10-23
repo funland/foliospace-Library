@@ -103,6 +103,7 @@ type Book struct {
 	AddedAt              time.Time `json:"addedAt"`
 	UpdatedAt            time.Time `json:"updatedAt"`
 	CurrentPage          int       `json:"currentPage"`
+	ProgressLocator      string    `json:"progressLocator"`
 	ProgressFraction     float64   `json:"progressFraction"`
 	LastReadAt           time.Time `json:"lastReadAt"`
 	PrivateStatus        string    `json:"privateStatus"`

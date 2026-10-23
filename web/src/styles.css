@@ -2839,6 +2839,15 @@ button.danger:hover {
   font-weight: 700;
 }
 
+.epubReturnButton {
+  position: absolute;
+  left: 20px;
+  bottom: 14px;
+  z-index: 6;
+  border-radius: 999px;
+  box-shadow: 0 3px 12px rgba(31, 42, 46, 0.18);
+}
+
 .epubProgress {
   flex: 0 0 auto;
   color: #647177;

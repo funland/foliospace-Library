@@ -1422,7 +1422,8 @@ func (s *Store) ListContinueReadingForProfile(profileID int64, limit int) ([]dom
 	}
 	rows, err := s.db.Query(bookSelectSQL(profileID)+`
 		WHERE rp.book_id IS NOT NULL AND (COALESCE(rp.progress_fraction, 0) < 1
-          OR (b.format = 'epub' AND (b.page_count <= 0 OR rp.page_index < b.page_count - 1)))
+          OR (b.format = 'epub' AND COALESCE(rp.locator, '') <> '' AND rp.locator NOT GLOB '*[^0-9]*'
+            AND (b.page_count <= 0 OR rp.page_index < b.page_count - 1)))
           AND COALESCE(ps.private_status, '') <> 'finished'
 		ORDER BY rp.updated_at DESC, b.updated_at DESC
 		LIMIT ?`, limit)
@@ -4837,6 +4838,7 @@ func scanBook(row scanner) (domain.Book, error) {
 		&addedAt,
 		&updatedAt,
 		&book.CurrentPage,
+		&book.ProgressLocator,
 		&book.ProgressFraction,
 		&lastReadAt,
 		&book.PrivateStatus,
@@ -4916,7 +4918,7 @@ func bookSelectSQL(profileID int64) string {
 				COALESCE(f.abs_path, ''), COALESCE(f.size, 0), COALESCE(f.mtime, ''),
 				COALESCE(NULLIF(f.content_hash, ''), ''), COALESCE(NULLIF(f.content_hash_algorithm, ''), ''), COALESCE(NULLIF(f.content_revision, ''), ''),
 				b.created_at, b.updated_at,
-			COALESCE(rp.page_index, 0), COALESCE(rp.progress_fraction, 0), COALESCE(rp.updated_at, ''),
+			COALESCE(rp.page_index, 0), COALESCE(rp.locator, ''), COALESCE(rp.progress_fraction, 0), COALESCE(rp.updated_at, ''),
 			COALESCE(ps.private_status, ''), COALESCE(ps.favorite, 0), COALESCE(ps.rating, 0),
 			TRIM(COALESCE(b.tags, '') ||
 				CASE

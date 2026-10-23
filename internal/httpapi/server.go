@@ -2638,6 +2638,7 @@ type clientBook struct {
 	AddedAt              string   `json:"addedAt"`
 	UpdatedAt            string   `json:"updatedAt"`
 	CurrentPage          int      `json:"currentPage"`
+	ProgressLocator      string   `json:"progressLocator"`
 	ProgressFraction     float64  `json:"progressFraction"`
 	LastReadAt           string   `json:"lastReadAt"`
 	PrivateStatus        string   `json:"privateStatus"`
@@ -3459,6 +3460,7 @@ func clientBookItem(book domain.Book) clientBook {
 		AddedAt:              formatClientTime(book.AddedAt),
 		UpdatedAt:            formatClientTime(book.UpdatedAt),
 		CurrentPage:          book.CurrentPage,
+		ProgressLocator:      book.ProgressLocator,
 		ProgressFraction:     book.ProgressFraction,
 		LastReadAt:           formatClientTime(book.LastReadAt),
 		PrivateStatus:        book.PrivateStatus,

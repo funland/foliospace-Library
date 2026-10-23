@@ -119,6 +119,78 @@ func TestContinueReadingKeepsEarlierEPUBChapter(t *testing.T) {
 	}
 }
 
+func TestContinueReadingDistinguishesEPUBProgressLocatorFormats(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		locator   string
+		fraction  float64
+		pageIndex int
+		pageCount int
+		want      bool
+	}{
+		{"current chapter complete", "5", 1, 0, 10, true},
+		{"current first page complete", "0", 1, 0, 10, true},
+		{"current last chapter complete", "5", 1, 9, 10, false},
+		{"current chapter count unknown", "5", 1, 0, 0, true},
+		{"legacy path complete", "text/chapter.xhtml", 1, 0, 10, false},
+		{"legacy path count unknown", "text/chapter.xhtml", 1, 0, 0, false},
+		{"legacy path incomplete", "text/chapter.xhtml#note", .4, 0, 10, true},
+		{"empty locator complete", "", 1, 0, 10, false},
+		{"empty locator incomplete", "", .4, 0, 10, true},
+		{"numeric prefix path complete", "5.xhtml", 1, 0, 10, false},
+		{"decimal locator complete", "0.4", 1, 0, 10, false},
+		{"negative locator complete", "-1", 1, 0, 10, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			conn, err := db.Open(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			st := New(conn)
+			lib, err := st.CreateLibrary("Books", t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			series, err := st.UpsertSeries(lib.ID, "Books", ".")
+			if err != nil {
+				t.Fatal(err)
+			}
+			book, err := st.UpsertBook(series.ID, tc.name, "epub")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if book.ProgressLocator != "" {
+				t.Fatalf("new book locator = %q, want empty", book.ProgressLocator)
+			}
+			if _, err := conn.Exec(`UPDATE books SET page_count = ? WHERE id = ?`, tc.pageCount, book.ID); err != nil {
+				t.Fatal(err)
+			}
+			if err := st.SaveProgressDetail(book.ID, tc.pageIndex, tc.locator, tc.fraction); err != nil {
+				t.Fatal(err)
+			}
+			books, err := st.ListContinueReading(10)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (len(books) == 1) != tc.want {
+				t.Fatalf("continue books = %d, want included=%v", len(books), tc.want)
+			}
+			if tc.want && books[0].ProgressLocator != tc.locator {
+				t.Fatalf("continue locator = %q, want %q", books[0].ProgressLocator, tc.locator)
+			}
+			history, err := st.ListRecentBooks(10)
+			if err != nil || len(history) != 1 || history[0].ProgressLocator != tc.locator {
+				t.Fatalf("recent books lost locator: %#v, %v", history, err)
+			}
+			progress, err := st.Progress(book.ID)
+			if err != nil || progress.PageIndex != tc.pageIndex || progress.ProgressFraction != tc.fraction || progress.Locator != tc.locator {
+				t.Fatalf("stored progress changed: %#v, %v", progress, err)
+			}
+		})
+	}
+}
+
 func TestPrivateTagsDoNotReplaceImportedMetadata(t *testing.T) {
 	c, err := db.Open(t.TempDir())
 	if err != nil {
