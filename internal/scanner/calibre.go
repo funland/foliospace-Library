@@ -92,6 +92,7 @@ func (s *Scanner) mergeImportedBookMetadata(library domain.Library, path, relPat
 	legacy := old.Version != 2
 	baseline := bookMetadata{Title: old.Title, Creator: old.Creator, Description: old.Description, Tags: old.Tags}
 	baselineKnown := true
+	filenameBaseline := false
 	if legacy {
 		baseline, err = bookMetadataForPath(path, ext)
 		baselineKnown = err == nil
@@ -105,6 +106,14 @@ func (s *Scanner) mergeImportedBookMetadata(library domain.Library, path, relPat
 		if old.Title != "" {
 			baseline.Title = old.Title
 		}
+		// Early scans indexed only the filename and directory, even when the
+		// embedded PDF metadata was readable. Recognize that complete generated
+		// shape; a custom title, author, description, tags or collection opts out.
+		fallback := bookMetadata{Title: strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))}
+		fallbackSeries, _ := bookSeriesIdentity(library, relPath, fallback)
+		if old.Revision == "" && current.Title == fallback.Title && current.Creator == "" && current.Description == "" && len(current.Tags) == 0 && existing.Book.CollectionTitle == fallbackSeries {
+			baseline, baselineKnown, filenameBaseline = fallback, true, true
+		}
 		old.SeriesTitle, _ = bookSeriesIdentity(library, relPath, baseline)
 	}
 	seriesTitle, _ := bookSeriesIdentity(library, relPath, incoming)
@@ -113,6 +122,9 @@ func (s *Scanner) mergeImportedBookMetadata(library domain.Library, path, relPat
 		SeriesTitle: seriesTitle, PreservedFields: append([]string(nil), old.PreservedFields...), LegacyBaseline: old.LegacyBaseline}
 	if legacy {
 		state.LegacyBaseline = "embedded"
+		if filenameBaseline {
+			state.LegacyBaseline = "filename-fallback"
+		}
 		if !baselineKnown {
 			state.LegacyBaseline = "unavailable-preserve-nonempty"
 		}

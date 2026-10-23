@@ -696,3 +696,59 @@ func TestCalibreTitleCollisionDoesNotRenamePreservedTitle(t *testing.T) {
 		t.Fatalf("automatic title not disambiguated: %#v err=%v", other, err)
 	}
 }
+
+func TestCalibreRefreshRecognizesLegacyFilenameOnlyIndex(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "Pinyin Author", "Pinyin Book (88)", "Pinyin Book.epub")
+	makeZip(t, path, sampleEPUBEntriesWithMetadata("Embedded title", "Embedded author", "Embedded description"))
+	writeCalibreOPF(t, path, "中文书名", "中文作者", "tag")
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("Books", root, "book")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sc := NewWithWorkerCount(st, func() int { return 1 })
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, err := sc.indexResolvedFileMetadata(lib, path, info, ".epub", bookMetadata{Title: "Pinyin Book"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveProgressDetail(old.Book.ID, 1, "keep", .5); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpdateCollectionPrivateStateForProfile(old.Book.SeriesID, 0, domain.CollectionPrivateState{Favorite: true}); err != nil {
+		t.Fatal(err)
+	}
+	job, err := sc.ScanLibraryPath(lib, path)
+	if err != nil || job.ErrorCount != 0 {
+		t.Fatalf("refresh: %+v %v", job, err)
+	}
+	book, err := st.BookByID(old.Book.ID)
+	if err != nil || book.Title != "中文书名" || book.Creator != "中文作者" || book.CollectionTitle != "中文作者" {
+		t.Fatalf("filename index not upgraded: %+v %v", book, err)
+	}
+	progress, err := st.Progress(book.ID)
+	if err != nil || progress.Locator != "keep" {
+		t.Fatalf("progress changed: %+v %v", progress, err)
+	}
+	favorite, err := st.CollectionPrivateStateForProfile(book.SeriesID, 0)
+	if err != nil || !favorite.Favorite {
+		t.Fatalf("favorite lost: %+v %v", favorite, err)
+	}
+	raw, err := st.Setting(importedBookStateKey(book.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state importedBookState
+	if err := json.Unmarshal([]byte(raw), &state); err != nil || state.LegacyBaseline != "filename-fallback" || len(state.PreservedFields) != 0 {
+		t.Fatalf("unexpected baseline: %+v %v", state, err)
+	}
+}
