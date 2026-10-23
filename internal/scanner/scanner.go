@@ -4311,7 +4311,19 @@ func (s *Scanner) indexResolvedFileMetadata(library domain.Library, path string,
 	if importedState != nil && importedState.preserves("series") {
 		series, err = s.store.SeriesByID(existing.Book.SeriesID)
 	} else {
-		series, err = s.store.UpsertSeries(library.ID, seriesTitle, seriesDirectoryPath)
+		keepExistingSeries := false
+		if existingErr == nil && existing.Book.CollectionTitle != seriesTitle {
+			series, keepExistingSeries, err = s.existingDirectoryBookSeries(library, existing, metadata, seriesDirectoryPath)
+		}
+		if err == nil && keepExistingSeries && metadata.SourceRevision == "" {
+			// A changed relative label is not new metadata input. In particular,
+			// embedded/filename fallback must not replace an existing manual edit.
+			_, err = s.store.UpsertFile(existing.Book.ID, library.ID, path, relPath, info.Size(), info.ModTime(), ext)
+			return indexedBookResult{Book: existing.Book}, err
+		}
+		if err == nil && !keepExistingSeries {
+			series, err = s.store.UpsertSeries(library.ID, seriesTitle, seriesDirectoryPath)
+		}
 	}
 	if err != nil {
 		return indexedBookResult{}, err
@@ -4373,6 +4385,27 @@ func (s *Scanner) indexResolvedFileMetadata(library domain.Library, path string,
 		return indexedBookResult{}, err
 	}
 	return indexedBookResult{Book: book}, nil
+}
+
+func (s *Scanner) existingDirectoryBookSeries(library domain.Library, existing store.FileIndex, metadata bookMetadata, directoryPath string) (domain.Series, bool, error) {
+	// Ownership reconciliation may change the root-relative path while retaining
+	// a collection's ID and label. Its explicit directory is the stable anchor;
+	// regenerating a title here would split favorites from the existing series.
+	if existing.File.LibraryID != library.ID || (metadata.Creator != "" && !metadata.DirectoryCollection && !strings.EqualFold(strings.TrimSpace(library.AssetType), "comic")) {
+		return domain.Series{}, false, nil
+	}
+	series, err := s.store.SeriesByID(existing.Book.SeriesID)
+	if err != nil {
+		return domain.Series{}, false, err
+	}
+	if series.LibraryID != library.ID || series.CollectionType != "directory" || series.DirectoryPath == "" || filepath.Clean(series.DirectoryPath) != filepath.Clean(directoryPath) {
+		return domain.Series{}, false, nil
+	}
+	// Keep the existing repair for the original root-file fallback label.
+	if series.Title == "Unsorted" && filepath.Clean(series.DirectoryPath) == "." {
+		return domain.Series{}, false, nil
+	}
+	return series, true, nil
 }
 
 func bookSeriesIdentity(library domain.Library, relPath string, metadata bookMetadata) (string, string) {
