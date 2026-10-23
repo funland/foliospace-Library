@@ -54,6 +54,7 @@ type scanScope struct {
 	deferPageIndex   bool
 	bookMetadata     *bookmeta.Resolver
 	metadataWarnings *sync.Map
+	ownership        *scanOwnership
 }
 
 type scanDirState struct {
@@ -182,6 +183,19 @@ func (s *Scanner) RunRecentScanJobPath(library domain.Library, job domain.ScanJo
 }
 
 func (s *Scanner) runScanJob(library domain.Library, job domain.ScanJob, scope scanScope) (domain.ScanJob, error) {
+	var ownershipErr error
+	scope.ownership, ownershipErr = s.scanOwnership(library, scope.rootPath)
+	if ownershipErr != nil {
+		job.Status = "failed"
+		job.ErrorCount++
+		job.FinishedAt = time.Now()
+		_ = s.store.UpdateScanJob(job)
+		_ = s.store.AddJobEvent(job.ID, "error", "library ownership failed: "+ownershipErr.Error())
+		return job, ownershipErr
+	}
+	if count := len(scope.ownership.foreignPaths); count > 0 {
+		_ = s.store.AddJobEvent(job.ID, "info", fmt.Sprintf("preserving %d paths indexed by another library; ownership reconciliation requires preview", count))
+	}
 	scope.bookMetadata = bookmeta.NewResolver(library.RootPath)
 	scope.metadataWarnings = &sync.Map{}
 	_ = s.store.AddJobEvent(job.ID, "info", "scan started")
@@ -251,7 +265,7 @@ func (s *Scanner) runScanJob(library domain.Library, job domain.ScanJob, scope s
 				_ = s.store.UpdateScanJob(job)
 				return nil
 			}
-			if err := s.indexGameFile(library, path, info, ext); err != nil {
+			if err := s.indexGameFile(library, path, info, ext, scope.ownership); err != nil {
 				job.ErrorCount++
 				_ = s.recordPathError(library.ID, job.ID, path, domain.ErrorUnknownIO, err.Error())
 				_ = s.store.AddJobEvent(job.ID, "error", "game metadata failed: "+path)
@@ -413,7 +427,7 @@ func (s *Scanner) runScanJob(library domain.Library, job domain.ScanJob, scope s
 		return job, err
 	}
 	if scope.fullScan {
-		if err := s.cleanupSkippedEntries(library, &job); err != nil {
+		if err := s.cleanupSkippedEntries(library, &job, scope.ownership); err != nil {
 			job.Status = "failed"
 			job.CurrentPath = ""
 			job.FinishedAt = time.Now()
@@ -442,6 +456,19 @@ func (s *Scanner) runScanJob(library domain.Library, job domain.ScanJob, scope s
 }
 
 func (s *Scanner) runRecentScanJob(library domain.Library, job domain.ScanJob, scope scanScope, limit int) (domain.ScanJob, error) {
+	var ownershipErr error
+	scope.ownership, ownershipErr = s.scanOwnership(library, scope.rootPath)
+	if ownershipErr != nil {
+		job.Status = "failed"
+		job.ErrorCount++
+		job.FinishedAt = time.Now()
+		_ = s.store.UpdateScanJob(job)
+		_ = s.store.AddJobEvent(job.ID, "error", "library ownership failed: "+ownershipErr.Error())
+		return job, ownershipErr
+	}
+	if count := len(scope.ownership.foreignPaths); count > 0 {
+		_ = s.store.AddJobEvent(job.ID, "info", fmt.Sprintf("preserving %d paths indexed by another library; ownership reconciliation requires preview", count))
+	}
 	scope.bookMetadata = bookmeta.NewResolver(library.RootPath)
 	scope.metadataWarnings = &sync.Map{}
 	limit = NormalizeRecentScanLimit(limit)
@@ -641,6 +668,12 @@ func scanScopeForPath(library domain.Library, targetPath string) (scanScope, err
 
 func (s *Scanner) walkScanScope(library domain.Library, scope scanScope, dirStates map[string]*scanDirState, walkFn fs.WalkDirFunc) error {
 	return filepath.WalkDir(scope.rootPath, func(path string, entry fs.DirEntry, walkErr error) error {
+		if !scope.ownership.ownsPath(library.ID, path) {
+			if entry != nil && entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 		if walkErr == nil && entry.IsDir() {
 			if shouldSkipScanDir(library, path) {
 				return filepath.SkipDir
@@ -842,7 +875,7 @@ func (s *Scanner) runScanJobConcurrent(library domain.Library, job domain.ScanJo
 		return job, err
 	}
 	if scope.fullScan {
-		if err := s.cleanupSkippedEntries(library, &job); err != nil {
+		if err := s.cleanupSkippedEntries(library, &job, scope.ownership); err != nil {
 			job.Status = "failed"
 			job.CurrentPath = ""
 			job.FinishedAt = time.Now()
@@ -888,7 +921,7 @@ func (s *Scanner) processScanTask(library domain.Library, jobID int64, task scan
 			})
 			return
 		}
-		if err := s.indexGameFile(library, task.path, task.info, task.ext); err != nil {
+		if err := s.indexGameFile(library, task.path, task.info, task.ext, scope.ownership); err != nil {
 			s.recordTaskError(library.ID, jobID, task.path, domain.ErrorUnknownIO, "game metadata failed: ", err, updateJob)
 			return
 		}
@@ -1207,7 +1240,14 @@ func (s *Scanner) canSkipGame(library domain.Library, path string, info fs.FileI
 	return s.store.CanSkipGameSet(path, totalSize, info.ModTime(), platform, files)
 }
 
-func (s *Scanner) cleanupSkippedEntries(library domain.Library, job *domain.ScanJob) error {
+func (s *Scanner) cleanupSkippedEntries(library domain.Library, job *domain.ScanJob, ownership *scanOwnership) error {
+	// Legacy rows can still belong to this parent while their paths now belong
+	// to a child root. The existing broad cleanup has no path exclusion, so keep
+	// all records until ownership reconciliation has been separately reviewed.
+	if ownership.hasNestedRoots(library) {
+		_ = s.store.AddJobEvent(job.ID, "info", "preserving skipped-directory entries under overlapping library roots; ownership reconciliation requires preview")
+		return nil
+	}
 	deleted, err := s.store.DeleteSkippedDirectoryEntries(library.ID, skippedScanDirNames())
 	if err != nil {
 		return err
@@ -1519,7 +1559,7 @@ func (s *Scanner) unchangedMetadataOnlyFile(fileIndexes map[string]store.FileInd
 	return index, ok
 }
 
-func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.FileInfo, ext string) error {
+func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.FileInfo, ext string, ownership *scanOwnership) error {
 	relPath, err := filepath.Rel(library.RootPath, path)
 	if err != nil {
 		return fmt.Errorf("relative path: %w", err)
@@ -1531,7 +1571,7 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 		return s.indexDOSGameFile(library, path, info, ext, relPath)
 	}
 	if platform == "naomi2" {
-		return s.indexNaomi2GameFile(library, path, info, relPath)
+		return s.indexNaomi2GameFile(library, path, info, relPath, ownership)
 	}
 	naomiIdentity := naomiROMSetIdentity{}
 	naomiROMDetected := false
@@ -1785,6 +1825,9 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 	if platform == "pc98" {
 		if pc98Package != nil {
 			for _, stalePath := range pc98Package.staleSourcePaths {
+				if !ownership.ownsPath(library.ID, stalePath) {
+					continue
+				}
 				if err := s.store.DeleteGameByPath(stalePath); err != nil {
 					return err
 				}
@@ -1896,7 +1939,7 @@ func isNaomi2GameZIP(library domain.Library, path string) bool {
 	return strings.EqualFold(filepath.Base(dir), shortName) || dir == root
 }
 
-func (s *Scanner) indexNaomi2GameFile(library domain.Library, path string, info fs.FileInfo, relPath string) error {
+func (s *Scanner) indexNaomi2GameFile(library domain.Library, path string, info fs.FileInfo, relPath string, ownership *scanOwnership) error {
 	if isNaomi2BIOS(library, path) {
 		checksums, err := fileChecksums(path)
 		if err != nil {
@@ -1929,7 +1972,7 @@ func (s *Scanner) indexNaomi2GameFile(library domain.Library, path string, info 
 	files, totalSize, companionPath, err := naomi2IndexedGameFiles(path, info, shortName, entry)
 	if err != nil {
 		_ = s.store.DeleteGameByPath(path)
-		if companionPath != "" && entry.GDROM != "" {
+		if companionPath != "" && entry.GDROM != "" && ownership.ownsPath(library.ID, companionPath) {
 			_ = s.store.DeleteGameByPath(companionPath)
 		}
 		return err
@@ -1948,7 +1991,7 @@ func (s *Scanner) indexNaomi2GameFile(library domain.Library, path string, info 
 	if err := s.store.ReplaceGameFiles(game.ID, files); err != nil {
 		return err
 	}
-	if companionPath == "" || entry.GDROM == "" {
+	if companionPath == "" || entry.GDROM == "" || !ownership.ownsPath(library.ID, companionPath) {
 		return nil
 	}
 	companionInfo, err := os.Stat(companionPath)

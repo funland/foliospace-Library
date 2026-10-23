@@ -203,7 +203,9 @@ func (s *Scanner) recordBookMetadataWarning(jobID int64, scope scanScope, err er
 func (s *Scanner) refreshRecentBookMetadata(library domain.Library, job *domain.ScanJob, scope scanScope, indexes map[string]store.FileIndex) error {
 	paths := make([]string, 0, len(indexes))
 	for path := range indexes {
-		paths = append(paths, path)
+		if scope.ownership.ownsPath(library.ID, path) {
+			paths = append(paths, path)
+		}
 	}
 	sort.Strings(paths)
 	for _, path := range paths {

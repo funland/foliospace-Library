@@ -49,17 +49,36 @@ type VideoWorkPage struct {
 	HasMore bool        `json:"hasMore"`
 }
 type VideoWorkFile struct {
-	VideoID   int64  `json:"videoId"`
-	Title     string `json:"title"`
-	Version   string `json:"version"`
-	Season    *int   `json:"season"`
-	Episode   *int   `json:"episode"`
-	FileURL   string `json:"fileUrl"`
-	Format    string `json:"format"`
-	SeasonID  *int64 `json:"seasonId"`
-	EpisodeID *int64 `json:"episodeId"`
-	VersionID int64  `json:"versionId"`
+	Size            int64   `json:"size"`
+	DurationSeconds float64 `json:"durationSeconds"`
+	Width           int     `json:"width"`
+	Height          int     `json:"height"`
+	VideoCodec      string  `json:"videoCodec,omitempty"`
+	AudioCodec      string  `json:"audioCodec,omitempty"`
+	VideoID         int64   `json:"videoId"`
+	Title           string  `json:"title"`
+	Version         string  `json:"version"`
+	Season          *int    `json:"season"`
+	Episode         *int    `json:"episode"`
+	FileURL         string  `json:"fileUrl"`
+	Format          string  `json:"format"`
+	SeasonID        *int64  `json:"seasonId"`
+	EpisodeID       *int64  `json:"episodeId"`
+	VersionID       int64   `json:"versionId"`
 }
+
+// VideoWorkDetails is an optional provider cache, never a source for manual fields.
+type VideoWorkDetails struct {
+	OriginalTitle  string   `json:"originalTitle,omitempty"`
+	RuntimeMinutes int      `json:"runtimeMinutes,omitempty"`
+	Genres         []string `json:"genres,omitempty"`
+	Directors      []string `json:"directors,omitempty"`
+	Cast           []string `json:"cast,omitempty"`
+	Rating         float64  `json:"rating,omitempty"`
+	VoteCount      int      `json:"voteCount,omitempty"`
+	FetchedAt      int64    `json:"fetchedAt,omitempty"`
+}
+
 type VideoWorkFiles struct {
 	Items   []VideoWorkFile `json:"items"`
 	Total   int             `json:"total"`

@@ -567,11 +567,11 @@ func (s *Service) UpdateCollectionPrivateStateForProfile(seriesID int64, profile
 }
 
 func (s *Service) ListBooks(seriesID int64) ([]domain.Book, error) {
-	return s.store.ListBooks(seriesID)
+	return s.presentBooks(s.store.ListBooks(seriesID))
 }
 
 func (s *Service) ListBooksForProfile(seriesID int64, profileID int64) ([]domain.Book, error) {
-	return s.store.ListBooksForProfile(seriesID, profileID)
+	return s.presentBooks(s.store.ListBooksForProfile(seriesID, profileID))
 }
 
 func (s *Service) OpenSeriesCover(seriesID int64) (PageStream, error) {
@@ -755,19 +755,19 @@ func nonEmptyStrings(values ...string) []string {
 }
 
 func (s *Service) ListBooksPage(options domain.BookListOptions) (domain.BookListPage, error) {
-	return s.store.ListBooksPage(options)
+	return s.presentBookPage(s.store.ListBooksPage(options))
 }
 
 func (s *Service) ListBooksPageForProfile(options domain.BookListOptions, profileID int64) (domain.BookListPage, error) {
-	return s.store.ListBooksPageForProfile(options, profileID)
+	return s.presentBookPage(s.store.ListBooksPageForProfile(options, profileID))
 }
 
 func (s *Service) SearchBooks(query string, limit int) ([]domain.Book, error) {
-	return s.store.SearchBooks(query, limit)
+	return s.presentBooks(s.store.SearchBooks(query, limit))
 }
 
 func (s *Service) SearchBooksForProfile(query string, profileID int64, limit int) ([]domain.Book, error) {
-	return s.store.SearchBooksForProfile(query, profileID, limit)
+	return s.presentBooks(s.store.SearchBooksForProfile(query, profileID, limit))
 }
 
 func (s *Service) UpdateBookPrivateState(bookID int64, state domain.BookPrivateState) (domain.Book, error) {
@@ -790,7 +790,7 @@ func (s *Service) UpdateBookPrivateStateForProfile(bookID int64, profileID int64
 	if err := s.store.UpdateBookPrivateStateForProfile(bookID, profileID, state); err != nil {
 		return domain.Book{}, err
 	}
-	return s.store.BookByIDForProfile(bookID, profileID)
+	return s.presentBook(s.store.BookByIDForProfile(bookID, profileID))
 }
 
 func (s *Service) ClientPreferences() (domain.ClientPreferences, error) {
@@ -856,7 +856,7 @@ func (s *Service) ContinueReading(limit int) ([]domain.Book, error) {
 	if err != nil {
 		return nil, err
 	}
-	return filterCurrentBookFiles(books, limit), nil
+	return s.store.ApplyBookCollectionPresentation(filterCurrentBookFiles(books, limit))
 }
 
 func (s *Service) ContinueReadingForProfile(profileID int64, limit int) ([]domain.Book, error) {
@@ -864,7 +864,7 @@ func (s *Service) ContinueReadingForProfile(profileID int64, limit int) ([]domai
 	if err != nil {
 		return nil, err
 	}
-	return filterCurrentBookFiles(books, limit), nil
+	return s.store.ApplyBookCollectionPresentation(filterCurrentBookFiles(books, limit))
 }
 
 func (s *Service) RecentBooks(limit int) ([]domain.Book, error) {
@@ -872,7 +872,7 @@ func (s *Service) RecentBooks(limit int) ([]domain.Book, error) {
 	if err != nil {
 		return nil, err
 	}
-	return filterCurrentBookFiles(books, limit), nil
+	return s.store.ApplyBookCollectionPresentation(filterCurrentBookFiles(books, limit))
 }
 
 func (s *Service) RecentBooksForProfile(profileID int64, limit int) ([]domain.Book, error) {
@@ -880,7 +880,7 @@ func (s *Service) RecentBooksForProfile(profileID int64, limit int) ([]domain.Bo
 	if err != nil {
 		return nil, err
 	}
-	return filterCurrentBookFiles(books, limit), nil
+	return s.store.ApplyBookCollectionPresentation(filterCurrentBookFiles(books, limit))
 }
 
 func (s *Service) RecentGames(limit int) ([]domain.GameAsset, error) {
@@ -2129,7 +2129,7 @@ func (s *Service) FavoriteBooks(limit int) ([]domain.Book, error) {
 	if err != nil {
 		return nil, err
 	}
-	return filterCurrentBookFiles(books, limit), nil
+	return s.store.ApplyBookCollectionPresentation(filterCurrentBookFiles(books, limit))
 }
 
 func (s *Service) FavoriteBooksForProfile(profileID int64, limit int) ([]domain.Book, error) {
@@ -2137,7 +2137,7 @@ func (s *Service) FavoriteBooksForProfile(profileID int64, limit int) ([]domain.
 	if err != nil {
 		return nil, err
 	}
-	return filterCurrentBookFiles(books, limit), nil
+	return s.store.ApplyBookCollectionPresentation(filterCurrentBookFiles(books, limit))
 }
 
 func (s *Service) BooksByPrivateStatus(status string, limit int) ([]domain.Book, error) {
@@ -2145,7 +2145,7 @@ func (s *Service) BooksByPrivateStatus(status string, limit int) ([]domain.Book,
 	if err != nil {
 		return nil, err
 	}
-	return filterCurrentBookFiles(books, limit), nil
+	return s.store.ApplyBookCollectionPresentation(filterCurrentBookFiles(books, limit))
 }
 
 func (s *Service) BooksByPrivateStatusForProfile(profileID int64, status string, limit int) ([]domain.Book, error) {
@@ -2153,7 +2153,7 @@ func (s *Service) BooksByPrivateStatusForProfile(profileID int64, status string,
 	if err != nil {
 		return nil, err
 	}
-	return filterCurrentBookFiles(books, limit), nil
+	return s.store.ApplyBookCollectionPresentation(filterCurrentBookFiles(books, limit))
 }
 
 func shelfFetchLimit(limit int) int {
@@ -2862,11 +2862,11 @@ func releaseVideoThumbnail() {
 }
 
 func (s *Service) Book(id int64) (domain.Book, error) {
-	return s.store.BookByID(id)
+	return s.presentBook(s.store.BookByID(id))
 }
 
 func (s *Service) BookForProfile(id int64, profileID int64) (domain.Book, error) {
-	return s.store.BookByIDForProfile(id, profileID)
+	return s.presentBook(s.store.BookByIDForProfile(id, profileID))
 }
 
 func (s *Service) AnalyzeBook(id int64) ([]domain.Page, error) {

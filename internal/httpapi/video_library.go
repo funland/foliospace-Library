@@ -55,6 +55,31 @@ func videoError(w http.ResponseWriter, err error) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"code": code, "error": code})
 }
 func (s *Server) handleVideoWorks(w http.ResponseWriter, r *http.Request) {
+	if strings.HasSuffix(r.URL.Path, "/details") {
+		id, tail, ok := parseIDTail(r.URL.Path, "/api/client/video-works/")
+		if !ok || tail != "details" {
+			http.NotFound(w, r)
+			return
+		}
+		var details domain.VideoWorkDetails
+		var err error
+		if r.Method == "GET" {
+			details, err = s.service.VideoWorkDetails(id)
+		} else if r.Method == "POST" {
+			details, err = s.service.RefreshVideoWorkDetails(r.Context(), id)
+		} else {
+			w.Header().Set("Allow", "GET, POST")
+			w.WriteHeader(405)
+			return
+		}
+		if err != nil {
+			videoError(w, err)
+			return
+		}
+		w.Header().Set("Cache-Control", "private, no-store")
+		writeJSON(w, details)
+		return
+	}
 	if r.Method != "GET" {
 		w.WriteHeader(405)
 		return

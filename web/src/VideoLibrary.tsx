@@ -5,6 +5,8 @@ import { VideoPoster } from "./VideoPoster";
 import { invalidateAllVideoPosters } from "./video-poster-cache";
 import { message, type Page, type Work, type WorkFile } from "./video-library-types";
 import "./video-library.css";
+import { VideoWorkDetails, VideoSavedProgress } from "./VideoWorkDetails";
+import { videoSpecs } from "./video-details";
 
 export function VideoLibrary({ locale, onPlay, presentation = "catalog" }: { locale: string; onPlay: (video: VideoAsset) => void; presentation?: "home" | "catalog" }) {
   const zh = locale.startsWith("zh");
@@ -28,6 +30,12 @@ export function VideoLibrary({ locale, onPlay, presentation = "catalog" }: { loc
       .finally(() => { if (!abort.signal.aborted) setLoading(false); });
     return () => abort.abort();
   }, [tab, search, kind, offset, work, season, revision]);
+  useEffect(() => {
+    if (!work || revision === 0) return;
+    const abort = new AbortController();
+    request<Work>(`/api/client/video-works/${work.id}`,{signal:abort.signal}).then(value=>{if(!abort.signal.aborted)setWork(value);}).catch(e=>{if(!abort.signal.aborted)setError(message(e));});
+    return () => abort.abort();
+  }, [work?.id, revision]);
   async function play(id: number) {
     try { const result = await request<{ video: VideoAsset }>(`/api/client/videos/${id}/manifest`); onPlay(result.video); }
     catch (e) { setError(message(e)); }
@@ -35,9 +43,10 @@ export function VideoLibrary({ locale, onPlay, presentation = "catalog" }: { loc
   return <section className={`videoLibrary${presentation === "home" ? " videoHomeLibrary" : ""}`} aria-label={text("Movie and TV library", "影视资料库")}>
     {work ? <img className="videoBackdrop" src={`/api/videos/${work.videoId}/artwork/backdrop?r=${revision}`} alt="" /> : null}
     <header><div><small>FOLIOSPACE LIBRARY</small><h2>{work?.title || (presentation === "home" ? text("Collections · Movies & series", "作品集 · 电影与剧集") : text("Movies & series", "电影与剧集"))}</h2>
-      <p>{work?.overview || text("Browse by title, then choose a version or episode. Unmatched videos are available in All files.", "按作品浏览海报，点开选择版本或剧集；未匹配影片仍可在全部文件中访问。")}</p>{work ? <small>{text("Work ID", "作品 ID")}: {work.id}</small> : null}</div>
+      <p>{(work ? work.overview || text("No synopsis available.", "暂无剧情简介。") : text("Browse by title, then choose a version or episode. Unmatched videos are available in All files.", "按作品浏览海报，点开选择版本或剧集；未匹配影片仍可在全部文件中访问。"))}</p></div>
       {work ? <button onClick={() => { setWork(null); setOffset(0); setSeason(""); }}>{text("Back to library", "返回资料库")}</button> : null}
     </header>
+    {work ? <VideoWorkDetails key={`${work.id}:${revision}`} work={work} zh={zh} /> : null}
     {!work ? <form className="videoLibraryTools" onSubmit={e => { e.preventDefault(); setSearch(query); setOffset(0); }}>
       <div role="group" aria-label={text("Browse mode", "浏览方式")}>
         <button type="button" aria-pressed={tab === "works"} onClick={() => { setTab("works"); setOffset(0); }}>{text("Poster wall", "海报墙")}</button>
@@ -61,7 +70,9 @@ export function VideoLibrary({ locale, onPlay, presentation = "catalog" }: { loc
         </button>; }
         const f = item as WorkFile; const v = item as VideoAsset; const id = work ? f.videoId : v.id;
         return <article key={id}><VideoPoster videoId={id} revision={revision} /><div><strong>{work ? f.title : v.displayTitle || v.title}</strong>
-          <small>{work ? `${f.season !== null ? `S${f.season} E${f.episode} · ` : ""}${f.version}` : v.format}</small>
+          {work ? <small>{f.season !== null ? `${text("Season", "第")} ${f.season} ${text("Episode", "季 · 第")} ${f.episode} ${text("", "集")} · ` : ""}{/^\w+ · file \d+$/.test(f.version) ? `${text("Original version", "原始版本")} ${f.videoId}` : f.version}</small> : null}
+          <small>{videoSpecs(work ? f : v, zh).join(" · ")}</small>
+          <VideoSavedProgress key={id} id={id} zh={zh} />
           <button onClick={() => void play(id)}>{text("Play", "播放")}</button> <a href={`/api/client/videos/${id}/file`}>{text("Original file", "原文件")}</a> <button onClick={() => setEditing(id)}>{text("Manage metadata", "管理元数据")}</button>
         </div></article>;
       })}

@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { request, type Library, type Series } from "./api";
 import "./comic-browser.css";
+import { collectionCountScope, collectionDisplayTitle, displayText, originalCollectionPath } from "./library-presentation";
 
 type Node = Partial<Series> & { kind: "folder" | "collection"; libraryId: number; path: string; title: string; displayTitle: string; bookCount: number; collectionCount?: number };
 type Page = { items: Node[]; total: number; hasMore: boolean };
@@ -33,17 +34,17 @@ export function ComicBrowser({ libraries, locale, onOpen, renderCover, refreshKe
   if (!relevant.length) return null;
   return <section className="comicBrowser" aria-label={t.title}>
     <h2>{t.title}</h2>
-    <div className="comicTools"><select aria-label={t.all} value={location.libraryId} onChange={e => navigate(Number(e.target.value), "")}><option value="0">{t.all}</option>{relevant.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select>
+    <div className="comicTools"><select aria-label={t.all} value={location.libraryId} onChange={e => navigate(Number(e.target.value), "")}><option value="0">{t.all}</option>{relevant.map(l => <option key={l.id} value={l.id}>{displayText(l.name)}</option>)}</select>
     <form onSubmit={e => {e.preventDefault();setQuery(input);setOffset(0);}}><input aria-label={t.search} placeholder={t.search} value={input} onChange={e => setInput(e.target.value)} /><button>{t.go}</button></form></div>
-    <nav className="comicBreadcrumbs" aria-label={t.directory}><button onClick={() => navigate(location.libraryId, "")}>{t.root}</button>{location.path.split("/").filter(Boolean).map((part, index, all) => <button key={index} onClick={() => navigate(location.libraryId, all.slice(0,index+1).join("/"))}>/ {part}</button>)}</nav>
+    <nav className="comicBreadcrumbs" aria-label={t.directory}><button onClick={() => navigate(location.libraryId, "")}>{displayText(libraries.find(l => l.id === location.libraryId)?.name) || t.root}</button>{location.path.split("/").filter(Boolean).map((part, index, all) => <button key={index} onClick={() => navigate(location.libraryId, all.slice(0,index+1).join("/"))}>/ {displayText(part)}</button>)}</nav>
     {error && <p role="alert">{error}</p>}{loading && <p role="status">{t.loading}</p>}
     {!loading && page?.items.length === 0 && <p>{t.empty}</p>}
     <div className="comicNodes">{page?.items.map(item => <article key={`${item.kind}-${item.libraryId}-${item.id || item.path}`}>
-      <button className="comicNode" onClick={() => item.kind === "folder" ? navigate(item.libraryId,item.path) : onOpen({...item, title: item.displayTitle, directoryPath: item.directoryPath || item.path} as Series)}>
+      <button className="comicNode" onClick={() => item.kind === "folder" ? navigate(item.libraryId,item.path) : onOpen({...item, directoryPath: item.directoryPath || item.path} as Series)}>
         <span className="comicNodeCover">{item.coverBookId ? renderCover(item.coverBookId, item.thumbnailUrl) : <span aria-hidden="true">▧</span>}</span>
-        <span className="comicNodeText"><strong>{item.displayTitle}</strong><small>{item.kind === "folder" ? `${item.collectionCount} ${t.collections} · ` : ""}{item.bookCount} {t.books}</small><small>{libraries.find(l => l.id === item.libraryId)?.name}{item.kind === "folder" ? ` · ${t.directory} ›` : ""}</small></span>
+        <span className="comicNodeText"><strong>{collectionDisplayTitle({ ...item, directoryPath: item.directoryPath || item.path }, libraries.find(l => l.id === item.libraryId))}</strong><small>{collectionCountScope(item.kind, locale)} · {item.kind === "folder" ? `${item.collectionCount || 0} ${t.collections} · ` : ""}{item.bookCount} {t.books}</small><small>{displayText(libraries.find(l => l.id === item.libraryId)?.name)}{item.kind === "folder" ? ` · ${t.directory} ›` : ""}</small></span>
       </button>
-      <details><summary>{t.original}</summary><code>{item.path || "."}</code></details>
+      <details><summary>{t.original}</summary><code>{originalCollectionPath(item.path, libraries.find(l => l.id === item.libraryId))}</code></details>
     </article>)}</div>
     {page && <nav className="comicPagination" aria-label={t.title}><button disabled={loading || offset === 0} onClick={() => setOffset(Math.max(0,offset-60))}>{t.prev}</button><span>{page.total ? offset+1 : 0}–{offset+page.items.length} / {page.total}</span><button disabled={loading || !page.hasMore} onClick={() => setOffset(offset+60)}>{t.next}</button></nav>}
   </section>;
@@ -64,7 +65,7 @@ export function ComicTitleRules({ libraries, locale, onSaved }: { libraries: Lib
     catch(e){setError(message(e));}finally{setBusy(false);}
   }
   if (!id) return null;
-  return <section className="panel wide comicRules"><h2>{t.rules}</h2><p>{t.hint}</p><select aria-label={t.rules} disabled={busy} value={id} onChange={e=>setSelected(Number(e.target.value))}>{relevant.map(l=><option key={l.id} value={l.id}>{l.name}</option>)}</select>
+  return <section className="panel wide comicRules"><h2>{t.rules}</h2><p>{t.hint}</p><select aria-label={t.rules} disabled={busy} value={id} onChange={e=>setSelected(Number(e.target.value))}>{relevant.map(l=><option key={l.id} value={l.id}>{displayText(l.name)}</option>)}</select>
   {rules.map((rule,index)=><div className="comicRule" key={index}><label>{t.pattern}<input value={rule.pattern} disabled={busy} onChange={e=>setRules(old=>old.map((r,i)=>i===index?{...r,pattern:e.target.value}:r))}/></label><label>{t.replacement}<input value={rule.replacement} disabled={busy} onChange={e=>setRules(old=>old.map((r,i)=>i===index?{...r,replacement:e.target.value}:r))}/></label><button disabled={busy} onClick={()=>setRules(old=>old.filter((_,i)=>i!==index))}>{t.remove}</button></div>)}
   <div className="comicTools"><button disabled={busy || !result || rules.length>=16} onClick={()=>setRules(old=>[...old,{pattern:"",replacement:""}])}>{t.add}</button><button disabled={busy || !result} onClick={()=>void action("POST")}>{t.preview}</button><button disabled={busy || !result} onClick={()=>void action("PUT")}>{t.save}</button><button disabled={busy || !result} onClick={()=>void action("PUT",true)}>{t.reset}</button></div>
   {error && <p role="alert">{error}</p>}<p role="status">{busy?t.loading:status}</p>

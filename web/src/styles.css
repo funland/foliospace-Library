@@ -4475,3 +4475,22 @@ button.danger:hover {
     border-radius: 0;
   }
 }
+
+/* Group only verified disc variants; individual game actions retain their IDs. */
+.gameDiscGroup {
+  grid-column: 1 / -1;
+  min-width: 0;
+  border: 1px solid var(--line, #d9e1e5);
+  border-radius: 12px;
+  padding: 12px;
+}
+.gameDiscGroup > summary {
+  cursor: pointer;
+  padding: 4px;
+}
+.gameDiscGroup > summary strong { margin-right: 12px; }
+.gameDiscGroup > summary small { color: var(--muted, #60747d); }
+.gameDiscGroup[open] > .catalogGrid { margin-top: 12px; }
+
+/* Keep edition and compatibility labels readable on compact game cards. */
+.gameCard .gameCardButton > small { display: block; white-space: normal; overflow-wrap: anywhere; line-height: 1.4; font-size: 11px; margin-top: 4px; }

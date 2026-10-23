@@ -281,7 +281,7 @@ const videoWorkAdded = `COALESCE((SELECT MAX(a.created_at) FROM video_versions v
 const videoWorkRepresentative = `(SELECT MIN(f.video_id) FROM video_versions v JOIN video_file_links f ON f.version_id=v.id WHERE v.work_id=w.id)`
 const videoWorkDisplayTitle = `CASE WHEN w.kind='movie' THEN COALESCE((SELECT ` + videoDisplayTitleSQL + ` FROM videos WHERE videos.id=` + videoWorkRepresentative + `),w.title) ELSE w.title END`
 const videoWorkDisplayYear = `COALESCE(NULLIF((SELECT json_extract(o.value_json,'$') FROM video_metadata_overrides o WHERE o.video_id=` + videoWorkRepresentative + ` AND o.field='year'),0),NULLIF(w.year,0),NULLIF((SELECT json_extract(m.local_json,'$.year') FROM video_metadata_inputs m WHERE m.video_id=` + videoWorkRepresentative + `),0),0)`
-const videoWorkSelect = `SELECT w.id,w.library_id,w.kind,` + videoWorkDisplayTitle + `,` + videoWorkDisplayYear + `,d.overview,d.provider,d.provider_id,
+const videoWorkSelect = `SELECT w.id,w.library_id,w.kind,` + videoWorkDisplayTitle + `,` + videoWorkDisplayYear + `,COALESCE((SELECT json_extract(o.value_json,'$') FROM video_metadata_overrides o WHERE o.video_id=` + videoWorkRepresentative + ` AND o.field='overview'),d.overview),d.provider,d.provider_id,
  (SELECT MIN(f.video_id) FROM video_versions v JOIN video_file_links f ON f.version_id=v.id WHERE v.work_id=w.id),
  (SELECT COUNT(DISTINCT f.video_id) FROM video_versions v JOIN video_file_links f ON f.version_id=v.id WHERE v.work_id=w.id),
  (SELECT COUNT(DISTINCT f.version_id) FROM video_versions v JOIN video_file_links f ON f.version_id=v.id WHERE v.work_id=w.id),
@@ -348,14 +348,14 @@ func (s *Store) VideoWorkEpisodeFiles(id int64, season *int, episodeID int64, li
 	if err := s.db.QueryRow(`SELECT COUNT(*)`+from, args...).Scan(&p.Total); err != nil {
 		return p, err
 	}
-	rows, err := s.db.Query(`SELECT a.id,`+strings.ReplaceAll(videoDisplayTitleSQL, "videos.", "a.")+`,v.label,s.number,e.number,a.format,s.id,e.id,v.id`+from+` ORDER BY s.number,e.number,v.label,a.id LIMIT ? OFFSET ?`, append(args, limit, offset)...)
+	rows, err := s.db.Query(`SELECT a.id,`+strings.ReplaceAll(videoDisplayTitleSQL, "videos.", "a.")+`,v.label,s.number,e.number,a.format,s.id,e.id,v.id,a.size,a.duration_seconds,a.width,a.height,a.video_codec,a.audio_codec`+from+` ORDER BY s.number,e.number,v.label,a.id LIMIT ? OFFSET ?`, append(args, limit, offset)...)
 	if err != nil {
 		return p, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var f domain.VideoWorkFile
-		if err = rows.Scan(&f.VideoID, &f.Title, &f.Version, &f.Season, &f.Episode, &f.Format, &f.SeasonID, &f.EpisodeID, &f.VersionID); err != nil {
+		if err = rows.Scan(&f.VideoID, &f.Title, &f.Version, &f.Season, &f.Episode, &f.Format, &f.SeasonID, &f.EpisodeID, &f.VersionID, &f.Size, &f.DurationSeconds, &f.Width, &f.Height, &f.VideoCodec, &f.AudioCodec); err != nil {
 			return p, err
 		}
 		f.FileURL = fmt.Sprintf("/api/client/videos/%d/file", f.VideoID)

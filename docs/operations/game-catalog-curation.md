@@ -34,6 +34,8 @@ The record list can filter by state, platform, or search text. Typical issue cod
 
 Use **Analyze Catalog** after adding policies or repairing ROM dependencies. The operation changes database classification and profiles only; it does not rename, move, rewrite, or delete source ROM files.
 
+MAME audits classify BIOS and device sets from the installed listxml attributes. A non-runnable support set also needs an incoming `romof` or `device_ref` relationship. The indexed archive must pass the matching ROM audit before receiving the dependency role. A runnable parent remains independently discoverable; `cloneof` alone never makes a game a dependency. Failed archive matches remain available for curation. The rebuild report counts successfully classified dependencies separately from rejected games.
+
 Use **Backfill checksums** after upgrading an existing library. Each run processes at most 100 pending canonical files in sequence and persists progress, so the NAS is not forced to hash the entire library in one task. Run it again until the pending count reaches zero. A blocked row also provides **Checksum** to repair only that game's canonical files. New scans write per-file SHA-1 values immediately; unchanged files reuse a checksum only when path, size, and modification time still match. A replaced or edited source invalidates that reuse and remains blocked from mobile resolution until it is scanned or checksummed again.
 
 ## 3. Compatibility Policies
@@ -74,6 +76,12 @@ Local metadata is the default. It preserves scanner-derived title, platform, for
 Hasheous can be enabled explicitly as an optional hash provider. FolioSpace sends CRC/SHA identity, stores returned candidates as metadata sources, and fills only missing display title, year, and publisher fields when the result is unambiguous. Ambiguous results require an administrator to select a candidate. Hasheous downtime or no match never blocks scanning, covers, manifests, or client launch.
 
 The metadata editor remains the final authority. Administrators can correct display title, description, genres, developers, publishers, release date, player count, rating, and external links. Manual corrections are stored separately from source files and continue to work with all online providers disabled.
+
+## 6. Multi-disc presentation
+
+The client game list can include `discGroupInfo` with an opaque `groupKey`, a shared `title`, and a one-based `discNumber`. This is a display hint derived from an explicit Disc, Disk, or CD number in a supported disc-media filename. It retains edition, region, revision, language, pilot and demo labels, and separates libraries, source folders, platforms and formats. File checksums do not determine these groups.
+
+The web catalog groups distinct disc numbers already loaded into the current result, and labels that count as loaded discs. Expanding a group exposes each original game card and ID, so favorites, likes, collections and launch manifests keep their existing ownership. A lone disc or duplicate disc number stays separate. Existing PC-98 source aggregation and PC-FX virtual playlists are unchanged. No file or database row is merged or removed.
 
 ## API And Safety
 

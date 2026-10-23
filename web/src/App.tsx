@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ComicBrowser, ComicTitleRules } from "./ComicBrowser";
 import { VideoLibrary } from "./VideoLibrary";
 import { VideoPoster } from "./VideoPoster";
+import { bookCollectionTitle, bookDisplayCreator, collectionCountScope, collectionDisplayTitle, displayText, distinctMetadata, gameIssueDescription, gameStateLabel, gameTaskActionLabel, gameTaskSummary, hasThumbnailCacheDetails, loadedDiscCount, mergeThumbnailStatus, ownershipPreviewCopy, presentationCopy, scanJobDescription } from "./library-presentation";
+import { groupGamesForPresentation } from "./game-presentation";
 import { isContinueReading, readingProgress, shouldRestoreWebtoonPosition } from "./reading-progress";
 import { resolveEpubProgress } from "./epub-progress";
 import { ReaderProgressSessions } from "./reader-progress-session";
@@ -10,7 +12,7 @@ import type { CSSProperties, FormEvent, MouseEvent, ReactNode, SyntheticEvent, T
 import { GlobalWorkerOptions, getDocument } from "pdfjs-dist";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import pdfWorkerURL from "pdfjs-dist/build/pdf.worker.mjs?url";
-import { api, Book, BookPrivateState, clearAuthToken, ClientInfo, ClientPreferences, CollectionPrivateState, DirectoryEntry, DirectoryListing, EpubManifest, EpubTocItem, FileError, GameAsset, GameCatalogSettings, GameCatalogTaskStatus, GameCurationItem, GameCurationSummary, GameDetails, GameMetadata, GamePlatformFacet, GamePrivateState, getActiveProfileId, getAuthToken, JobEvent, Library, ManualCollection, Page, Profile, ScanJob, Series, setActiveProfileId as persistActiveProfileId, setAuthToken, SetupStatus, ScanSettings, ThumbnailWorkerStatus, VideoAsset, VideoTranscodeQueueStatus, VideoTranscodeStatus } from "./api";
+import { api, request, Book, BookPrivateState, clearAuthToken, ClientInfo, ClientPreferences, CollectionPrivateState, DirectoryEntry, DirectoryListing, EpubManifest, EpubTocItem, FileError, GameAsset, GameCatalogSettings, GameCatalogTaskStatus, GameCurationItem, GameCurationSummary, GameDetails, GameMetadata, GamePlatformFacet, GamePrivateState, getActiveProfileId, getAuthToken, JobEvent, Library, ManualCollection, Page, Profile, ScanJob, Series, setActiveProfileId as persistActiveProfileId, setAuthToken, SetupStatus, ScanSettings, ThumbnailWorkerStatus, VideoAsset, VideoTranscodeQueueStatus, VideoTranscodeStatus } from "./api";
 import {
   DEFAULT_WEBTOON_ANCHOR_RATIO,
   WEBTOON_POSITION_SCHEMA,
@@ -1261,8 +1263,8 @@ export function App() {
             : action === "cancel"
               ? await api.cancelThumbnailJobs()
               : await api.cleanupThumbnailOrphans();
-      setThumbnailWorkerStatus(nextStatus);
-      setStatus(`Thumbnail worker: ${nextStatus.status}`);
+      setThumbnailWorkerStatus(previous => mergeThumbnailStatus(previous, nextStatus));
+      setStatus(`${t.thumbnailWorker}: ${jobStatusLabel(nextStatus.status, locale)}`);
     } catch (error) {
       handleAPIError(error);
     } finally {
@@ -1710,7 +1712,7 @@ export function App() {
     const refresh = async () => {
       try {
         const nextStatus = await api.thumbnailWorkerStatus({ timeoutMs: 4_000 });
-        if (!cancelled) setThumbnailWorkerStatus(nextStatus);
+        if (!cancelled) setThumbnailWorkerStatus(previous => mergeThumbnailStatus(previous, nextStatus));
       } catch (error) {
         if (!cancelled) setStatus(error instanceof Error ? error.message : "Failed to load thumbnail worker");
       }
@@ -2467,7 +2469,7 @@ export function App() {
   }, [collectionSections]);
 
   const scanProgressLabel = activeScan
-    ? `${activeScan.indexedFiles} indexed · ${activeScan.skippedFiles} skipped · ${activeScan.errorCount} errors`
+    ? `${t.indexed} ${activeScan.indexedFiles} · ${t.skipped} ${activeScan.skippedFiles} · ${t.errors} ${activeScan.errorCount}`
     : null;
   const activeScanElapsed = activeScan ? formatElapsed(activeScan, nowTick) : null;
   const selectedJobLatest = selectedJob ? jobs.find((job) => job.id === selectedJob.id) ?? selectedJob : null;
@@ -2694,8 +2696,8 @@ export function App() {
                           <span className="coverBadge">{book.format.toUpperCase()}</span>
                         </span>
                         <span>
-                          <strong>{book.title}</strong>
-                          <small>{book.collectionTitle || t.library} · {privateMeta(book, t) || t.noPrivateState}</small>
+                          <strong>{displayText(book.title)}</strong>
+                          <small>{distinctMetadata([bookCollectionTitle(book) || t.library, privateMeta(book, t) || t.noPrivateState], [book.title])}</small>
                         </span>
                       </button>
                     ))}
@@ -2757,7 +2759,7 @@ export function App() {
                       title={t.gameShelf}
                       subtitle={t.gameShelfSubtitle}
                       games={gameShelf.slice(0, 4)}
-                      meta={(game) => gameMeta(game, t)}
+                      meta={(game) => gameMeta(game, t, locale)}
                       moreLabel={t.more}
                       onMore={openGameCatalog}
                       labels={t}
@@ -2797,7 +2799,7 @@ export function App() {
             )}
 
             {!selectedSeries && homeSections.video && (
-              <VideoLibrary presentation="home" locale={locale} onPlay={(video) => {
+              <VideoLibrary presentation="home" key={`home-videos-${activeProfileId}`} locale={locale} onPlay={(video) => {
                 setSelectedVideo(video);
                 void openVideoCatalog();
               }} />
@@ -2859,6 +2861,8 @@ export function App() {
                         <CollectionCard
                           key={item.id}
                           item={item}
+                          library={libraries.find(library => library.id === item.libraryId)}
+                          locale={locale}
                           selected={selectedSeries?.id === item.id}
                           labels={t}
                           onOpen={openSeries}
@@ -2891,9 +2895,9 @@ export function App() {
               </div>
               <div className="coverWallHeader">
                 <div>
-                  <h1>{selectedSeries ? selectedSeries.title : t.volumeWall}</h1>
+                  <h1>{collectionDisplayTitle(selectedSeries, libraries.find(library => library.id === selectedSeries.libraryId))}</h1>
                   <small>
-                    {selectedSeries ? loadedCollectionCountLabel(selectedSeries, books.length, 0, 0, t) : t.selectCollection}
+                    {selectedSeries ? `${selectedSeries.collectionType === "directory" ? `${collectionCountScope("collection", locale)} · ` : ""}${loadedCollectionCountLabel(selectedSeries, books.length, 0, 0, t)}` : t.selectCollection}
                   </small>
                 </div>
                 <div className="coverWallTools">
@@ -2920,8 +2924,8 @@ export function App() {
                         <BookCover book={book} />
                         <span className="coverBadge">{book.format.toUpperCase()}</span>
                       </span>
-                      <strong>{book.title}</strong>
-                      {book.creator && <small className="bookCreator">{book.creator}</small>}
+                      <strong>{displayText(book.title)}</strong>
+                      {bookDisplayCreator(book) && <small className="bookCreator">{bookDisplayCreator(book)}</small>}
                       <small>
                         {t.singleVolume} · {book.pageCount ? t.pageCount(book.pageCount) : t.notAnalyzed}
                       </small>
@@ -2990,7 +2994,7 @@ export function App() {
                 {libraries.map((library) => (
                   <div className="row" key={library.id}>
                     <div>
-                      <strong>{library.name}</strong>
+                      <strong>{displayText(library.name)}</strong>
                       <small>{library.rootPath} · {libraryAssetTypeLabel(library.assetType, t)}</small>
                       <label className="libraryExcludeEditor">
                         <span>{t.excludePatterns}</span>
@@ -3000,6 +3004,7 @@ export function App() {
                           placeholder={t.excludePatternsInlinePlaceholder}
                         />
                       </label>
+                      <LibraryOwnershipPreview library={library} libraries={libraries} locale={locale} />
                     </div>
                     <div className="rowActions">
                       <button onClick={() => scan(library)}>{t.scan}</button>
@@ -3011,7 +3016,12 @@ export function App() {
               </div>
             </section>
 
-            <ComicTitleRules libraries={libraries} locale={locale} onSaved={() => setComicRevision(n => n + 1)} />
+            <ComicTitleRules libraries={libraries} locale={locale} onSaved={() => {
+              setComicRevision(n => n + 1);
+              setAllCollectionsLoaded(false);
+              void loadCollectionsPage(0, true);
+              void refreshAll().catch(handleAPIError);
+            }} />
         </div>}
 
         {view === "favorites" && (
@@ -3033,6 +3043,8 @@ export function App() {
                       <CollectionCard
                         key={`favorite-collection-${item.id}`}
                         item={item}
+                        library={libraries.find(library => library.id === item.libraryId)}
+                        locale={locale}
                         selected={selectedSeries?.id === item.id}
                         labels={t}
                         onOpen={openSeries}
@@ -3056,6 +3068,8 @@ export function App() {
                       <CollectionCard
                         key={`liked-collection-${item.id}`}
                         item={item}
+                        library={libraries.find(library => library.id === item.libraryId)}
+                        locale={locale}
                         selected={selectedSeries?.id === item.id}
                         labels={t}
                         onOpen={openSeries}
@@ -3081,9 +3095,9 @@ export function App() {
                           <BookCover book={book} />
                           <span className="coverBadge">{book.format.toUpperCase()}</span>
                         </span>
-                        <strong>{book.title}</strong>
-                        {book.creator && <small className="bookCreator">{book.creator}</small>}
-                        <small>{privateShelfMeta(book, t)}</small>
+                        <strong>{displayText(book.title)}</strong>
+                        {bookDisplayCreator(book) && <small className="bookCreator">{bookDisplayCreator(book)}</small>}
+                        <small>{privateShelfMeta(book, t, false)}</small>
                       </button>
                     ))}
                   </div>
@@ -3149,18 +3163,18 @@ export function App() {
                 <section className="gamePlatformGroup" key={`game-platform-${section.platform}`}>
                   <div className="gamePlatformHeader">
                     <h2>{section.title}</h2>
-                    <small>{t.gameCount(section.items.length)}</small>
+                    <small>{gamePlatformOptions.some(option => option.value === section.platform) ? t.catalogLoadedCount(section.items.length, gamePlatformOptions.find(option => option.value === section.platform)!.count) : `${presentationCopy(locale).loaded} ${t.gameCount(section.items.length)}`}</small>
                   </div>
                   <div className="catalogGrid games">
-                    {section.items.map((game) => (
-                      <GameTile
-                        key={`catalog-game-${game.id}`}
-                        game={game}
-                        meta={gameMeta(game, t)}
-                        labels={t}
-                        onStateChange={updateGameState}
-                        onAddToCollection={(item) => addAssetToManualCollection("game", item.id, item.title)}
-                      />
+                    {groupGamesForPresentation(section.items).map(group => group.multidisc ? (
+                      <details className="gameDiscGroup" key={group.key}>
+                        <summary><strong>{displayText(group.title)}</strong><small>{loadedDiscCount(group.items.length, locale)}</small></summary>
+                        <div className="catalogGrid games">
+                          {group.items.map(game => <GameTile key={`catalog-game-${game.id}`} game={game} meta={gameMeta(game, t, locale)} labels={t} onStateChange={updateGameState} onAddToCollection={item => addAssetToManualCollection("game", item.id, item.title)} />)}
+                        </div>
+                      </details>
+                    ) : (
+                      <GameTile key={`catalog-game-${group.items[0].id}`} game={group.items[0]} meta={gameMeta(group.items[0], t, locale)} labels={t} onStateChange={updateGameState} onAddToCollection={item => addAssetToManualCollection("game", item.id, item.title)} />
                     ))}
                   </div>
                 </section>
@@ -3234,10 +3248,12 @@ export function App() {
             {gameCatalogTask?.status && (
               <div className={`curationTask ${gameCatalogTask.status}`}>
                 <div>
-                  <strong>{gameCatalogTask.action || "task"}</strong>
-                  <span>{gameCatalogTask.message}</span>
+                  <strong>{gameTaskActionLabel(gameCatalogTask.action, locale)}</strong>
+                  <span>{jobStatusLabel(gameCatalogTask.status, locale)}</span>
                 </div>
-                <small>{gameCatalogTask.processed}{gameCatalogTask.total > 0 ? ` / ${gameCatalogTask.total}` : ""} processed · {gameCatalogTask.matched} succeeded · {gameCatalogTask.skipped || 0} skipped · {gameCatalogTask.failed} failed</small>
+                <small>{gameTaskSummary(gameCatalogTask, locale).text}</small>
+                {gameTaskSummary(gameCatalogTask, locale).hint && <small>{gameTaskSummary(gameCatalogTask, locale).hint}</small>}
+                {gameCatalogTask.message && <details><summary>{t.jobDetail}</summary><code>{gameCatalogTask.message}</code></details>}
                 {gameCatalogTask.status === "running" && <div className={`curationTaskProgress ${gameCatalogTask.total > 0 ? "determinate" : "indeterminate"}`}><span style={gameCatalogTask.total > 0 ? { width: `${Math.min(100, (gameCatalogTask.processed / gameCatalogTask.total) * 100)}%` } : undefined} /></div>}
                 {gameCatalogTask.errors && gameCatalogTask.errors.length > 0 && <details className="curationTaskErrors"><summary>{locale === "zh" || locale === "zht" ? `查看错误 (${gameCatalogTask.errors.length})` : `Errors (${gameCatalogTask.errors.length})`}</summary>{gameCatalogTask.errors.map((message, index) => <code key={`curation-task-error-${index}`}>{message}</code>)}</details>}
               </div>
@@ -3275,9 +3291,9 @@ export function App() {
               {gameCurationItems.map((item) => (
                 <article className="curationRow" key={`curation-${item.game.id}`}>
                   <img src={`/api/games/${item.game.id}/cover`} alt="" loading="lazy" />
-                  <div className="curationIdentity"><strong>{item.game.title}</strong><small>{item.game.platform || "unknown"} · {item.game.romSetName || item.game.format} · {item.game.catalogRole || "game"}</small><code>{item.game.sha1 ? item.game.sha1.slice(0, 12) : "no sha1"}</code></div>
-                  <div className="curationState"><span className={item.mobileReady ? "ready" : "muted"}>{item.mobileReady ? (locale === "zh" || locale === "zht" ? "移动端就绪" : "Mobile ready") : (locale === "zh" || locale === "zht" ? "移动端待处理" : "Mobile blocked")}</span><span>{item.checksummed} / {item.fileCount} checksums</span><span>{item.readyProfiles} profile(s) · {item.artworkStatus} cover · {item.metadataStatus} metadata</span></div>
-                  <div className="curationIssue"><strong>{item.issueCode || "ready"}</strong><small>{item.issueMessage || (locale === "zh" || locale === "zht" ? "可供客户端使用" : "Available to clients")}</small></div>
+                  <div className="curationIdentity"><strong>{displayText(item.game.title)}</strong><small>{distinctMetadata([item.game.platform || gameStateLabel("unknown", locale), item.game.romSetName || item.game.format, gameStateLabel(item.game.catalogRole || "game", locale)])}</small><code>{item.game.sha1 ? item.game.sha1.slice(0, 12) : "no sha1"}</code></div>
+                  <div className="curationState"><span className={item.mobileReady ? "ready" : "muted"}>{item.mobileReady ? (locale === "zh" || locale === "zht" ? "移动端就绪" : "Mobile ready") : (locale === "zh" || locale === "zht" ? "移动端待处理" : "Mobile blocked")}</span><span>{locale === "zh" || locale === "zht" ? "文件校验" : "Checksums"} {item.checksummed} / {item.fileCount}</span><span>{locale === "zh" || locale === "zht" ? "启动配置" : "Profiles"} {item.readyProfiles} · {locale === "zh" || locale === "zht" ? "封面" : "Cover"} {gameStateLabel(item.artworkStatus, locale)} · {locale === "zh" || locale === "zht" ? "元数据" : "Metadata"} {gameStateLabel(item.metadataStatus, locale)}</span></div>
+                  <div className="curationIssue"><strong>{gameStateLabel(item.issueCode || "ready", locale)}</strong><small>{gameIssueDescription(item.issueCode, item.issueMessage, locale)}</small></div>
                   <div className="curationRowActions">
                     {!item.mobileReady && <button type="button" disabled={gameCatalogTask?.status === "running"} onClick={() => runGameCompatibilityRebuild(item.game.id)}>{locale === "zh" || locale === "zht" ? "补齐兼容数据" : "Repair compatibility"}</button>}
                     <button type="button" onClick={() => editGameMetadata(item.game.id)}>{locale === "zh" || locale === "zht" ? "编辑" : "Edit"}</button>
@@ -3334,7 +3350,7 @@ export function App() {
 
         {view === "videos" && (
           <section className="catalogPage videoCatalogPage">
-            <VideoLibrary locale={locale} onPlay={setSelectedVideo} />
+            <VideoLibrary key={`catalog-videos-${activeProfileId}`} locale={locale} onPlay={setSelectedVideo} />
             <button aria-expanded={showLegacyVideoFiles} onClick={() => setShowLegacyVideoFiles(v => !v)}>{locale.startsWith("zh") ? "旧版文件浏览与收藏" : "Legacy file browser & collections"}</button>
             {showLegacyVideoFiles && (
             <div className="catalogHeader">
@@ -3843,6 +3859,7 @@ export function App() {
                   </div>
                   <span className={`workerBadge ${thumbnailWorkerStatus?.status || "idle"}`}>{jobStatusLabel(thumbnailWorkerStatus?.status || "idle", locale)}</span>
                 </div>
+                <small>{presentationCopy(locale).jobCount}</small>
                 <div className="thumbnailStats">
                   <span>{t.thumbnailQueued}<strong>{thumbnailWorkerStatus?.queued ?? 0}</strong></span>
                   <span>{t.thumbnailRunning}<strong>{thumbnailWorkerStatus?.running ?? 0}</strong></span>
@@ -3850,7 +3867,7 @@ export function App() {
                   <span>{t.thumbnailFailed}<strong>{thumbnailWorkerStatus?.failed ?? 0}</strong></span>
                   <span>{t.thumbnailCancelled}<strong>{thumbnailWorkerStatus?.cancelled ?? 0}</strong></span>
                 </div>
-                {thumbnailWorkerStatus?.cache && (
+                {hasThumbnailCacheDetails(thumbnailWorkerStatus) && thumbnailWorkerStatus?.cache && (
                   <div className="thumbnailCachePanel">
                     <div className="thumbnailCacheHeader">
                       <strong>{t.thumbnailCache}</strong>
@@ -3872,6 +3889,7 @@ export function App() {
                     </div>
                   </div>
                 )}
+                <small>{hasThumbnailCacheDetails(thumbnailWorkerStatus) ? presentationCopy(locale).cacheHint : presentationCopy(locale).cacheUnchecked}</small>
                 {thumbnailWorkerStatus?.activeJob?.bookTitle && (
                   <small className="thumbnailActive">
                     {t.thumbnailActive}: {thumbnailWorkerStatus.activeJob.bookTitle} · {thumbnailWorkerStatus.activeJob.size}
@@ -3930,9 +3948,10 @@ export function App() {
                 {activeQuickScanJob && <small>{t.quickScanAlreadyRunningHint(activeQuickScanJob.id)}</small>}
                 {activeRecentScanJob && <small>{t.recentScanAlreadyRunningHint(activeRecentScanJob.id)}</small>}
               </div>
+              <small>{presentationCopy(locale).recentJobs}</small>
               {jobs.map((job) => (
                 <button className="jobRow" key={job.id} onClick={() => openJob(job)}>
-                  <strong>{t.job} #{job.id}</strong>
+                  <strong>{t.job} #{job.id} · {scanJobDescription(job, libraries.find(library => library.id === job.libraryId), locale)}</strong>
                   <small>
                     {jobStatusLabel(job.status, locale)} · {t.discovered} {job.discoveredFiles} · {t.indexed} {job.indexedFiles} · {t.skipped} {job.skippedFiles} ·{" "}
                     {t.errors} {job.errorCount} · {t.metadata} {job.metadataUpdatedFiles} · {t.moved} {job.reclassifiedFiles} · {t.elapsed} {formatElapsed(job, nowTick)}
@@ -3961,6 +3980,7 @@ export function App() {
                     {canResumeJob(selectedJobLatest) && <button onClick={() => controlJob(selectedJobLatest, "resume")}>{t.resume}</button>}
                     {canCancelJob(selectedJobLatest) && <button className="danger" onClick={() => controlJob(selectedJobLatest, "cancel")}>{t.cancel}</button>}
                   </div>
+                  <small>{presentationCopy(locale).target}: {selectedJobLatest.targetPath || libraries.find(library => library.id === selectedJobLatest.libraryId)?.rootPath || "—"}</small>
                   {selectedJobLatest.currentPath && <code className="currentPath">{selectedJobLatest.currentPath}</code>}
                   <h2>{t.events}</h2>
                   <div className="eventList">
@@ -4273,7 +4293,7 @@ function BookShelf({
                 <span className="coverBadge">{book.format.toUpperCase()}</span>
               </span>
               <span>
-                <strong>{book.title}</strong>
+                <strong>{displayText(book.title)}</strong>
                 <small>{meta(book)}</small>
                 {progress && (
                   <span className="shelfProgress" aria-label={`${readingProgress(book)} percent read`}>
@@ -4298,36 +4318,79 @@ function BookShelf({
   );
 }
 
+type OwnershipPreview = {
+  libraryId: number;
+  excludedRoots: { libraryId: number; rootPath: string }[];
+  conflictingRecords: number;
+  examples: { assetType: string; assetId: number; path: string; currentLibraryId: number; expectedLibraryId: number }[];
+};
+
+function LibraryOwnershipPreview({ library, libraries, locale }: { library: Library; libraries: Library[]; locale: Locale }) {
+  const copy = ownershipPreviewCopy(locale);
+  const [preview, setPreview] = useState<OwnershipPreview | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  async function inspect() {
+    setBusy(true);
+    setError("");
+    setPreview(null);
+    try {
+      setPreview(await request<OwnershipPreview>(`/api/libraries/${library.id}/ownership-preview`));
+    } catch (error) {
+      setError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+  const name = (id: number) => displayText(libraries.find(item => item.id === id)?.name) || `#${id}`;
+  return <div>
+    <button type="button" disabled={busy} onClick={() => void inspect()}>{busy ? copy.loading : copy.preview}</button>
+    {error && <small role="alert">{error}</small>}
+    {preview && <div role="status">
+      <small>{copy.hint}</small>
+      <strong>{copy.conflicts}: {preview.conflictingRecords}</strong>
+      <details><summary>{copy.excluded} ({preview.excludedRoots.length})</summary>
+        {preview.excludedRoots.length ? <ul>{preview.excludedRoots.map(root => <li key={root.libraryId}>{name(root.libraryId)} · <code>{root.rootPath}</code></li>)}</ul> : <small>{copy.none}</small>}
+      </details>
+      {preview.examples.length > 0 && <details><summary>{copy.examples}</summary><ul>{preview.examples.map(item => <li key={`${item.assetType}-${item.assetId}`}><code>{item.path}</code><small>{copy.current}: {name(item.currentLibraryId)} → {copy.expected}: {name(item.expectedLibraryId)}</small></li>)}</ul></details>}
+    </div>}
+  </div>;
+}
+
 function CollectionCard({
   item,
+  library,
+  locale,
   selected,
   labels,
   onOpen,
   onStateChange,
 }: {
   item: Series;
+  library?: Library;
+  locale: Locale;
   selected: boolean;
   labels: Translation;
   onOpen: (item: Series) => void;
   onStateChange: (item: Series, patch: Partial<CollectionPrivateState>) => void;
 }) {
+  const title = collectionDisplayTitle(item, library);
   return (
     <div className="collectionCardShell">
       <button
         className={selected ? "collectionCard selected" : "collectionCard"}
         onClick={() => onOpen(item)}
         onMouseDown={(event) => event.preventDefault()}
-        title={item.title}
+        title={title}
       >
         <span className={collectionThumbClass(item)}>
           {item.collectionType !== "game_platform" && (
             <CollectionCover series={item} />
           )}
-          <span className="collectionInitials">{collectionInitials(item.title)}</span>
+          <span className="collectionInitials">{collectionInitials(title)}</span>
         </span>
-        <strong>{item.title}</strong>
-        {item.primaryType !== "book" && <small>{item.directoryPath || "."}</small>}
-        <em>{collectionCountLabel(item, labels)}</em>
+        <strong>{title}</strong>
+        <em>{item.collectionType === "directory" ? `${collectionCountScope("collection", locale)} · ` : ""}{collectionCountLabel(item, labels)}</em>
       </button>
       <div className="collectionActions">
         <button
@@ -4833,7 +4896,7 @@ function GameTile({
           <span className="gameCoverTitle">Now Printing</span>
           <span className="gameCoverFormat">{game.format.toUpperCase()}</span>
         </span>
-        <strong>{game.title}</strong>
+        <strong>{displayText(game.title)}</strong>
         <small>{meta}</small>
       </button>
       <div className="gameCardActions">
@@ -5581,7 +5644,7 @@ const translations = {
     favoriteSubtitle: "你的私人收藏",
     favoriteCollections: "收藏的作品集",
     likedCollections: "点赞的作品集",
-    favoriteBooks: "收藏的书",
+    favoriteBooks: "收藏条目",
     noFavorites: "还没有收藏",
     wantSubtitle: "稍后再读",
     gameShelf: "游戏库",
@@ -5840,7 +5903,7 @@ const translations = {
     favoriteSubtitle: "你的私人收藏",
     favoriteCollections: "收藏的作品集",
     likedCollections: "讚好的作品集",
-    favoriteBooks: "收藏的書",
+    favoriteBooks: "收藏項目",
     noFavorites: "還沒有收藏",
     wantSubtitle: "稍後再讀",
     gameShelf: "遊戲庫",
@@ -6099,7 +6162,7 @@ const translations = {
     favoriteSubtitle: "Private picks",
     favoriteCollections: "Favorite collections",
     likedCollections: "Liked collections",
-    favoriteBooks: "Favorite books",
+    favoriteBooks: "Favorite items",
     noFavorites: "No favorites yet",
     wantSubtitle: "Queued for later",
     gameShelf: "Game Shelf",
@@ -6358,7 +6421,7 @@ const translations = {
     favoriteSubtitle: "お気に入り",
     favoriteCollections: "お気に入りのコレクション",
     likedCollections: "いいねしたコレクション",
-    favoriteBooks: "お気に入りの本",
+    favoriteBooks: "お気に入りの項目",
     noFavorites: "お気に入りはまだありません",
     wantSubtitle: "あとで読む",
     gameShelf: "ゲーム棚",
@@ -6617,7 +6680,7 @@ const translations = {
     favoriteSubtitle: "개인 즐겨찾기",
     favoriteCollections: "즐겨찾기 컬렉션",
     likedCollections: "좋아요 컬렉션",
-    favoriteBooks: "즐겨찾기 도서",
+    favoriteBooks: "즐겨찾기 항목",
     noFavorites: "아직 즐겨찾기가 없습니다",
     wantSubtitle: "나중에 읽기",
     gameShelf: "게임 선반",
@@ -7145,7 +7208,7 @@ function statusLabel(value: string, t: Translation) {
 function continueMeta(book: Book, t: Translation) {
   const location = book.format === "epub" ? t.savedReadingPosition : t.comicPage(book.currentPage + 1);
   const lastRead = t.lastRead(book.lastReadAt ? formatRelativeDate(book.lastReadAt, t) : t.recentlyAdded);
-  return `${t.percentRead(readingProgress(book))} · ${location} · ${lastRead}${book.collectionTitle ? ` · ${book.collectionTitle}` : ""}`;
+  return distinctMetadata([t.percentRead(readingProgress(book)), location, lastRead, bookCollectionTitle(book)], [book.title]);
 }
 
 function isActiveScanStatus(status: string) {
@@ -7190,16 +7253,14 @@ function canResumeJob(job: ScanJob) {
 
 
 
-function privateShelfMeta(book: Book, t: Translation) {
-  const meta = privateMeta(book, t);
-  const location = book.creator || book.collectionTitle || t.library;
-  return meta ? `${meta} · ${location}` : location;
+function privateShelfMeta(book: Book, t: Translation, includeCreator = true) {
+  const creator = bookDisplayCreator(book);
+  return distinctMetadata([privateMeta(book, t), includeCreator ? creator : "", bookCollectionTitle(book)], [book.title, ...(includeCreator ? [] : [creator])]);
 }
 
-function gameMeta(game: GameAsset, t: Translation) {
-  return [game.platform || game.format, game.region, game.romSetName, game.compatibility]
-    .filter(value => value && value.toLowerCase() !== "unknown")
-    .join(" · ") || t.assetTypeGame;
+function gameMeta(game: GameAsset, t: Translation, locale: Locale) {
+  return distinctMetadata([game.platform || game.format, game.region, game.romSetName, game.compatibility?.toLowerCase() === "unknown" ? "" : gameStateLabel(game.compatibility, locale), game.discGroupInfo?.title]
+    .filter(value => value && value.toLowerCase() !== "unknown"), [game.title]) || t.assetTypeGame;
 }
 
 function videoMeta(video: VideoAsset, t: Translation) {
@@ -7296,7 +7357,7 @@ function splitCommaList(value: string) {
 
 function recentMeta(book: Book, t: Translation) {
   const added = formatRelativeDate(book.addedAt, t);
-  return `${added}${book.creator ? ` · ${book.creator}` : book.collectionTitle ? ` · ${book.collectionTitle}` : ""}`;
+  return distinctMetadata([added, bookDisplayCreator(book), bookCollectionTitle(book)], [book.title]);
 }
 
 function formatRelativeDate(value: string, t: Translation) {
@@ -7341,6 +7402,9 @@ function jobStatusLabel(status: string, locale: Locale): string {
     stopped: { zh: "已停止", zht: "已停止", en: "Stopped", ja: "停止", ko: "중지됨" },
     completed: { zh: "已完成", zht: "已完成", en: "Completed", ja: "完了", ko: "완료" },
     failed: { zh: "失败", zht: "失敗", en: "Failed", ja: "失敗", ko: "실패" },
+    interrupted: { zh: "已中断", zht: "已中斷", en: "Interrupted", ja: "中断", ko: "중단됨" },
+    pause_requested: { zh: "正在暂停", zht: "正在暫停", en: "Pausing", ja: "一時停止中", ko: "일시 중지 중" },
+    cancel_requested: { zh: "正在取消", zht: "正在取消", en: "Cancelling", ja: "キャンセル中", ko: "취소 중" },
     cancelled: { zh: "已取消", zht: "已取消", en: "Cancelled", ja: "キャンセル済み", ko: "취소됨" },
   };
   return states[status]?.[locale] || status;

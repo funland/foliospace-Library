@@ -638,7 +638,7 @@ func (s *Store) applyCollectionPrivateStates(profileID int64, items []domain.Ser
 			items[i].Liked = itemState.liked
 		}
 	}
-	return items, nil
+	return s.applySeriesPresentation(items)
 }
 
 func (s *Store) CreateManualCollection(collection domain.ManualCollection) (domain.ManualCollection, error) {
@@ -3984,6 +3984,7 @@ func scanFileIndex(row scanner) (FileIndex, error) {
 	item.Book.Analyzed = item.Analyzed
 	item.Book.PageCount = item.PageCount
 	item.Book.FilePath = item.File.AbsPath
+	item.Book.DisplayCreator = domain.CreatorDisplayName(item.Book.Creator)
 	return item, nil
 }
 
@@ -4752,6 +4753,7 @@ func scanSeries(row scanner) (domain.Series, error) {
 		return series, err
 	}
 	series.PrimaryType = normalizeCollectionPrimaryType(series.PrimaryType)
+	series.DisplayTitle = series.Title
 	series.AddedAt = parseTime(addedAt)
 	return series, nil
 }
@@ -4849,6 +4851,7 @@ func scanBook(row scanner) (domain.Book, error) {
 	); err != nil {
 		return book, err
 	}
+	book.DisplayCreator = domain.CreatorDisplayName(book.Creator)
 	book.BookType = "single_volume"
 	if book.ThumbnailStatus == "" {
 		book.ThumbnailStatus = "pending"

@@ -791,7 +791,7 @@ func (s *Service) runGameCatalogAnalysis() {
 
 func (s *Service) normalizeGameCatalogRoles() (processed, changed int64, err error) {
 	for offset := 0; ; offset += 200 {
-		page, pageErr := s.store.ListGamesPage(domain.GameListOptions{Limit: 200, Offset: offset, Sort: "title"})
+		page, pageErr := s.store.ListGamesPage(domain.GameListOptions{Limit: 200, Offset: offset, Sort: "title", IncludeDependencies: true})
 		if pageErr != nil {
 			return processed, changed, pageErr
 		}
@@ -804,7 +804,7 @@ func (s *Service) normalizeGameCatalogRoles() (processed, changed int64, err err
 				}
 			}
 			expected := launchcatalog.CatalogRole(game, dosLaunch)
-			if launchcatalog.IsStrictArcadePlatform(game.Platform) {
+			if expected != launchcatalog.RoleDependency && launchcatalog.IsStrictArcadePlatform(game.Platform) {
 				if profiles, profileErr := s.store.GameLaunchProfiles(game.ID); profileErr == nil && len(profiles) > 0 {
 					expected = launchcatalog.RoleGame
 				}

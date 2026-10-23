@@ -20,16 +20,17 @@ import (
 const fbNeoCoreSHA256 = "6ebc2675c272c8d654935647ac336d45bbd97452c4d5943290d5ffc75678d9f1"
 
 type rebuildOutput struct {
-	Policy          string                                `json:"policy"`
-	DATName         string                                `json:"datName"`
-	DATVersion      string                                `json:"datVersion"`
-	DATSHA256       string                                `json:"datSha256"`
-	ProfileRevision int                                   `json:"profileRevision"`
-	Candidates      int                                   `json:"candidates"`
-	Matched         int                                   `json:"matched"`
-	Result          domain.GameLaunchProfileRebuildResult `json:"result"`
-	Failures        []string                              `json:"failures,omitempty"`
-	DryRun          bool                                  `json:"dryRun"`
+	Policy                 string                                `json:"policy"`
+	DATName                string                                `json:"datName"`
+	DATVersion             string                                `json:"datVersion"`
+	DATSHA256              string                                `json:"datSha256"`
+	ProfileRevision        int                                   `json:"profileRevision"`
+	Candidates             int                                   `json:"candidates"`
+	Matched                int                                   `json:"matched"`
+	DependenciesClassified int                                   `json:"dependenciesClassified,omitempty"`
+	Result                 domain.GameLaunchProfileRebuildResult `json:"result"`
+	Failures               []string                              `json:"failures,omitempty"`
+	DryRun                 bool                                  `json:"dryRun"`
 }
 
 func main() {
@@ -214,6 +215,23 @@ func rebuildMAMEProfiles(appStore *store.Store, listXMLPath string, platforms ma
 			continue
 		}
 		matched++
+		if catalog.DependencyKind(setName) != "" {
+			// The catalog establishes the role; the normal archive audit proves
+			// this indexed file is that set before hiding it from game discovery.
+			var dependencyErr error
+			if !validContainerIdentity(candidate) {
+				dependencyErr = fmt.Errorf("dependency container has no stable SHA-1 identity")
+			} else {
+				dependencyErr = launchprofile.ValidateMAMEArchive(candidate.FilePath, machine)
+			}
+			if dependencyErr == nil {
+				update.CatalogRole = launchcatalog.RoleDependency
+			} else {
+				failures = append(failures, fmt.Sprintf("game=%d set=%s: %v", candidate.ID, setName, dependencyErr))
+			}
+			updates = append(updates, update)
+			continue
+		}
 		profile, auditErr := buildMAMEProfile(catalog, machine, candidate, bySet, targets[0], policy)
 		if auditErr == nil {
 			profiles = append(profiles, profile)
@@ -255,8 +273,15 @@ func rebuildMAMEProfiles(appStore *store.Store, listXMLPath string, platforms ma
 			return rebuildOutput{}, err
 		}
 	}
+	dependenciesClassified := 0
+	for _, update := range updates {
+		if update.CatalogRole == launchcatalog.RoleDependency {
+			dependenciesClassified++
+		}
+	}
+	result.GamesRejected -= dependenciesClassified
 	return rebuildOutput{
-		Policy: policy, DATName: "MAME", DATVersion: version,
+		Policy: policy, DATName: "MAME", DATVersion: version, DependenciesClassified: dependenciesClassified,
 		DATSHA256: catalog.SHA256, ProfileRevision: catalog.Revision,
 		Candidates: len(scoped), Matched: matched, Result: result, Failures: failures, DryRun: dryRun,
 	}, nil

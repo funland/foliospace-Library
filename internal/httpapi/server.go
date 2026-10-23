@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"foliospace-reader/internal/domain"
+	"foliospace-reader/internal/gamepresentation"
 	"foliospace-reader/internal/launchcatalog"
 	"foliospace-reader/internal/service"
 )
@@ -1685,6 +1686,16 @@ func (s *Server) handleLibraryAction(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if tail == "ownership-preview" {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", "GET")
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		preview, err := s.service.PreviewLibraryOwnership(id)
+		writeJSONOrError(w, preview, err)
+		return
+	}
 	if tail == "" && r.Method == http.MethodPut {
 		var req struct {
 			ExcludePatterns []string `json:"excludePatterns"`
@@ -2594,6 +2605,7 @@ type clientSearchResponse struct {
 }
 
 type clientCollection struct {
+	DisplayTitle    string `json:"displayTitle,omitempty"`
 	ID              int64  `json:"id"`
 	LibraryID       int64  `json:"libraryId"`
 	Title           string `json:"title"`
@@ -2618,38 +2630,40 @@ type clientCollectionListPageResponse struct {
 }
 
 type clientBook struct {
-	ID                   int64    `json:"id"`
-	CollectionID         int64    `json:"collectionId"`
-	SeriesID             int64    `json:"seriesId"`
-	CollectionTitle      string   `json:"collectionTitle,omitempty"`
-	Title                string   `json:"title"`
-	Creator              string   `json:"creator,omitempty"`
-	Description          string   `json:"description,omitempty"`
-	BookType             string   `json:"bookType"`
-	Format               string   `json:"format"`
-	PageCount            int      `json:"pageCount"`
-	CoverStatus          string   `json:"coverStatus"`
-	CoverURL             string   `json:"coverUrl"`
-	ThumbnailStatus      string   `json:"thumbnailStatus"`
-	ThumbnailURL         string   `json:"thumbnailUrl"`
-	ManifestURL          string   `json:"manifestUrl"`
-	DownloadURL          string   `json:"downloadUrl"`
-	Analyzed             bool     `json:"analyzed"`
-	AddedAt              string   `json:"addedAt"`
-	UpdatedAt            string   `json:"updatedAt"`
-	CurrentPage          int      `json:"currentPage"`
-	ProgressLocator      string   `json:"progressLocator"`
-	ProgressFraction     float64  `json:"progressFraction"`
-	LastReadAt           string   `json:"lastReadAt"`
-	PrivateStatus        string   `json:"privateStatus"`
-	Favorite             bool     `json:"favorite"`
-	Rating               int      `json:"rating"`
-	Tags                 []string `json:"tags"`
-	Summary              string   `json:"summary"`
-	ContentHash          *string  `json:"contentHash"`
-	ContentHashAlgorithm *string  `json:"contentHashAlgorithm"`
-	FileSize             *int64   `json:"fileSize"`
-	ContentRevision      *string  `json:"contentRevision"`
+	CollectionDisplayTitle string   `json:"collectionDisplayTitle,omitempty"`
+	DisplayCreator         string   `json:"displayCreator,omitempty"`
+	ID                     int64    `json:"id"`
+	CollectionID           int64    `json:"collectionId"`
+	SeriesID               int64    `json:"seriesId"`
+	CollectionTitle        string   `json:"collectionTitle,omitempty"`
+	Title                  string   `json:"title"`
+	Creator                string   `json:"creator,omitempty"`
+	Description            string   `json:"description,omitempty"`
+	BookType               string   `json:"bookType"`
+	Format                 string   `json:"format"`
+	PageCount              int      `json:"pageCount"`
+	CoverStatus            string   `json:"coverStatus"`
+	CoverURL               string   `json:"coverUrl"`
+	ThumbnailStatus        string   `json:"thumbnailStatus"`
+	ThumbnailURL           string   `json:"thumbnailUrl"`
+	ManifestURL            string   `json:"manifestUrl"`
+	DownloadURL            string   `json:"downloadUrl"`
+	Analyzed               bool     `json:"analyzed"`
+	AddedAt                string   `json:"addedAt"`
+	UpdatedAt              string   `json:"updatedAt"`
+	CurrentPage            int      `json:"currentPage"`
+	ProgressLocator        string   `json:"progressLocator"`
+	ProgressFraction       float64  `json:"progressFraction"`
+	LastReadAt             string   `json:"lastReadAt"`
+	PrivateStatus          string   `json:"privateStatus"`
+	Favorite               bool     `json:"favorite"`
+	Rating                 int      `json:"rating"`
+	Tags                   []string `json:"tags"`
+	Summary                string   `json:"summary"`
+	ContentHash            *string  `json:"contentHash"`
+	ContentHashAlgorithm   *string  `json:"contentHashAlgorithm"`
+	FileSize               *int64   `json:"fileSize"`
+	ContentRevision        *string  `json:"contentRevision"`
 }
 
 type clientBookListPageResponse struct {
@@ -2673,30 +2687,31 @@ type clientBookManifestResponse struct {
 }
 
 type clientGame struct {
-	ID               int64  `json:"id"`
-	AssetType        string `json:"assetType"`
-	Title            string `json:"title"`
-	Platform         string `json:"platform"`
-	ROMSetName       string `json:"romSetName,omitempty"`
-	ParentROMSetName string `json:"parentRomSetName,omitempty"`
-	Region           string `json:"region,omitempty"`
-	Format           string `json:"format"`
-	ContentMode      string `json:"contentMode,omitempty"`
-	Validation       string `json:"validation,omitempty"`
-	FileName         string `json:"fileName,omitempty"`
-	Size             int64  `json:"size"`
-	CRC32            string `json:"crc32"`
-	SHA1             string `json:"sha1"`
-	EmulatorHint     string `json:"emulatorHint"`
-	InputProfile     string `json:"inputProfile,omitempty"`
-	Compatibility    string `json:"compatibility"`
-	CatalogRole      string `json:"catalogRole,omitempty"`
-	CoverURL         string `json:"coverUrl,omitempty"`
-	ManifestURL      string `json:"manifestUrl"`
-	DownloadURL      string `json:"downloadUrl,omitempty"`
-	InstallURL       string `json:"installUrl,omitempty"`
-	Favorite         bool   `json:"favorite"`
-	Liked            bool   `json:"liked"`
+	DiscGroupInfo    *gamepresentation.Info `json:"discGroupInfo,omitempty"`
+	ID               int64                  `json:"id"`
+	AssetType        string                 `json:"assetType"`
+	Title            string                 `json:"title"`
+	Platform         string                 `json:"platform"`
+	ROMSetName       string                 `json:"romSetName,omitempty"`
+	ParentROMSetName string                 `json:"parentRomSetName,omitempty"`
+	Region           string                 `json:"region,omitempty"`
+	Format           string                 `json:"format"`
+	ContentMode      string                 `json:"contentMode,omitempty"`
+	Validation       string                 `json:"validation,omitempty"`
+	FileName         string                 `json:"fileName,omitempty"`
+	Size             int64                  `json:"size"`
+	CRC32            string                 `json:"crc32"`
+	SHA1             string                 `json:"sha1"`
+	EmulatorHint     string                 `json:"emulatorHint"`
+	InputProfile     string                 `json:"inputProfile,omitempty"`
+	Compatibility    string                 `json:"compatibility"`
+	CatalogRole      string                 `json:"catalogRole,omitempty"`
+	CoverURL         string                 `json:"coverUrl,omitempty"`
+	ManifestURL      string                 `json:"manifestUrl"`
+	DownloadURL      string                 `json:"downloadUrl,omitempty"`
+	InstallURL       string                 `json:"installUrl,omitempty"`
+	Favorite         bool                   `json:"favorite"`
+	Liked            bool                   `json:"liked"`
 }
 
 type clientGameManifestResponse struct {
@@ -2911,6 +2926,7 @@ func (s *Server) clientCollections(collections []domain.Series) []clientCollecti
 	out := make([]clientCollection, 0, len(collections))
 	for _, collection := range collections {
 		item := clientCollection{
+			DisplayTitle:   collection.DisplayTitle,
 			ID:             collection.ID,
 			LibraryID:      collection.LibraryID,
 			Title:          collection.Title,
@@ -3019,6 +3035,7 @@ func clientGameItem(game domain.GameAsset) clientGame {
 		inputProfile = "mahjong"
 	}
 	item := clientGame{
+		DiscGroupInfo:    gamepresentation.DiscInfo(game),
 		ID:               game.ID,
 		AssetType:        "game",
 		Title:            game.Title,
@@ -3440,38 +3457,40 @@ func clientBookItem(book domain.Book) clientBook {
 		fileSize = &size
 	}
 	return clientBook{
-		ID:                   book.ID,
-		CollectionID:         book.SeriesID,
-		SeriesID:             book.SeriesID,
-		CollectionTitle:      book.CollectionTitle,
-		Title:                book.Title,
-		Creator:              book.Creator,
-		Description:          book.Description,
-		BookType:             book.BookType,
-		Format:               book.Format,
-		PageCount:            book.PageCount,
-		CoverStatus:          book.CoverStatus,
-		CoverURL:             clientCoverURL(book.ID) + bookArtworkRevision(book),
-		ThumbnailStatus:      thumbnailStatus(book),
-		ThumbnailURL:         clientThumbnailURL(book.ID, "small") + bookArtworkRevision(book),
-		ManifestURL:          fmt.Sprintf("/api/client/books/%d/manifest", book.ID),
-		DownloadURL:          clientBookDownloadURL(book.ID),
-		Analyzed:             book.Analyzed,
-		AddedAt:              formatClientTime(book.AddedAt),
-		UpdatedAt:            formatClientTime(book.UpdatedAt),
-		CurrentPage:          book.CurrentPage,
-		ProgressLocator:      book.ProgressLocator,
-		ProgressFraction:     book.ProgressFraction,
-		LastReadAt:           formatClientTime(book.LastReadAt),
-		PrivateStatus:        book.PrivateStatus,
-		Favorite:             book.Favorite,
-		Rating:               book.Rating,
-		Tags:                 book.Tags,
-		Summary:              book.Summary,
-		ContentHash:          book.ContentHash,
-		ContentHashAlgorithm: book.ContentHashAlgorithm,
-		FileSize:             fileSize,
-		ContentRevision:      book.ContentRevision,
+		CollectionDisplayTitle: book.CollectionDisplayTitle,
+		DisplayCreator:         book.DisplayCreator,
+		ID:                     book.ID,
+		CollectionID:           book.SeriesID,
+		SeriesID:               book.SeriesID,
+		CollectionTitle:        book.CollectionTitle,
+		Title:                  book.Title,
+		Creator:                book.Creator,
+		Description:            book.Description,
+		BookType:               book.BookType,
+		Format:                 book.Format,
+		PageCount:              book.PageCount,
+		CoverStatus:            book.CoverStatus,
+		CoverURL:               clientCoverURL(book.ID) + bookArtworkRevision(book),
+		ThumbnailStatus:        thumbnailStatus(book),
+		ThumbnailURL:           clientThumbnailURL(book.ID, "small") + bookArtworkRevision(book),
+		ManifestURL:            fmt.Sprintf("/api/client/books/%d/manifest", book.ID),
+		DownloadURL:            clientBookDownloadURL(book.ID),
+		Analyzed:               book.Analyzed,
+		AddedAt:                formatClientTime(book.AddedAt),
+		UpdatedAt:              formatClientTime(book.UpdatedAt),
+		CurrentPage:            book.CurrentPage,
+		ProgressLocator:        book.ProgressLocator,
+		ProgressFraction:       book.ProgressFraction,
+		LastReadAt:             formatClientTime(book.LastReadAt),
+		PrivateStatus:          book.PrivateStatus,
+		Favorite:               book.Favorite,
+		Rating:                 book.Rating,
+		Tags:                   book.Tags,
+		Summary:                book.Summary,
+		ContentHash:            book.ContentHash,
+		ContentHashAlgorithm:   book.ContentHashAlgorithm,
+		FileSize:               fileSize,
+		ContentRevision:        book.ContentRevision,
 	}
 }
 

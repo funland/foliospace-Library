@@ -43,6 +43,8 @@ func TestVideoLibraryHTTPAndLegacyRange(t *testing.T) {
 		want                            int
 	}{
 		{"GET", "/api/client/video-works?limit=1", "", "", 200},
+		{"GET", fmt.Sprintf("/api/client/video-works/%d/details", m.WorkID), "", "", 200},
+		{"POST", fmt.Sprintf("/api/client/video-works/%d/details", m.WorkID), "", "", 503},
 		{"GET", fmt.Sprintf("/api/client/video-works/%d/files", m.WorkID), "", "", 200},
 		{"GET", fmt.Sprintf("/api/client/videos/%d/manifest", v.ID), "", "", 200},
 		{"GET", fmt.Sprintf("/api/client/videos/%d/file", v.ID), "", "bytes=2-5", 206},
@@ -79,7 +81,7 @@ func TestVideoLibraryHTTPAndLegacyRange(t *testing.T) {
 			t.Fatal("HEAD body/length regression")
 		}
 	}
-	for _, path := range []string{"/api/client/video-works", fmt.Sprintf("/api/videos/%d/artwork/poster", v.ID), "/api/videos/metadata/provider"} {
+	for _, path := range []string{fmt.Sprintf("/api/client/video-works/%d/details", m.WorkID), "/api/client/video-works", fmt.Sprintf("/api/videos/%d/artwork/poster", v.ID), "/api/videos/metadata/provider"} {
 		resp, e := http.Get(ts.URL + path)
 		if e != nil {
 			t.Fatal(e)

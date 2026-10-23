@@ -53,6 +53,7 @@ type Series struct {
 	ID             int64     `json:"id"`
 	LibraryID      int64     `json:"libraryId"`
 	Title          string    `json:"title"`
+	DisplayTitle   string    `json:"displayTitle,omitempty"`
 	DirectoryPath  string    `json:"directoryPath"`
 	CollectionType string    `json:"collectionType"`
 	PrimaryType    string    `json:"primaryType"`
@@ -81,36 +82,38 @@ type CollectionListPage struct {
 }
 
 type Book struct {
-	ID                   int64     `json:"id"`
-	SeriesID             int64     `json:"seriesId"`
-	CollectionTitle      string    `json:"collectionTitle,omitempty"`
-	Title                string    `json:"title"`
-	Creator              string    `json:"creator,omitempty"`
-	Description          string    `json:"description,omitempty"`
-	BookType             string    `json:"bookType"`
-	Format               string    `json:"format"`
-	PageCount            int       `json:"pageCount"`
-	CoverStatus          string    `json:"coverStatus"`
-	ThumbnailStatus      string    `json:"thumbnailStatus"`
-	ThumbnailURL         string    `json:"thumbnailUrl,omitempty"`
-	Analyzed             bool      `json:"analyzed"`
-	FilePath             string    `json:"filePath,omitempty"`
-	FileSize             int64     `json:"fileSize"`
-	FileMTime            time.Time `json:"-"`
-	ContentHash          *string   `json:"contentHash"`
-	ContentHashAlgorithm *string   `json:"contentHashAlgorithm"`
-	ContentRevision      *string   `json:"contentRevision"`
-	AddedAt              time.Time `json:"addedAt"`
-	UpdatedAt            time.Time `json:"updatedAt"`
-	CurrentPage          int       `json:"currentPage"`
-	ProgressLocator      string    `json:"progressLocator"`
-	ProgressFraction     float64   `json:"progressFraction"`
-	LastReadAt           time.Time `json:"lastReadAt"`
-	PrivateStatus        string    `json:"privateStatus"`
-	Favorite             bool      `json:"favorite"`
-	Rating               int       `json:"rating"`
-	Tags                 []string  `json:"tags"`
-	Summary              string    `json:"summary"`
+	ID                     int64     `json:"id"`
+	SeriesID               int64     `json:"seriesId"`
+	CollectionTitle        string    `json:"collectionTitle,omitempty"`
+	CollectionDisplayTitle string    `json:"collectionDisplayTitle,omitempty"`
+	Title                  string    `json:"title"`
+	Creator                string    `json:"creator,omitempty"`
+	DisplayCreator         string    `json:"displayCreator,omitempty"`
+	Description            string    `json:"description,omitempty"`
+	BookType               string    `json:"bookType"`
+	Format                 string    `json:"format"`
+	PageCount              int       `json:"pageCount"`
+	CoverStatus            string    `json:"coverStatus"`
+	ThumbnailStatus        string    `json:"thumbnailStatus"`
+	ThumbnailURL           string    `json:"thumbnailUrl,omitempty"`
+	Analyzed               bool      `json:"analyzed"`
+	FilePath               string    `json:"filePath,omitempty"`
+	FileSize               int64     `json:"fileSize"`
+	FileMTime              time.Time `json:"-"`
+	ContentHash            *string   `json:"contentHash"`
+	ContentHashAlgorithm   *string   `json:"contentHashAlgorithm"`
+	ContentRevision        *string   `json:"contentRevision"`
+	AddedAt                time.Time `json:"addedAt"`
+	UpdatedAt              time.Time `json:"updatedAt"`
+	CurrentPage            int       `json:"currentPage"`
+	ProgressLocator        string    `json:"progressLocator"`
+	ProgressFraction       float64   `json:"progressFraction"`
+	LastReadAt             time.Time `json:"lastReadAt"`
+	PrivateStatus          string    `json:"privateStatus"`
+	Favorite               bool      `json:"favorite"`
+	Rating                 int       `json:"rating"`
+	Tags                   []string  `json:"tags"`
+	Summary                string    `json:"summary"`
 }
 
 type BookPrivateState struct {

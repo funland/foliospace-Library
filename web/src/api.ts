@@ -28,6 +28,7 @@ export type Profile = {
 };
 
 export type Series = {
+  displayTitle?: string;
   id: number;
   libraryId: number;
   title: string;
@@ -47,8 +48,10 @@ export type Book = {
   id: number;
   seriesId: number;
   collectionTitle?: string;
+  collectionDisplayTitle?: string;
   title: string;
   creator?: string;
+  displayCreator?: string;
   description?: string;
   bookType: "single_volume";
   format: string;
@@ -120,6 +123,7 @@ export type GamePrivateState = {
 };
 
 export type GameAsset = {
+  discGroupInfo?: { groupKey: string; title: string; discNumber: number };
   id: number;
   assetType?: "game";
   title: string;
