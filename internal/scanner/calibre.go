@@ -29,30 +29,133 @@ func importedBookMetadata(path string, external bookmeta.Metadata) bookMetadata 
 }
 
 type importedBookState struct {
-	Revision string `json:"revision"`
-	Title    string `json:"title"`
+	Revision        string   `json:"revision"`
+	Title           string   `json:"title"`
+	Version         int      `json:"version,omitempty"`
+	Creator         string   `json:"creator,omitempty"`
+	Description     string   `json:"description,omitempty"`
+	Tags            []string `json:"tags,omitempty"`
+	SeriesTitle     string   `json:"seriesTitle,omitempty"`
+	PreservedFields []string `json:"preservedFields,omitempty"`
+	LegacyBaseline  string   `json:"legacyBaseline,omitempty"`
 }
 
 func importedBookStateKey(bookID int64) string { return fmt.Sprintf("book-local-metadata:%d", bookID) }
 
+func (state importedBookState) preserves(field string) bool {
+	for _, preserved := range state.PreservedFields {
+		if preserved == field {
+			return true
+		}
+	}
+	return false
+}
+
+func (state *importedBookState) preserve(field string) {
+	if !state.preserves(field) {
+		state.PreservedFields = append(state.PreservedFields, field)
+	}
+}
+
 func (s *Scanner) importedBookUnchanged(existing store.FileIndex, metadata bookMetadata, seriesTitle string) bool {
-	if metadata.SourceRevision == "" || existing.Book.CollectionTitle != seriesTitle {
+	if metadata.SourceRevision == "" {
 		return false
 	}
 	raw, err := s.store.Setting(importedBookStateKey(existing.Book.ID))
 	var state importedBookState
-	if err != nil || json.Unmarshal([]byte(raw), &state) != nil || state.Revision != metadata.SourceRevision {
+	if err != nil || json.Unmarshal([]byte(raw), &state) != nil || state.Version != 2 || state.Revision != metadata.SourceRevision {
 		return false
 	}
 	shared, err := s.store.BookSharedMetadata(existing.Book.ID)
-	return err == nil && shared.Title == state.Title && shared.Creator == metadata.Creator && shared.Description == metadata.Description && sameStringList(shared.Tags, metadata.Tags)
+	return err == nil &&
+		(state.preserves("title") || shared.Title == state.Title) &&
+		(state.preserves("creator") || shared.Creator == state.Creator) &&
+		(state.preserves("description") || shared.Description == state.Description) &&
+		(state.preserves("tags") || sameStringList(shared.Tags, state.Tags)) &&
+		(state.preserves("series") || (existing.Book.CollectionTitle == state.SeriesTitle && seriesTitle == state.SeriesTitle))
 }
 
-func (s *Scanner) rememberImportedBook(book domain.Book, metadata bookMetadata) error {
+// The baseline always describes automatic input, never the preserved user value.
+// Persistent preserved fields also prevent a later coincidentally equal source
+// value from taking ownership of a user's edit.
+func (s *Scanner) mergeImportedBookMetadata(library domain.Library, path, relPath, ext string, existing store.FileIndex, incoming bookMetadata) (bookMetadata, *importedBookState, error) {
+	current, err := s.store.BookSharedMetadata(existing.Book.ID)
+	if err != nil {
+		return incoming, nil, err
+	}
+	var old importedBookState
+	raw, err := s.store.Setting(importedBookStateKey(existing.Book.ID))
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return incoming, nil, err
+	}
+	_ = json.Unmarshal([]byte(raw), &old)
+	legacy := old.Version != 2
+	baseline := bookMetadata{Title: old.Title, Creator: old.Creator, Description: old.Description, Tags: old.Tags}
+	baselineKnown := true
+	if legacy {
+		baseline, err = bookMetadataForPath(path, ext)
+		baselineKnown = err == nil
+		if !baselineKnown {
+			baseline = bookMetadata{}
+		}
+		if old.Revision != "" && old.Revision == incoming.SourceRevision {
+			baseline = incoming
+			baselineKnown = true
+		}
+		if old.Title != "" {
+			baseline.Title = old.Title
+		}
+		old.SeriesTitle, _ = bookSeriesIdentity(library, relPath, baseline)
+	}
+	seriesTitle, _ := bookSeriesIdentity(library, relPath, incoming)
+	state := &importedBookState{Version: 2, Revision: incoming.SourceRevision, Title: incoming.Title,
+		Creator: incoming.Creator, Description: incoming.Description, Tags: append([]string(nil), incoming.Tags...),
+		SeriesTitle: seriesTitle, PreservedFields: append([]string(nil), old.PreservedFields...), LegacyBaseline: old.LegacyBaseline}
+	if legacy {
+		state.LegacyBaseline = "embedded"
+		if !baselineKnown {
+			state.LegacyBaseline = "unavailable-preserve-nonempty"
+		}
+	}
+	merged := incoming
+	mergeText := func(field, value, previous, next string) string {
+		if state.preserves(field) || ((!legacy || baselineKnown || value != "") && (!baselineKnown || value != previous)) {
+			state.preserve(field)
+			return value
+		}
+		return next
+	}
+	// Older scanners may already have disambiguated an automatically parsed title.
+	if legacy && baselineKnown && current.Title == disambiguatedTitle(baseline.Title, relPath) {
+		baseline.Title = current.Title
+	}
+	merged.Title = mergeText("title", current.Title, baseline.Title, incoming.Title)
+	merged.Creator = mergeText("creator", current.Creator, baseline.Creator, incoming.Creator)
+	merged.Description = mergeText("description", current.Description, baseline.Description, incoming.Description)
+	if state.preserves("tags") || ((!legacy || baselineKnown || len(current.Tags) != 0) && (!baselineKnown || !sameStringList(current.Tags, baseline.Tags))) {
+		state.preserve("tags")
+		merged.Tags = current.Tags
+	}
+	if state.preserves("title") || state.preserves("creator") || existing.Book.CollectionTitle != old.SeriesTitle {
+		state.preserve("series")
+	}
+	return merged, state, nil
+}
+
+func (s *Scanner) rememberImportedBook(book domain.Book, metadata bookMetadata, state *importedBookState) error {
 	if metadata.SourceRevision == "" {
 		return nil
 	}
-	data, err := json.Marshal(importedBookState{Revision: metadata.SourceRevision, Title: book.Title})
+	if state == nil {
+		state = &importedBookState{Version: 2, Revision: metadata.SourceRevision, Creator: metadata.Creator, Description: metadata.Description, Tags: metadata.Tags}
+	}
+	if !state.preserves("title") {
+		state.Title = book.Title
+	}
+	if !state.preserves("series") {
+		state.SeriesTitle = book.CollectionTitle
+	}
+	data, err := json.Marshal(state)
 	if err != nil {
 		return err
 	}
@@ -68,7 +171,7 @@ func (s *Scanner) rememberImportedBookTitle(bookID int64, title string) error {
 		return err
 	}
 	var state importedBookState
-	if json.Unmarshal([]byte(raw), &state) != nil || state.Revision == "" || state.Title == title {
+	if json.Unmarshal([]byte(raw), &state) != nil || state.Revision == "" || state.Title == title || state.preserves("title") {
 		return nil
 	}
 	state.Title = title

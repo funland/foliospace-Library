@@ -2805,6 +2805,10 @@ button.danger:hover {
   box-shadow: 0 12px 40px rgba(31, 42, 46, 0.14);
 }
 
+.reader:not(.immersiveMode) .epubFrame.epubDoublePage {
+  width: min(1760px, 100%);
+}
+
 .epubToc {
   position: absolute;
   inset: 18px auto 18px 18px;

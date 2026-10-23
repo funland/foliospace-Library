@@ -22,23 +22,12 @@ func videoGeneration(tx *sql.Tx, id int64) (int64, string, error) {
 	return generation, status, err
 }
 
-// Local observations may change provisional grouping, never confirmed/unlinked grouping.
+// Local observations may establish grouping but never automatically replace existing links.
+// Ambiguous or structurally different observations require an explicit manual match.
 func (s *Store) SyncLocalVideoWork(id int64, m domain.VideoLocalMetadata) error {
 	if m.Kind != "movie" && m.Kind != "episode" {
-		// Never retain a provisional group after conflicting observations.
-		// Explicit confirmations and unlinks remain protected.
-		tx, err := s.db.Begin()
-		if err != nil {
-			return err
-		}
-		defer tx.Rollback()
-		if _, err = tx.Exec(`DELETE FROM video_file_links WHERE video_id=? AND EXISTS(SELECT 1 FROM video_match_state WHERE video_id=? AND status='local')`, id, id); err != nil {
-			return err
-		}
-		if _, err = tx.Exec(`UPDATE video_match_state SET status='unmatched' WHERE video_id=? AND status='local'`, id); err != nil {
-			return err
-		}
-		return tx.Commit()
+		// Losing classification during a rescan must not hide existing playback state.
+		return nil
 	}
 	title := m.Title
 	kind := m.Kind
@@ -105,6 +94,15 @@ func (s *Store) matchVideo(id int64, in domain.VideoMatchInput, manual bool) err
 				return fmt.Errorf("invalid provider")
 			}
 			identity = fmt.Sprintf("%d/tmdb/%s/%s", libraryID, in.Kind, in.ProviderID)
+		}
+		if !manual && status == "local" {
+			handled, err := refreshLocalVideoWork(tx, id, libraryID, identity, in)
+			if err != nil {
+				return err
+			}
+			if handled {
+				return tx.Commit()
+			}
 		}
 		err = tx.QueryRow(`SELECT work_id FROM video_work_details WHERE identity_key=?`, identity).Scan(&workID)
 		if err == sql.ErrNoRows {
@@ -185,6 +183,62 @@ func (s *Store) matchVideo(id int64, in domain.VideoMatchInput, manual bool) err
 	}
 	return tx.Commit()
 }
+
+// A title/year correction must not change the version/episode IDs in playback keys.
+// Only rename an exclusively linked local work. Shared works and identity collisions
+// retain their existing grouping until an explicit match can resolve the ambiguity.
+func refreshLocalVideoWork(tx *sql.Tx, id, libraryID int64, identity string, in domain.VideoMatchInput) (bool, error) {
+	var links int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM video_file_links WHERE video_id=?`, id).Scan(&links); err != nil {
+		return false, err
+	}
+	if links == 0 {
+		return false, nil
+	}
+	if links != 1 {
+		// Local scanning cannot safely reinterpret a multi-link association.
+		return true, nil
+	}
+	var workID, workLibraryID int64
+	var kind, provider string
+	var episodeID, season, episode sql.NullInt64
+	err := tx.QueryRow(`SELECT w.id,w.library_id,w.kind,d.provider,l.episode_id,s.number,e.number
+ FROM video_file_links l JOIN video_versions v ON v.id=l.version_id JOIN video_works w ON w.id=v.work_id
+ JOIN video_work_details d ON d.work_id=w.id LEFT JOIN video_episodes e ON e.id=l.episode_id
+ LEFT JOIN video_seasons s ON s.id=e.season_id WHERE l.video_id=?`, id).
+		Scan(&workID, &workLibraryID, &kind, &provider, &episodeID, &season, &episode)
+	if err != nil {
+		return false, err
+	}
+	if kind != in.Kind || (kind == "movie" && (episodeID.Valid || in.Season != nil)) ||
+		(kind == "series" && (in.Season == nil || in.Episode == nil || !season.Valid || !episode.Valid || season.Int64 != int64(*in.Season) || episode.Int64 != int64(*in.Episode))) {
+		// Structural corrections require explicit confirmation before reassociation.
+		return true, nil
+	}
+	if workLibraryID != libraryID || provider != "" || in.Provider != "" {
+		return true, nil
+	}
+	var shared, conflict int
+	if err = tx.QueryRow(`SELECT COUNT(*) FROM video_file_links l JOIN video_versions v ON v.id=l.version_id WHERE v.work_id=? AND l.video_id<>?`, workID, id).Scan(&shared); err != nil {
+		return false, err
+	}
+	if err = tx.QueryRow(`SELECT COUNT(*) FROM video_work_details WHERE identity_key=? AND work_id<>?`, identity, workID).Scan(&conflict); err != nil {
+		return false, err
+	}
+	if shared != 0 || conflict != 0 {
+		return true, nil
+	}
+	if _, err = tx.Exec(`UPDATE video_works SET title=?,year=? WHERE id=?`, in.Title, in.Year, workID); err != nil {
+		return false, err
+	}
+	raw, err := json.Marshal(in)
+	if err != nil {
+		return false, err
+	}
+	_, err = tx.Exec(`UPDATE video_work_details SET identity_key=?,overview=?,raw_json=?,expires_at=0 WHERE work_id=?`, identity, in.Overview, string(raw), workID)
+	return true, err
+}
+
 func (s *Store) UnlinkVideo(id, generation int64) error {
 	tx, err := s.db.Begin()
 	if err != nil {

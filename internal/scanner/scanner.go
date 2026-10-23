@@ -4235,24 +4235,41 @@ func (s *Scanner) indexResolvedFileMetadata(library domain.Library, path string,
 		return indexedBookResult{}, fmt.Errorf("relative path: %w", err)
 	}
 
-	seriesTitle, seriesDirectoryPath := seriesIdentityForRelPath(library.RootPath, relPath)
-	if strings.EqualFold(strings.TrimSpace(library.AssetType), "comic") {
-		metadata.DirectoryCollection = true
-	}
-	if metadata.Creator != "" && !metadata.DirectoryCollection {
-		seriesTitle = metadata.Creator
-		seriesDirectoryPath = filepath.ToSlash(filepath.Dir(relPath))
-		if seriesDirectoryPath == "." || seriesDirectoryPath == "/" {
-			seriesDirectoryPath = "."
-		}
-	}
 	format := strings.TrimPrefix(ext, ".")
 	existing, existingErr := s.store.FileIndexByPath(path)
-	if existingErr == nil && existing.File.Size == info.Size() && existing.File.Ext == ext && existing.File.MTime.Equal(info.ModTime()) && s.importedBookUnchanged(existing, metadata, seriesTitle) {
+	if existingErr == nil && metadata.SourceRevision == "" {
+		// A removed sidecar is not permission to replace imported/user metadata
+		// with embedded fallback. Keep the last source baseline for its return.
+		_, stateErr := s.store.Setting(importedBookStateKey(existing.Book.ID))
+		if stateErr == nil {
+			if existing.File.Size != info.Size() || existing.File.Ext != ext || !existing.File.MTime.Equal(info.ModTime()) {
+				_, err = s.store.UpsertFile(existing.Book.ID, library.ID, path, relPath, info.Size(), info.ModTime(), ext)
+			}
+			return indexedBookResult{Book: existing.Book}, err
+		}
+		if !errors.Is(stateErr, sql.ErrNoRows) {
+			return indexedBookResult{}, stateErr
+		}
+	}
+	expectedSeriesTitle, _ := bookSeriesIdentity(library, relPath, metadata)
+	if existingErr == nil && existing.File.Size == info.Size() && existing.File.Ext == ext && existing.File.MTime.Equal(info.ModTime()) && s.importedBookUnchanged(existing, metadata, expectedSeriesTitle) {
 		return indexedBookResult{Book: existing.Book}, nil
 	}
+	var importedState *importedBookState
+	if existingErr == nil && metadata.SourceRevision != "" {
+		metadata, importedState, err = s.mergeImportedBookMetadata(library, path, relPath, ext, existing, metadata)
+		if err != nil {
+			return indexedBookResult{}, err
+		}
+	}
 
-	series, err := s.store.UpsertSeries(library.ID, seriesTitle, seriesDirectoryPath)
+	seriesTitle, seriesDirectoryPath := bookSeriesIdentity(library, relPath, metadata)
+	var series domain.Series
+	if importedState != nil && importedState.preserves("series") {
+		series, err = s.store.SeriesByID(existing.Book.SeriesID)
+	} else {
+		series, err = s.store.UpsertSeries(library.ID, seriesTitle, seriesDirectoryPath)
+	}
 	if err != nil {
 		return indexedBookResult{}, err
 	}
@@ -4285,7 +4302,7 @@ func (s *Scanner) indexResolvedFileMetadata(library domain.Library, path string,
 		if err != nil {
 			return indexedBookResult{}, err
 		}
-		if err := s.rememberImportedBook(book, metadata); err != nil {
+		if err := s.rememberImportedBook(book, metadata, importedState); err != nil {
 			return indexedBookResult{}, err
 		}
 		return result, nil
@@ -4309,10 +4326,22 @@ func (s *Scanner) indexResolvedFileMetadata(library domain.Library, path string,
 	if err != nil {
 		return indexedBookResult{}, err
 	}
-	if err := s.rememberImportedBook(book, metadata); err != nil {
+	if err := s.rememberImportedBook(book, metadata, nil); err != nil {
 		return indexedBookResult{}, err
 	}
 	return indexedBookResult{Book: book}, nil
+}
+
+func bookSeriesIdentity(library domain.Library, relPath string, metadata bookMetadata) (string, string) {
+	seriesTitle, directoryPath := seriesIdentityForRelPath(library.RootPath, relPath)
+	if metadata.Creator != "" && !metadata.DirectoryCollection && !strings.EqualFold(strings.TrimSpace(library.AssetType), "comic") {
+		seriesTitle = metadata.Creator
+		directoryPath = filepath.ToSlash(filepath.Dir(relPath))
+		if directoryPath == "." || directoryPath == "/" {
+			directoryPath = "."
+		}
+	}
+	return seriesTitle, directoryPath
 }
 
 func (s *Scanner) indexBasicFileMetadata(library domain.Library, path string, info fs.FileInfo, ext string, resolver *bookmeta.Resolver) (indexedBookResult, error) {
@@ -4338,6 +4367,20 @@ func (s *Scanner) disambiguateBookTitle(library domain.Library, seriesID int64, 
 	if existing.ID == currentBookID {
 		return title, nil
 	}
+	// A collision must not rename another book's manually preserved title.
+	var importedState importedBookState
+	if raw, err := s.store.Setting(importedBookStateKey(existing.ID)); err == nil {
+		_ = json.Unmarshal([]byte(raw), &importedState)
+	}
+	preserveExistingTitle := importedState.preserves("title") || (importedState.Title != "" && importedState.Title != existing.Title)
+	if importedState.Revision == "" {
+		legacy, legacyErr := bookMetadataForPath(existing.FilePath, "."+format)
+		legacyRel, relErr := filepath.Rel(library.RootPath, existing.FilePath)
+		preserveExistingTitle = legacyErr != nil || relErr != nil || (existing.Title != legacy.Title && existing.Title != disambiguatedTitle(legacy.Title, legacyRel))
+	}
+	if preserveExistingTitle {
+		return s.availableDisambiguatedBookTitle(seriesID, title, format, relPath, currentBookID)
+	}
 
 	existingRelPath := existing.FilePath
 	if rel, relErr := filepath.Rel(library.RootPath, existing.FilePath); relErr == nil {
@@ -4357,6 +4400,26 @@ func (s *Scanner) disambiguateBookTitle(library domain.Library, seriesID int64, 
 		currentTitle = title + " (" + strings.TrimSpace(filepath.ToSlash(filepath.Dir(relPath))) + ")"
 	}
 	return currentTitle, nil
+}
+
+func (s *Scanner) availableDisambiguatedBookTitle(seriesID int64, title, format, relPath string, currentBookID int64) (string, error) {
+	base := disambiguatedTitle(title, relPath)
+	if base == title {
+		base = title + " (" + filepath.ToSlash(relPath) + ")"
+	}
+	for suffix := 1; ; suffix++ {
+		candidate := base
+		if suffix > 1 {
+			candidate = fmt.Sprintf("%s (%d)", base, suffix)
+		}
+		other, err := s.store.BookBySeriesTitle(seriesID, candidate, format)
+		if errors.Is(err, sql.ErrNoRows) || (err == nil && other.ID == currentBookID) {
+			return candidate, nil
+		}
+		if err != nil {
+			return "", err
+		}
+	}
 }
 
 func disambiguatedTitle(title string, relPath string) string {

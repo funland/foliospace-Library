@@ -5167,7 +5167,7 @@ function EpubFrame({
     <iframe
       ref={iframeRef}
       key={`${book.id}-${spineItem.href}`}
-      className="epubFrame"
+      className={`epubFrame ${pageMode === "double" ? "epubDoublePage" : ""}`}
       title={`${book.title} chapter ${pageIndex + 1}`}
       src={authenticatedResourcePath(`/api/books/${book.id}/epub/spine/${pageIndex}`)}
       onLoad={applyEpubLayout}

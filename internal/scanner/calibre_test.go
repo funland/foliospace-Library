@@ -3,6 +3,7 @@ package scanner
 import (
 	"bytes"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"image"
 	"image/jpeg"
@@ -486,5 +487,212 @@ func TestCalibreConcurrentDuplicateTitlesRetainDistinctBookIDs(t *testing.T) {
 	}
 	if len(titles) != 2 || !titles["Shared title (10)"] || !titles["Shared title (20)"] {
 		t.Fatalf("titles=%v", titles)
+	}
+}
+
+func TestCalibreRescanPreservesSharedEditsAcrossSourceChanges(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "Author", "Book (42)", "book.epub")
+	makeZip(t, path, sampleEPUBEntriesWithMetadata("Embedded", "Writer", "Description"))
+	writeCalibreOPF(t, path, "Imported", "Writer", "tag")
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibrary("Books", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scanner := NewWithWorkerCount(st, func() int { return 1 })
+	if _, err := scanner.ScanLibrary(lib); err != nil {
+		t.Fatal(err)
+	}
+	index, err := st.FileIndexByPath(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpdateBookIdentity(index.Book.ID, index.Book.SeriesID, "My title", "epub"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpdateBookMetadata(index.Book.ID, "My author", "", []string{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, sourceTitle := range []string{"Changed", "My title", "Changed again"} {
+		writeCalibreOPF(t, path, sourceTitle, "New author", "new tag")
+		if job, err := scanner.ScanLibrary(lib); err != nil || job.ErrorCount != 0 {
+			t.Fatalf("job=%#v err=%v", job, err)
+		}
+		shared, err := st.BookSharedMetadata(index.Book.ID)
+		if err != nil || shared.Title != "My title" || shared.Creator != "My author" || shared.Description != "" || len(shared.Tags) != 0 || shared.SeriesID != index.Book.SeriesID {
+			t.Fatalf("shared edit overwritten: %#v err=%v", shared, err)
+		}
+	}
+	raw, err := st.Setting(importedBookStateKey(index.Book.ID))
+	var state importedBookState
+	if err != nil || json.Unmarshal([]byte(raw), &state) != nil || state.Title != "Changed again" || state.Creator != "New author" || state.Description != "A description." || !state.preserves("title") || !state.preserves("description") {
+		t.Fatalf("source baseline contains preserved user values: %s err=%v", raw, err)
+	}
+	if err := os.Remove(filepath.Join(filepath.Dir(path), "metadata.opf")); err != nil {
+		t.Fatal(err)
+	}
+	if job, err := scanner.ScanLibrary(lib); err != nil || job.ErrorCount != 0 {
+		t.Fatalf("removed source=%#v err=%v", job, err)
+	}
+	shared, err := st.BookSharedMetadata(index.Book.ID)
+	if err != nil || shared.Title != "My title" || shared.Creator != "My author" || shared.Description != "" || len(shared.Tags) != 0 || shared.SeriesID != index.Book.SeriesID {
+		t.Fatalf("source removal overwrote user values: %#v err=%v", shared, err)
+	}
+}
+
+func TestCalibreLegacyImportPreservesUnprovenSharedValuesAndReaderState(t *testing.T) {
+	for _, mode := range []string{"automatic", "manual", "cleared", "unreadable"} {
+		t.Run(mode, func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, "Folder", "Book (42)", "book.epub")
+			makeZip(t, path, sampleEPUBEntriesWithMetadata("Embedded", "Old author", "Embedded description"))
+			conn, err := db.Open(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			st := store.New(conn)
+			lib, err := st.CreateLibrary("Books", root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			scanner := NewWithWorkerCount(st, func() int { return 1 })
+			if job, err := scanner.ScanLibrary(lib); err != nil || job.ErrorCount != 0 {
+				t.Fatalf("legacy job=%#v err=%v", job, err)
+			}
+			index, err := st.FileIndexByPath(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := st.Setting(importedBookStateKey(index.Book.ID)); err != sql.ErrNoRows {
+				t.Fatalf("legacy entry unexpectedly has provenance: %v", err)
+			}
+			if err := st.SaveProgressDetail(index.Book.ID, 1, "legacy-locator", 0.5); err != nil {
+				t.Fatal(err)
+			}
+			if err := st.UpdateBookPrivateState(index.Book.ID, domain.BookPrivateState{Favorite: true, Summary: "private", Tags: []string{"private-tag"}}); err != nil {
+				t.Fatal(err)
+			}
+			if err := st.UpdateCollectionPrivateStateForProfile(index.Book.SeriesID, 0, domain.CollectionPrivateState{Favorite: true}); err != nil {
+				t.Fatal(err)
+			}
+			if mode == "manual" {
+				if _, err := st.UpdateBookIdentity(index.Book.ID, index.Book.SeriesID, "My title", "epub"); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := st.UpdateBookMetadata(index.Book.ID, "My author", "Embedded description", []string{"my-tag"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if mode == "cleared" {
+				if _, err := st.UpdateBookMetadata(index.Book.ID, "", "", nil); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if mode == "unreadable" {
+				info, err := os.Stat(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, make([]byte, info.Size()), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, title := range []string{"Calibre title", "Updated Calibre title"} {
+				writeCalibreOPF(t, path, title, "New author", "source-tag")
+				if job, err := scanner.ScanLibraryPath(lib, path); err != nil || job.ErrorCount != 0 {
+					t.Fatalf("refresh=%#v err=%v", job, err)
+				}
+			}
+			book, err := st.BookByID(index.Book.ID)
+			if err != nil || !book.Favorite || book.Summary != "private" {
+				t.Fatalf("private state changed: %#v err=%v", book, err)
+			}
+			progress, err := st.Progress(index.Book.ID)
+			if err != nil || progress.Locator != "legacy-locator" {
+				t.Fatalf("progress changed: %#v err=%v", progress, err)
+			}
+			shared, err := st.BookSharedMetadata(index.Book.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch mode {
+			case "automatic":
+				if shared.Title != "Updated Calibre title" || shared.Creator != "New author" || shared.SeriesID == index.Book.SeriesID {
+					t.Fatalf("automatic fields not refreshed: %#v", shared)
+				}
+			case "manual":
+				if shared.Title != "My title" || shared.Creator != "My author" || shared.Description != "A description." || !sameStringList(shared.Tags, []string{"my-tag"}) || shared.SeriesID != index.Book.SeriesID {
+					t.Fatalf("manual fields changed: %#v", shared)
+				}
+			case "unreadable":
+				if shared.Title != "Embedded" || shared.Creator != "Old author" || shared.Description != "Embedded description" || shared.SeriesID != index.Book.SeriesID {
+					t.Fatalf("unproven legacy fields changed: %#v", shared)
+				}
+			case "cleared":
+				if shared.Creator != "" || shared.Description != "" || shared.SeriesID != index.Book.SeriesID {
+					t.Fatalf("cleared legacy fields refilled: %#v", shared)
+				}
+			}
+			collection, err := st.CollectionPrivateStateForProfile(shared.SeriesID, 0)
+			if err != nil || !collection.Favorite {
+				t.Fatalf("collection favorite lost: %#v err=%v", collection, err)
+			}
+		})
+	}
+}
+
+func TestCalibreTitleCollisionDoesNotRenamePreservedTitle(t *testing.T) {
+	root := t.TempDir()
+	first := filepath.Join(root, "Author", "First (10)", "book.epub")
+	second := filepath.Join(root, "Author", "Second (20)", "book.epub")
+	for i, path := range []string{first, second} {
+		makeZip(t, path, sampleEPUBEntriesWithMetadata("Embedded", "Writer", "Description"))
+		writeCalibreOPF(t, path, fmt.Sprintf("Title %d", i), "Writer", "tag")
+	}
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibrary("Books", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scanner := NewWithWorkerCount(st, func() int { return 1 })
+	if _, err := scanner.ScanLibrary(lib); err != nil {
+		t.Fatal(err)
+	}
+	index, err := st.FileIndexByPath(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpdateBookIdentity(index.Book.ID, index.Book.SeriesID, "Keep", "epub"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := scanner.ScanLibraryPath(lib, first); err != nil {
+		t.Fatal(err)
+	}
+	writeCalibreOPF(t, second, "Keep", "Writer", "tag")
+	if job, err := scanner.ScanLibraryPath(lib, second); err != nil || job.ErrorCount != 0 {
+		t.Fatalf("collision=%#v err=%v", job, err)
+	}
+	book, err := st.BookByID(index.Book.ID)
+	if err != nil || book.Title != "Keep" {
+		t.Fatalf("preserved title renamed: %#v err=%v", book, err)
+	}
+	other, err := st.FileIndexByPath(second)
+	if err != nil || other.Book.Title != "Keep (20)" {
+		t.Fatalf("automatic title not disambiguated: %#v err=%v", other, err)
 	}
 }
