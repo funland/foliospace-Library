@@ -171,5 +171,5 @@ func (s *Service) applyHasheousMetadata(details domain.GameDetails, raw string) 
 	if len(metadata.Publishers) == 0 && strings.TrimSpace(match.Publisher) != "" {
 		metadata.Publishers = []string{strings.TrimSpace(match.Publisher)}
 	}
-	return s.store.UpsertGameMetadata(metadata)
+	return s.store.UpsertImportedGameMetadata(metadata)
 }

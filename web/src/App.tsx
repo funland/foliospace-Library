@@ -32,6 +32,7 @@ import {
   type ReaderImageDisplayMode,
 } from "./reader-layout";
 import { epubChapterLabel, epubFragment, findEpubFragment, isEpubInlineGlyph, normalizeEPUBLink, resolveEpubHrefIndex, resolveEpubOpenPosition, type EpubChapterOpenPosition, type EpubNavigationRequest } from "./epub-navigation";
+import { bindReaderKeyboard, readerKeyboardAction } from "./reader-keyboard";
 import { observeEpubViewport } from "./epub-viewport";
 import { placeEpubPage } from "./epub-layout";
 import { gamePlatformFilterOptions, gamePlatformFilterOptionsFromFacets } from "./game-platform-options";
@@ -2055,24 +2056,17 @@ export function App() {
   useEffect(() => {
     if (view !== "reader" || !selectedBook) return;
 
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "ArrowLeft") {
-        event.preventDefault();
-        goReaderPrevious();
-      }
-      if (event.key === "ArrowRight") {
-        event.preventDefault();
-        goReaderNext();
-      }
-      if (event.key.toLowerCase() === "f") {
-        event.preventDefault();
-        toggleReaderFullscreen();
-      }
-    }
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    return bindReaderKeyboard(window, handleReaderKeyDown);
   }, [view, selectedBook, pageIndex, pages.length, pdfPageCount, readerPageMode, readerFullscreen, epubPagePosition, epubPageCount]);
+
+  function handleReaderKeyDown(event: KeyboardEvent) {
+    const action = readerKeyboardAction(event);
+    if (!action) return;
+    event.preventDefault();
+    if (action === "previous") goReaderPrevious();
+    if (action === "next") goReaderNext();
+    if (action === "fullscreen") toggleReaderFullscreen();
+  }
 
   useEffect(() => {
     if (view !== "reader" || !selectedBook) return;
@@ -3733,6 +3727,7 @@ export function App() {
                       )}
                       <EpubFrame
                         book={selectedBook}
+                        onKeyDown={handleReaderKeyDown}
                         manifest={epubManifest}
                         pageIndex={pageIndex}
                         pageMode={epubPageMode}
@@ -5202,6 +5197,7 @@ function collectionInitials(title: string) {
 }
 
 function EpubFrame({
+  onKeyDown,
   book,
   manifest,
   pageIndex,
@@ -5214,6 +5210,7 @@ function EpubFrame({
   onNavigationUnavailable,
   onMetrics,
 }: {
+  onKeyDown: (event: KeyboardEvent) => void;
   book: Book;
   manifest: EpubManifest | null;
   pageIndex: number;
@@ -5230,8 +5227,10 @@ function EpubFrame({
   const loadedDocument = useRef<Document | null>(null);
   const appliedNavigation = useRef<number | null>(null);
   const layoutFrame = useRef(0);
-  const callbacks = useRef({ onNavigate, onNavigationUnavailable, onMetrics });
-  callbacks.current = { onNavigate, onNavigationUnavailable, onMetrics };
+  const callbacks = useRef({ onNavigate, onNavigationUnavailable, onMetrics, onKeyDown });
+  callbacks.current = { onNavigate, onNavigationUnavailable, onMetrics, onKeyDown };
+  const unbindKeyboard = useRef<(() => void) | null>(null);
+  useEffect(() => () => unbindKeyboard.current?.(), []);
   const spineItem = manifest?.spine[pageIndex] ?? null;
 
   useEffect(() => {
@@ -5419,7 +5418,11 @@ function EpubFrame({
       title={`${book.title} · ${epubChapterLabel(manifest, pageIndex) || pageIndex + 1}`}
       src={authenticatedResourcePath(`/api/books/${book.id}/epub/spine/${pageIndex}`)}
       onLoad={() => {
+        unbindKeyboard.current?.();
         loadedDocument.current = iframeRef.current?.contentDocument ?? null;
+        unbindKeyboard.current = loadedDocument.current
+          ? bindReaderKeyboard(loadedDocument.current, (event) => callbacks.current.onKeyDown(event))
+          : null;
         applyEpubLayout();
       }}
     />

@@ -3914,7 +3914,7 @@ func (s *Scanner) applyPegasusMetadata(gameID int64, entry pegasusGame, ok bool)
 	if strings.TrimSpace(entry.Developer) != "" {
 		developers = []string{strings.TrimSpace(entry.Developer)}
 	}
-	return s.store.UpsertGameMetadata(domain.GameMetadata{
+	return s.store.UpsertImportedGameMetadata(domain.GameMetadata{
 		GameID: gameID, DisplayTitle: strings.TrimSpace(entry.Name), Summary: strings.TrimSpace(entry.Description), Developers: developers,
 	})
 }
@@ -3950,7 +3950,7 @@ func (s *Scanner) applyGamelistMetadata(library domain.Library, gamePath string,
 		return nil
 	}
 	if hasGamelistMetadata(entry) {
-		if err := s.store.UpsertGameMetadata(domain.GameMetadata{
+		if err := s.store.UpsertImportedGameMetadata(domain.GameMetadata{
 			GameID:       gameID,
 			DisplayTitle: strings.TrimSpace(entry.Name),
 			Summary:      strings.TrimSpace(entry.Desc),

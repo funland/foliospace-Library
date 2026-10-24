@@ -43,12 +43,17 @@ func main() {
 	gameID := flag.Int64("game-id", 0, "audit and replace profiles only for this game ID")
 	dryRun := flag.Bool("dry-run", false, "audit without writing SQLite")
 	failureLimit := flag.Int("failure-limit", 50, "maximum failure details to print")
+	capabilities := flag.Bool("capabilities", false, "report safe maintenance protocol without opening the database")
 	flag.Parse()
+	if *capabilities {
+		fmt.Println(`{"protocol":1,"noStartupMigrations":true,"preservesCatalogIdentity":true}`)
+		return
+	}
 	if *gameID < 0 {
 		log.Fatal("game-id cannot be negative")
 	}
 
-	conn, err := db.Open(cfg.ConfigDir)
+	conn, err := db.OpenExisting(cfg.ConfigDir, *dryRun)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -155,9 +160,9 @@ func rebuildFBNeoProfiles(appStore *store.Store, catalog launchprofile.FBNeoCata
 		var written domain.GameLaunchProfileRebuildResult
 		var err error
 		if gameID > 0 {
-			written, err = appStore.ReplaceGameLaunchProfilesForGame(launchprofile.FBNeoPolicy, gameID, profiles, updates)
+			written, err = appStore.ReplaceAuditedGameLaunchProfiles(launchprofile.FBNeoPolicy, gameID, profiles, updates)
 		} else {
-			written, err = appStore.ReplaceGameLaunchProfiles(launchprofile.FBNeoPolicy, profiles, updates)
+			written, err = appStore.ReplaceAuditedGameLaunchProfiles(launchprofile.FBNeoPolicy, 0, profiles, updates)
 		}
 		if err != nil {
 			return rebuildOutput{}, err
@@ -265,9 +270,9 @@ func rebuildMAMEProfiles(appStore *store.Store, listXMLPath string, platforms ma
 	}
 	if !dryRun {
 		if gameID > 0 {
-			result, err = appStore.ReplaceGameLaunchProfilesForGame(policy, gameID, profiles, updates)
+			result, err = appStore.ReplaceAuditedGameLaunchProfiles(policy, gameID, profiles, updates)
 		} else {
-			result, err = appStore.ReplaceGameLaunchProfiles(policy, profiles, updates)
+			result, err = appStore.ReplaceAuditedGameLaunchProfiles(policy, 0, profiles, updates)
 		}
 		if err != nil {
 			return rebuildOutput{}, err

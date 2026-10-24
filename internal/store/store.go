@@ -1564,17 +1564,17 @@ func (s *Store) UpsertGame(game domain.GameAsset) (domain.GameAsset, error) {
 	_, err := s.db.Exec(`INSERT INTO games(library_id, title, platform, rom_set_name, region, format, file_path, rel_path, size, mtime, crc32, sha1, emulator_hint, compatibility, catalog_role)
 		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(file_path) DO UPDATE SET library_id = excluded.library_id,
-			title = excluded.title,
-			platform = excluded.platform,
-			rom_set_name = excluded.rom_set_name,
-			region = excluded.region,
+			title = CASE WHEN EXISTS(SELECT 1 FROM game_metadata_sources WHERE game_id=games.id AND source='manual') THEN games.title ELSE excluded.title END,
+			platform = CASE WHEN EXISTS(SELECT 1 FROM game_metadata_sources WHERE game_id=games.id AND source='manual') THEN games.platform ELSE excluded.platform END,
+			rom_set_name = CASE WHEN EXISTS(SELECT 1 FROM game_metadata_sources WHERE game_id=games.id AND source='manual') THEN games.rom_set_name ELSE excluded.rom_set_name END,
+			region = CASE WHEN EXISTS(SELECT 1 FROM game_metadata_sources WHERE game_id=games.id AND source='manual') THEN games.region ELSE excluded.region END,
 			format = excluded.format,
 			rel_path = excluded.rel_path,
 			size = excluded.size,
 			mtime = excluded.mtime,
 			crc32 = excluded.crc32,
 			sha1 = excluded.sha1,
-			emulator_hint = excluded.emulator_hint,
+			emulator_hint = CASE WHEN EXISTS(SELECT 1 FROM game_metadata_sources WHERE game_id=games.id AND source='manual') THEN games.emulator_hint ELSE excluded.emulator_hint END,
 			compatibility = excluded.compatibility,
 			catalog_role = excluded.catalog_role,
 			updated_at = CURRENT_TIMESTAMP`,
@@ -1681,7 +1681,7 @@ func (s *Store) GameLaunchProfiles(gameID int64) ([]domain.GameLaunchProfile, er
 }
 
 func (s *Store) ReplaceGameLaunchProfiles(policy string, profiles []domain.GameLaunchProfile, updates []domain.GameLaunchCatalogUpdate) (domain.GameLaunchProfileRebuildResult, error) {
-	return s.replaceGameLaunchProfiles(policy, profiles, updates, nil)
+	return s.replaceGameLaunchProfiles(policy, profiles, updates, nil, false)
 }
 
 func (s *Store) ReplaceGameLaunchProfilesForGame(policy string, gameID int64, profiles []domain.GameLaunchProfile, updates []domain.GameLaunchCatalogUpdate) (domain.GameLaunchProfileRebuildResult, error) {
@@ -1698,10 +1698,33 @@ func (s *Store) ReplaceGameLaunchProfilesForGame(policy string, gameID int64, pr
 			return domain.GameLaunchProfileRebuildResult{}, fmt.Errorf("catalog update belongs to game %d, want %d", update.GameID, gameID)
 		}
 	}
-	return s.replaceGameLaunchProfiles(policy, profiles, updates, &gameID)
+	return s.replaceGameLaunchProfiles(policy, profiles, updates, &gameID, false)
 }
 
-func (s *Store) replaceGameLaunchProfiles(policy string, profiles []domain.GameLaunchProfile, updates []domain.GameLaunchCatalogUpdate, gameID *int64) (domain.GameLaunchProfileRebuildResult, error) {
+// ReplaceAuditedGameLaunchProfiles writes derived readiness/profiles only. Platform,
+// ROM-set labels and emulator preferences remain the existing catalog's authority.
+func (s *Store) ReplaceAuditedGameLaunchProfiles(policy string, gameID int64, profiles []domain.GameLaunchProfile, updates []domain.GameLaunchCatalogUpdate) (domain.GameLaunchProfileRebuildResult, error) {
+	if gameID < 0 {
+		return domain.GameLaunchProfileRebuildResult{}, errors.New("invalid game ID")
+	}
+	var scope *int64
+	if gameID > 0 {
+		scope = &gameID
+		for _, p := range profiles {
+			if p.GameID != gameID {
+				return domain.GameLaunchProfileRebuildResult{}, errors.New("profile outside audit scope")
+			}
+		}
+		for _, u := range updates {
+			if u.GameID != gameID {
+				return domain.GameLaunchProfileRebuildResult{}, errors.New("update outside audit scope")
+			}
+		}
+	}
+	return s.replaceGameLaunchProfiles(policy, profiles, updates, scope, true)
+}
+
+func (s *Store) replaceGameLaunchProfiles(policy string, profiles []domain.GameLaunchProfile, updates []domain.GameLaunchCatalogUpdate, gameID *int64, preserveIdentity bool) (domain.GameLaunchProfileRebuildResult, error) {
 	policy = strings.TrimSpace(policy)
 	if policy == "" {
 		return domain.GameLaunchProfileRebuildResult{}, errors.New("launch profile policy is required")
@@ -1768,7 +1791,11 @@ func (s *Store) replaceGameLaunchProfiles(policy string, profiles []domain.GameL
 			result.FilesWritten++
 		}
 	}
-	updateStatement, err := tx.Prepare(`UPDATE games SET platform = ?, rom_set_name = ?, emulator_hint = ?,
+	identityAssignment := "platform = ?, rom_set_name = ?, emulator_hint = ?,"
+	if preserveIdentity {
+		identityAssignment = ""
+	}
+	updateStatement, err := tx.Prepare(`UPDATE games SET ` + identityAssignment + `
 		catalog_role = CASE
 			WHEN LOWER(TRIM(?)) = 'dependency' THEN 'dependency'
 			WHEN LOWER(TRIM(?)) = 'game' OR EXISTS(SELECT 1 FROM game_launch_profiles p
@@ -1781,8 +1808,11 @@ func (s *Store) replaceGameLaunchProfiles(policy string, profiles []domain.GameL
 	}
 	defer updateStatement.Close()
 	for _, update := range updates {
-		if _, err := updateStatement.Exec(update.Platform, update.ROMSetName, update.EmulatorHint,
-			update.CatalogRole, update.CatalogRole, update.CatalogRole, update.GameID); err != nil {
+		args := []any{update.CatalogRole, update.CatalogRole, update.CatalogRole, update.GameID}
+		if !preserveIdentity {
+			args = append([]any{update.Platform, update.ROMSetName, update.EmulatorHint}, args...)
+		}
+		if _, err := updateStatement.Exec(args...); err != nil {
 			return domain.GameLaunchProfileRebuildResult{}, err
 		}
 		if strings.EqualFold(update.CatalogRole, "game") {
@@ -3180,8 +3210,41 @@ func (s *Store) ListGamesByPlatform(platform string) ([]domain.GameAsset, error)
 }
 
 func (s *Store) UpsertGameMetadata(metadata domain.GameMetadata) error {
-	_, err := s.db.Exec(`INSERT INTO game_metadata(game_id, display_title, summary, release_date, genres, developers, publishers, players, rating, external_links)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	return upsertGameMetadata(s.db, metadata, false)
+}
+
+func (s *Store) UpsertImportedGameMetadata(metadata domain.GameMetadata) error {
+	return upsertGameMetadata(s.db, metadata, true)
+}
+
+func (s *Store) UpsertManualGameMetadata(metadata domain.GameMetadata) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = upsertGameMetadata(tx, metadata, false); err != nil {
+		return err
+	}
+	_, err = tx.Exec(`INSERT INTO game_metadata_sources(game_id,source,source_id,matched_by,confidence,raw_json)
+ VALUES(?,'manual',?,'manual',1,'') ON CONFLICT(game_id,source,source_id) DO UPDATE SET matched_by='manual',confidence=1,updated_at=CURRENT_TIMESTAMP`, metadata.GameID, fmt.Sprintf("game:%d", metadata.GameID))
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+type metadataExecer interface {
+	Exec(string, ...any) (sql.Result, error)
+}
+
+func upsertGameMetadata(exec metadataExecer, metadata domain.GameMetadata, imported bool) error {
+	guard := " WHERE true"
+	if imported {
+		guard = " WHERE NOT EXISTS(SELECT 1 FROM game_metadata_sources WHERE game_id=" + strconv.FormatInt(metadata.GameID, 10) + " AND source='manual')"
+	}
+	_, err := exec.Exec(`INSERT INTO game_metadata(game_id, display_title, summary, release_date, genres, developers, publishers, players, rating, external_links)
+		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?`+guard+`
 		ON CONFLICT(game_id) DO UPDATE SET
 			display_title = excluded.display_title,
 			summary = excluded.summary,

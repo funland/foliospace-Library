@@ -263,3 +263,21 @@ func TestMixedLibraryRequiresGamesObservedInThisScan(t *testing.T) {
 		}
 	}
 }
+
+func TestLaunchRebuildRejectsLegacyHelperBeforeAudit(t *testing.T) {
+	root := t.TempDir()
+	marker := filepath.Join(root, "audit-ran")
+	helper := filepath.Join(root, "legacy-helper")
+	script := "#!/bin/sh\nif [ \"$1\" = '-capabilities' ]; then exit 2; fi\ntouch '" + marker + "'\nprintf '{}'\n"
+	if err := os.WriteFile(helper, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FOLIOSPACE_PROFILE_REBUILD_BIN", helper)
+	svc := &Service{configDir: root}
+	if _, err := svc.runLaunchProfileRebuild([]string{"-dry-run"}); err == nil {
+		t.Fatal("legacy helper accepted")
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("legacy audit was executed")
+	}
+}

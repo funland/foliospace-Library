@@ -838,6 +838,18 @@ func (s *Service) runLaunchProfileRebuild(args []string) (map[string]any, error)
 			return nil, fmt.Errorf("launch profile rebuild tool is not installed")
 		}
 	}
+	probeCtx, probeCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	probe := exec.CommandContext(probeCtx, binary, "-capabilities")
+	probeOutput, probeErr := probe.Output()
+	probeCancel()
+	var capabilities struct {
+		Protocol                 int  `json:"protocol"`
+		NoStartupMigrations      bool `json:"noStartupMigrations"`
+		PreservesCatalogIdentity bool `json:"preservesCatalogIdentity"`
+	}
+	if probeErr != nil || json.Unmarshal(probeOutput, &capabilities) != nil || capabilities.Protocol != 1 || !capabilities.NoStartupMigrations || !capabilities.PreservesCatalogIdentity {
+		return nil, fmt.Errorf("launch profile rebuild tool is outdated; install the matching safe helper before analysis")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Hour)
 	defer cancel()
 	command := exec.CommandContext(ctx, binary, args...)
@@ -942,13 +954,7 @@ func (s *Service) UpdateGameMetadata(id int64, metadata domain.GameMetadata) (do
 	if metadata.Rating < 0 || metadata.Rating > 5 {
 		return domain.GameDetails{}, fmt.Errorf("rating must be between 0 and 5")
 	}
-	if err := s.store.UpsertGameMetadata(metadata); err != nil {
-		return domain.GameDetails{}, err
-	}
-	_, err := s.store.UpsertGameMetadataSource(domain.GameMetadataSource{
-		GameID: id, Source: "manual", SourceID: fmt.Sprintf("game:%d", id), MatchedBy: "manual", Confidence: 1,
-	})
-	if err != nil {
+	if err := s.store.UpsertManualGameMetadata(metadata); err != nil {
 		return domain.GameDetails{}, err
 	}
 	return s.store.GameDetails(id)
