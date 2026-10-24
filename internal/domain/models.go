@@ -68,6 +68,8 @@ type CollectionListOptions struct {
 	Limit       int
 	Offset      int
 	PrimaryType string
+	LibraryID   int64
+	Format      string
 	Sort        string
 	Direction   string
 	Query       string
@@ -719,6 +721,8 @@ type EPUBTOCItem struct {
 }
 
 type ScanJob struct {
+	// Completion-only observation; deliberately not persisted in scan_jobs.
+	GameFiles            int       `json:"-"`
 	ID                   int64     `json:"id"`
 	LibraryID            int64     `json:"libraryId"`
 	Status               string    `json:"status"`

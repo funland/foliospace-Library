@@ -251,6 +251,7 @@ func (s *Scanner) runScanJob(library domain.Library, job domain.ScanJob, scope s
 			return nil
 		}
 		if kind == "game" {
+			job.GameFiles++
 			relPath, err := filepath.Rel(library.RootPath, path)
 			if err != nil {
 				job.ErrorCount++
@@ -908,6 +909,7 @@ func (s *Scanner) processScanTask(library domain.Library, jobID int64, task scan
 		job.CurrentPath = task.path
 	}
 	if task.kind == "game" {
+		updateJob(func(job *domain.ScanJob) { job.GameFiles++ })
 		relPath, err := filepath.Rel(library.RootPath, task.path)
 		if err != nil {
 			s.recordTaskError(library.ID, jobID, task.path, domain.ErrorUnknownIO, "relative path failed: ", err, updateJob)

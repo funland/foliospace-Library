@@ -412,6 +412,7 @@ export type CollectionAssets = {
 };
 
 export type BookListOptions = {
+  format?: string;
   limit?: number;
   offset?: number;
   q?: string;
@@ -421,6 +422,7 @@ export type BookListOptions = {
 
 export type CollectionListOptions = BookListOptions & {
   primaryType?: string;
+  libraryId?: number;
 };
 
 export type GameListOptions = BookListOptions & {
@@ -808,6 +810,8 @@ export const api = {
     if (options.offset) params.set("offset", String(options.offset));
     if (options.q) params.set("q", options.q);
     if (options.primaryType) params.set("primaryType", options.primaryType);
+    if (options.libraryId) params.set("libraryId", String(options.libraryId));
+    if (options.format) params.set("format", options.format);
     if (options.sort) params.set("sort", options.sort);
     if (options.direction) params.set("direction", options.direction);
     return request<CollectionListPage>(`/api/collections?${params.toString()}`, requestOptions);
@@ -821,6 +825,7 @@ export const api = {
     }),
   booksPage: (seriesId: number, options: BookListOptions) => {
     const params = new URLSearchParams();
+    if (options.format) params.set("format", options.format);
     if (options.limit) params.set("limit", String(options.limit));
     if (options.offset) params.set("offset", String(options.offset));
     if (options.q) params.set("q", options.q);

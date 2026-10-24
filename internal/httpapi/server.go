@@ -1750,6 +1750,8 @@ func (s *Server) handleSeries(w http.ResponseWriter, r *http.Request) {
 			Limit:       queryInt(r, "limit", 60, 200),
 			Offset:      queryInt(r, "offset", 0, 0),
 			PrimaryType: r.URL.Query().Get("primaryType"),
+			LibraryID:   int64(queryInt(r, "libraryId", 0, 0)),
+			Format:      r.URL.Query().Get("format"),
 			Sort:        r.URL.Query().Get("sort"),
 			Direction:   r.URL.Query().Get("direction"),
 			Query:       r.URL.Query().Get("q"),
@@ -2105,7 +2107,7 @@ func hasBookListQuery(r *http.Request) bool {
 
 func hasCollectionListQuery(r *http.Request) bool {
 	query := r.URL.Query()
-	return query.Has("limit") || query.Has("offset") || query.Has("q") || query.Has("sort") || query.Has("direction") || query.Has("primaryType")
+	return query.Has("limit") || query.Has("offset") || query.Has("q") || query.Has("sort") || query.Has("direction") || query.Has("primaryType") || query.Has("libraryId") || query.Has("format")
 }
 
 func (s *Server) streamPage(w http.ResponseWriter, r *http.Request, bookID int64, pageIndex int) {

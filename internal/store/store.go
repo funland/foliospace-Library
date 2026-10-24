@@ -370,8 +370,15 @@ func (s *Store) ListSeriesPageForProfile(profileID int64, options domain.Collect
 	}
 	queryArgs := append([]any(nil), args...)
 	queryArgs = append(queryArgs, options.Limit, options.Offset)
-	rows, err := s.db.Query(`SELECT c.id, c.library_id, c.title, c.directory_path, c.collection_type, c.primary_type, c.book_count, c.cover_book_id, c.created_at
-		FROM (`+base+`) c`+pageSuffix, queryArgs...)
+	countColumn, coverColumn := "c.book_count", "c.cover_book_id"
+	format := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(options.Format)), ".")
+	if format != "" && format != "all" {
+		countColumn = "(SELECT COUNT(*) FROM books fb WHERE fb.series_id=c.id AND LOWER(fb.format)=?)"
+		coverColumn = "COALESCE((SELECT fb.id FROM books fb WHERE fb.series_id=c.id AND LOWER(fb.format)=? ORDER BY fb.title,fb.id LIMIT 1),0)"
+		queryArgs = append([]any{format, format}, queryArgs...)
+	}
+	rows, err := s.db.Query(`SELECT c.id, c.library_id, c.title, c.directory_path, c.collection_type, c.primary_type, `+countColumn+`, `+coverColumn+`, c.created_at
+        FROM (`+base+`) c`+pageSuffix, queryArgs...)
 	if err != nil {
 		return domain.CollectionListPage{}, err
 	}
@@ -479,6 +486,15 @@ func collectionListWhere(options domain.CollectionListOptions) (string, []any) {
 	if primaryType != "" && primaryType != "all" {
 		whereParts = append(whereParts, "LOWER(c.primary_type) = ?")
 		args = append(args, primaryType)
+	}
+	if options.LibraryID > 0 {
+		whereParts = append(whereParts, "c.library_id = ?")
+		args = append(args, options.LibraryID)
+	}
+	format := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(options.Format)), ".")
+	if format != "" && format != "all" {
+		whereParts = append(whereParts, "EXISTS (SELECT 1 FROM books fb WHERE fb.series_id = c.id AND LOWER(fb.format) = ?)")
+		args = append(args, format)
 	}
 	query := strings.TrimSpace(options.Query)
 	if query != "" {

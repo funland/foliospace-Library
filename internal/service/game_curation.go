@@ -275,6 +275,9 @@ func (s *Service) handleCompletedScan(library domain.Library, job domain.ScanJob
 }
 
 func scanShouldTriggerCatalogAnalysis(library domain.Library, job domain.ScanJob) bool {
+	if library.AssetType != "game" && (library.AssetType != "mixed" || job.GameFiles == 0) {
+		return false
+	}
 	targetPath := filepath.Clean(strings.TrimSpace(job.TargetPath))
 	if targetPath == "." || targetPath == "" {
 		return false

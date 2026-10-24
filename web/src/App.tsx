@@ -81,6 +81,10 @@ export function App() {
   const [libraries, setLibraries] = useState<Library[]>([]);
   const [series, setSeries] = useState<Series[]>([]);
   const [collectionTotal, setCollectionTotal] = useState(0);
+  const [collectionType, setCollectionType] = useState("book");
+  const [collectionFormat, setCollectionFormat] = useState("");
+  const [volumeFormat, setVolumeFormat] = useState("");
+  const [collectionLibrary, setCollectionLibrary] = useState(0);
   const [collectionHasMore, setCollectionHasMore] = useState(false);
   const [collectionLoading, setCollectionLoading] = useState(false);
   const [allCollectionsLoaded, setAllCollectionsLoaded] = useState(false);
@@ -341,6 +345,9 @@ export function App() {
           limit: collectionPageSize,
           offset,
           q: query.trim() || undefined,
+          primaryType: collectionType,
+          format: collectionFormat,
+          libraryId: collectionLibrary,
           sort: collectionSort,
           direction: collectionSortDirection,
         },
@@ -361,7 +368,7 @@ export function App() {
         setCollectionLoading(false);
       }
     }
-  }, [activeProfileId, collectionSort, collectionSortDirection, query]);
+  }, [activeProfileId, collectionSort, collectionSortDirection, collectionType, collectionFormat, collectionLibrary, query]);
 
   async function openFavorites() {
     setView("favorites");
@@ -1371,7 +1378,8 @@ export function App() {
     }
   }
 
-  function openSeries(item: Series) {
+  function openSeries(item: Series, format = "") {
+    setVolumeFormat(format);
     setStatus(`Loading ${item.title}`);
     const isSameSeries = selectedSeries?.id === item.id;
     setView("library");
@@ -1380,7 +1388,7 @@ export function App() {
     setBooks([]);
     setBookTotal(0);
     setBookHasMore(false);
-    if (isSameSeries) {
+    if (isSameSeries && format === volumeFormat) {
       void loadBooksPage(item, 0, true, "");
     }
   }
@@ -1408,6 +1416,7 @@ export function App() {
           offset,
           q: queryOverride ?? query.trim(),
           sort: bookSort,
+          format: volumeFormat,
         });
         if (requestID !== bookListRequest.current) return;
         const pageItems = page.items ?? [];
@@ -1435,7 +1444,7 @@ export function App() {
         }
       }
     },
-    [bookSort, query],
+    [bookSort, query, volumeFormat],
   );
 
   useEffect(() => {
@@ -2431,8 +2440,8 @@ export function App() {
       const section = sections.find((candidate) => candidate.key === kind);
       section?.items.push(item);
     }
-    return sections.filter((section) => section.key !== "comic" && section.items.length > 0);
-  }, [sortedSeries, libraries, t]);
+    return sections.filter((section) => (collectionType !== "comic" || collectionFormat !== "") && section.items.length > 0);
+  }, [sortedSeries, libraries, t, collectionType, collectionFormat]);
   const favoriteCollections = useMemo(() => series.filter((item) => item.favorite), [series]);
   const likedCollections = useMemo(() => series.filter((item) => item.liked), [series]);
   const favoritePageItemCount = favoriteCollections.length + likedCollections.length + favoriteBooks.length;
@@ -2810,10 +2819,26 @@ export function App() {
               <div className="collectionPanelHeader">
                 <div>
                   <h1>{t.collections}</h1>
-                  <small>{t.catalogLoadedCount(filteredSeries.length, collectionTotal)}</small>
+                  {!(collectionType === "comic" && !collectionFormat) && <small>{t.catalogLoadedCount(filteredSeries.length, collectionTotal)}</small>}
                 </div>
                 <div className="collectionSortTools">
-                  <label>
+                  <label><span>{t.collectionTypeFilter}</span><select value={collectionType} onChange={event => {
+                    ++collectionListRequest.current;
+                    setCollectionType(event.target.value); setCollectionLibrary(0); setCollectionFormat("");
+                    setSeries([]); setCollectionTotal(0); setCollectionHasMore(false);
+                  }}>
+                    <option value="book">{t.ebooks}</option><option value="comic">{t.comicCollections}</option>
+                    <option value="all">{t.allCollectionTypes}</option>
+                  </select></label>
+                  <label><span>{t.collectionFormatFilter}</span><select value={collectionFormat} onChange={event => {
+                    ++collectionListRequest.current;
+                    setCollectionFormat(event.target.value); setSeries([]); setCollectionTotal(0); setCollectionHasMore(false);
+                  }}><option value="">{t.allCollectionFormats}</option><option value="epub">EPUB</option><option value="pdf">PDF</option></select></label>
+                  {!(collectionType === "comic" && !collectionFormat) && <label><span>{t.collectionLibraryFilter}</span><select value={collectionLibrary} onChange={event => {
+                    ++collectionListRequest.current;
+                    setCollectionLibrary(Number(event.target.value)); setSeries([]); setCollectionTotal(0); setCollectionHasMore(false);
+                  }}><option value="0">{t.allCollectionLibraries}</option>{libraries.filter(l => collectionType === "all" || l.assetType === collectionType || l.assetType === "mixed").map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select></label>}
+                  {!(collectionType === "comic" && !collectionFormat) && <label>
                     <span>{t.sort}</span>
                     <select value={collectionSort} onChange={(event) => changeCollectionSort(event.target.value as CollectionSort)}>
                       <option value="title">{t.sortTitle}</option>
@@ -2821,14 +2846,14 @@ export function App() {
                       <option value="count">{t.sortCount}</option>
                       <option value="type">{t.sortType}</option>
                     </select>
-                  </label>
-                  <select value={collectionSortDirection} onChange={(event) => setCollectionSortDirection(event.target.value as SortDirection)} aria-label={t.sortDirection}>
+                  </label>}
+                  {!(collectionType === "comic" && !collectionFormat) && <select value={collectionSortDirection} onChange={(event) => setCollectionSortDirection(event.target.value as SortDirection)} aria-label={t.sortDirection}>
                     <option value="asc">{t.sortAscending}</option>
                     <option value="desc">{t.sortDescending}</option>
-                  </select>
+                  </select>}
                 </div>
               </div>
-              <ComicBrowser libraries={libraries} locale={locale} onOpen={openSeries} refreshKey={`${activeProfileId}-${comicRevision}-${jobs[0]?.status || ""}`} renderCover={(id, url) => <ThumbnailImage src={url || `/api/books/${id}/thumbnail?size=small`} thumbnailStatus="pending" alt="" loading="lazy" />} />
+              {collectionType === "comic" && !collectionFormat && <ComicBrowser libraries={libraries} locale={locale} onOpen={openSeries} refreshKey={`${activeProfileId}-${comicRevision}-${jobs[0]?.status || ""}`} renderCover={(id, url) => <ThumbnailImage src={url || `/api/books/${id}/thumbnail?size=small`} thumbnailStatus="pending" alt="" loading="lazy" />} />}
               <div
                 className="collectionSections"
                 ref={collectionSectionsRef}
@@ -2836,7 +2861,7 @@ export function App() {
                   collectionScrollTop.current = event.currentTarget.scrollTop;
                 }}
               >
-                {collectionLoading && (
+                {!(collectionType === "comic" && !collectionFormat) && collectionLoading && (
                   <div className="catalogInitialProgress collectionLoadProgress" role="status" aria-live="polite">
                     <div>
                       <strong>{series.length === 0 ? `${t.collections}...` : t.loadingMoreVolumes}</strong>
@@ -2853,6 +2878,7 @@ export function App() {
                     </div>
                   </div>
                 )}
+                {!(collectionType === "comic" && !collectionFormat) && !collectionLoading && series.length === 0 && <p role="status">{t.noMatchingCollections}</p>}
                 {collectionSections.map((section) => (
                   <section className="collectionSection" key={section.key} aria-label={section.title}>
                     <h2>{section.title}</h2>
@@ -2865,14 +2891,14 @@ export function App() {
                           locale={locale}
                           selected={selectedSeries?.id === item.id}
                           labels={t}
-                          onOpen={openSeries}
+                          onOpen={item => openSeries(item, collectionFormat)}
                           onStateChange={updateCollectionState}
                         />
                       ))}
                     </div>
                   </section>
                 ))}
-                {collectionHasMore && (
+                {!(collectionType === "comic" && !collectionFormat) && collectionHasMore && (
                   <div className="collectionLoadMore" ref={collectionLoadMoreRef}>
                     <button
                       className="catalogLoadMore"
@@ -2890,6 +2916,7 @@ export function App() {
             {selectedSeries && <section className="coverWall panel collectionContent" ref={collectionContentRef}>
               <button className="collectionBack" onClick={() => setSelectedSeries(null)}>← {t.collections}</button>
               <div className="collectionDetailActions">
+                <label>{t.collectionFormatFilter} <select value={volumeFormat} onChange={event => setVolumeFormat(event.target.value)}><option value="">{t.allCollectionFormats}</option><option value="epub">EPUB</option><option value="pdf">PDF</option></select></label>
                 <button aria-pressed={selectedSeries.favorite} title={t.favorite} onClick={() => void updateCollectionState(selectedSeries, { favorite: !selectedSeries.favorite })}>★ {t.favorite}</button>
                 <button aria-pressed={selectedSeries.liked} title={t.collectionLike} onClick={() => void updateCollectionState(selectedSeries, { liked: !selectedSeries.liked })}>♥ {t.collectionLike}</button>
               </div>
@@ -5686,6 +5713,15 @@ const translations = {
     assetTypeVideo: "视频",
     comicCollections: "漫画",
     bookCollections: "书籍",
+    ebooks: "电子书",
+    collectionTypeFilter: "类型",
+    allCollectionTypes: "全部类型",
+    collectionFormatFilter: "格式",
+    allCollectionFormats: "全部格式",
+    collectionLibraryFilter: "资源库",
+    allCollectionLibraries: "全部资源库",
+    noMatchingCollections: "没有符合筛选条件的作品集",
+
     gameCollections: "游戏",
     videoCollections: "视频",
     libraries: "资源目录",
@@ -5945,6 +5981,15 @@ const translations = {
     assetTypeVideo: "影片",
     comicCollections: "漫畫",
     bookCollections: "書籍",
+    ebooks: "電子書",
+    collectionTypeFilter: "類型",
+    allCollectionTypes: "全部類型",
+    collectionFormatFilter: "格式",
+    allCollectionFormats: "全部格式",
+    collectionLibraryFilter: "資源庫",
+    allCollectionLibraries: "全部資源庫",
+    noMatchingCollections: "沒有符合篩選條件的作品集",
+
     gameCollections: "遊戲",
     videoCollections: "影片",
     libraries: "資源目錄",
@@ -6204,6 +6249,15 @@ const translations = {
     assetTypeVideo: "Videos",
     comicCollections: "Comics",
     bookCollections: "Books",
+    ebooks: "Ebooks",
+    collectionTypeFilter: "Type",
+    allCollectionTypes: "All types",
+    collectionFormatFilter: "Format",
+    allCollectionFormats: "All formats",
+    collectionLibraryFilter: "Library",
+    allCollectionLibraries: "All libraries",
+    noMatchingCollections: "No collections match these filters",
+
     gameCollections: "Games",
     videoCollections: "Videos",
     libraries: "Resource Directories",
@@ -6463,6 +6517,15 @@ const translations = {
     assetTypeVideo: "ビデオ",
     comicCollections: "漫画",
     bookCollections: "書籍",
+    ebooks: "電子書籍",
+    collectionTypeFilter: "種類",
+    allCollectionTypes: "すべての種類",
+    collectionFormatFilter: "形式",
+    allCollectionFormats: "すべての形式",
+    collectionLibraryFilter: "ライブラリ",
+    allCollectionLibraries: "すべてのライブラリ",
+    noMatchingCollections: "条件に一致するコレクションがありません",
+
     gameCollections: "ゲーム",
     videoCollections: "ビデオ",
     libraries: "リソース",
@@ -6722,6 +6785,15 @@ const translations = {
     assetTypeVideo: "비디오",
     comicCollections: "만화",
     bookCollections: "도서",
+    ebooks: "전자책",
+    collectionTypeFilter: "유형",
+    allCollectionTypes: "모든 유형",
+    collectionFormatFilter: "형식",
+    allCollectionFormats: "모든 형식",
+    collectionLibraryFilter: "라이브러리",
+    allCollectionLibraries: "모든 라이브러리",
+    noMatchingCollections: "조건에 맞는 컬렉션이 없습니다",
+
     gameCollections: "게임",
     videoCollections: "비디오",
     libraries: "리소스",

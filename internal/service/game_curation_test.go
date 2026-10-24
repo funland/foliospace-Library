@@ -247,3 +247,19 @@ func TestNetworkCoverTaskHonorsLibretroSetting(t *testing.T) {
 		t.Fatal("network cover task started while Libretro matching was disabled")
 	}
 }
+
+func TestMixedLibraryRequiresGamesObservedInThisScan(t *testing.T) {
+	root := t.TempDir()
+	for _, item := range []struct {
+		kind  string
+		games int
+		want  bool
+	}{
+		{"mixed", 0, false}, {"mixed", 1, true}, {"comic", 1, false}, {"book", 1, false}, {"game", 0, true},
+	} {
+		got := scanShouldTriggerCatalogAnalysis(domain.Library{RootPath: root, AssetType: item.kind}, domain.ScanJob{TargetPath: root, GameFiles: item.games})
+		if got != item.want {
+			t.Fatalf("%+v got %v", item, got)
+		}
+	}
+}
