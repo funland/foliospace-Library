@@ -1,0 +1,32 @@
+name: MCP release
+on:
+  push:
+    tags: ['mcp-v*']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.7'
+      - name: Test
+        run: |
+          go test ./internal/mcp ./cmd/foliospace-mcp
+          python3 scripts/test-mcp-installer.py
+      - name: Package
+        run: |
+          version="${GITHUB_REF_NAME#mcp-v}"
+          grep -F "const serviceVersion = \"$version\"" internal/mcp/server.go
+          VERSION="$version" OUT_DIR=dist/mcp-release sh scripts/build-mcp-release.sh
+          cd dist/mcp-release
+          sha256sum -c checksums.txt
+      - name: Publish independent MCP release (not Docker latest)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/mcp-release/* \
+            --verify-tag --latest=false --title "FolioSpace MCP ${GITHUB_REF_NAME#mcp-v}" \
+            --notes-file docs/mcp/release-1.03.1.md

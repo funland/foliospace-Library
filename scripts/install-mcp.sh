@@ -1,118 +1,61 @@
 #!/usr/bin/env sh
 set -eu
-
-VERSION="${FOLIOSPACE_MCP_VERSION:-1.03}"
-BASE_URL="${FOLIOSPACE_MCP_RELEASE_BASE_URL:-https://foliospace.app/releases}"
+VERSION="${FOLIOSPACE_MCP_VERSION:-1.03.1}"
+BASE_URL="${FOLIOSPACE_MCP_RELEASE_BASE_URL:-https://github.com/funland/foliospace-Library/releases/download/mcp-v$VERSION}"
 INSTALL_DIR="${FOLIOSPACE_MCP_INSTALL_DIR:-$HOME/.local/bin}"
-BIN_NAME="foliospace-mcp"
-
-usage() {
-  cat <<EOF
-Install FolioSpace Library MCP.
-
-Environment overrides:
-  FOLIOSPACE_MCP_VERSION=1.03
-  FOLIOSPACE_MCP_RELEASE_BASE_URL=https://foliospace.app/releases
-  FOLIOSPACE_MCP_INSTALL_DIR=\$HOME/.local/bin
-
-Example:
-  curl -fsSL https://foliospace.app/install-mcp.sh | sh
-EOF
-}
-
-case "${1:-}" in
-  -h|--help)
-    usage
-    exit 0
-    ;;
-esac
-
+case "$VERSION" in ''|*[!0-9.]*) echo 'Invalid MCP version' >&2; exit 1;; esac
+case "${1:-}" in -h|--help)
+  printf '%s\n' 'Install verified FolioSpace MCP from its independent GitHub release.' \
+    'Overrides: FOLIOSPACE_MCP_VERSION, FOLIOSPACE_MCP_RELEASE_BASE_URL, FOLIOSPACE_MCP_INSTALL_DIR.' \
+    'Existing URL/token configuration is never modified. Reconnect your MCP host after installation.'
+  exit 0;; esac
+case "$BASE_URL" in https://*) ;; *) echo 'Release URL must use HTTPS' >&2; exit 1;; esac
 os=$(uname -s | tr '[:upper:]' '[:lower:]')
 arch=$(uname -m)
-
-case "$os" in
-  darwin|linux) ;;
-  *)
-    echo "unsupported OS: $os" >&2
-    exit 1
-    ;;
-esac
-
-case "$arch" in
-  x86_64|amd64) arch="amd64" ;;
-  arm64|aarch64) arch="arm64" ;;
-  *)
-    echo "unsupported architecture: $arch" >&2
-    exit 1
-    ;;
-esac
-
-archive="${BIN_NAME}_${VERSION}_${os}_${arch}.tar.gz"
-url="${BASE_URL%/}/$archive"
-checksums_url="${BASE_URL%/}/checksums.txt"
-tmp_dir=$(mktemp -d 2>/dev/null || mktemp -d -t foliospace-mcp)
-
+case "$os" in darwin|linux) ;; *) echo "Unsupported OS: $os" >&2; exit 1;; esac
+case "$arch" in x86_64|amd64) arch=amd64;; arm64|aarch64) arch=arm64;; *) echo "Unsupported architecture: $arch" >&2; exit 1;; esac
+command -v curl >/dev/null 2>&1 || { echo 'curl is required' >&2; exit 1; }
+tmp_dir=$(mktemp -d)
+candidate=''
+backup=''
 cleanup() {
+  [ -z "$candidate" ] || rm -f "$candidate"
+  [ -z "$backup" ] || rm -f "$backup"
   rm -rf "$tmp_dir"
 }
-trap cleanup EXIT INT TERM
-
-echo "downloading $url"
-if command -v curl >/dev/null 2>&1; then
-  curl -fsSL "$url" -o "$tmp_dir/$archive"
-elif command -v wget >/dev/null 2>&1; then
-  wget -q "$url" -O "$tmp_dir/$archive"
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+archive="foliospace-mcp_${VERSION}_${os}_${arch}.tar.gz"
+fetch() { curl --proto '=https' --proto-redir '=https' -fsSL --connect-timeout 15 --max-time 180 "$1" -o "$2"; }
+fetch "${BASE_URL%/}/checksums.txt" "$tmp_dir/checksums.txt"
+fetch "${BASE_URL%/}/$archive" "$tmp_dir/$archive"
+expected=$(awk -v file="$archive" '$2 == file {print $1}' "$tmp_dir/checksums.txt")
+[ "${#expected}" -eq 64 ] || { echo 'Missing or ambiguous checksum' >&2; exit 1; }
+case "$expected" in *[!a-f0-9]*) echo 'Invalid checksum' >&2; exit 1;; esac
+if command -v shasum >/dev/null 2>&1; then
+  actual=$(shasum -a 256 "$tmp_dir/$archive" | awk '{print $1}')
+elif command -v sha256sum >/dev/null 2>&1; then
+  actual=$(sha256sum "$tmp_dir/$archive" | awk '{print $1}')
 else
-  echo "curl or wget is required" >&2
-  exit 1
+  echo 'SHA-256 verification tool required' >&2; exit 1
 fi
-
-if command -v curl >/dev/null 2>&1; then
-  curl -fsSL "$checksums_url" -o "$tmp_dir/checksums.txt" || true
-elif command -v wget >/dev/null 2>&1; then
-  wget -q "$checksums_url" -O "$tmp_dir/checksums.txt" || true
-fi
-
-if [ -s "$tmp_dir/checksums.txt" ]; then
-  expected=$(awk -v file="$archive" '$2 == file { print $1 }' "$tmp_dir/checksums.txt")
-  if [ -n "$expected" ]; then
-    if command -v shasum >/dev/null 2>&1; then
-      actual=$(shasum -a 256 "$tmp_dir/$archive" | awk '{ print $1 }')
-    elif command -v sha256sum >/dev/null 2>&1; then
-      actual=$(sha256sum "$tmp_dir/$archive" | awk '{ print $1 }')
-    else
-      actual=""
-      echo "checksum file found, but no shasum/sha256sum is available; skipping verification" >&2
-    fi
-    if [ -n "$actual" ] && [ "$actual" != "$expected" ]; then
-      echo "checksum mismatch for $archive" >&2
-      exit 1
-    fi
-  else
-    echo "checksum entry not found for $archive; skipping verification" >&2
-  fi
-else
-  echo "checksums.txt not found; skipping verification" >&2
-fi
-
-tar -xzf "$tmp_dir/$archive" -C "$tmp_dir"
+[ "$expected" = "$actual" ] || { echo 'Checksum mismatch; existing installation unchanged' >&2; exit 1; }
 mkdir -p "$INSTALL_DIR"
-cp "$tmp_dir/${BIN_NAME}_${VERSION}_${os}_${arch}/$BIN_NAME" "$INSTALL_DIR/$BIN_NAME"
-chmod +x "$INSTALL_DIR/$BIN_NAME"
-
-echo "installed $BIN_NAME to $INSTALL_DIR/$BIN_NAME"
-echo
-echo "MCP client config example:"
-cat <<EOF
-{
-  "mcpServers": {
-    "foliospace-library": {
-      "command": "$INSTALL_DIR/$BIN_NAME",
-      "env": {
-        "FOLIOSPACE_BASE_URL": "http://your-nas-ip:8080",
-        "FOLIOSPACE_API_TOKEN": "your-access-key"
-      }
-    }
-  }
-}
-EOF
+candidate=$(mktemp "$INSTALL_DIR/.foliospace-mcp.candidate.XXXXXX")
+# Extract only the named executable to stdout: never trust archive filesystem paths.
+tar -xOzf "$tmp_dir/$archive" "${archive%.tar.gz}/foliospace-mcp" > "$candidate"
+chmod 755 "$candidate"
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize"}' | "$candidate" > "$tmp_dir/initialize.json"
+grep -F '"name":"foliospace-library"' "$tmp_dir/initialize.json" >/dev/null
+grep -F "\"version\":\"$VERSION\"" "$tmp_dir/initialize.json" >/dev/null
+if [ -e "$INSTALL_DIR/foliospace-mcp" ]; then
+  backup=$(mktemp "$INSTALL_DIR/.foliospace-mcp.backup.XXXXXX")
+  cp -p "$INSTALL_DIR/foliospace-mcp" "$backup"
+  mv -f "$backup" "$INSTALL_DIR/.foliospace-mcp.previous"
+  backup=''
+fi
+mv -f "$candidate" "$INSTALL_DIR/foliospace-mcp"
+candidate=''
+printf 'Installed FolioSpace MCP %s at %s/foliospace-mcp\n' "$VERSION" "$INSTALL_DIR"
+printf '%s\n' 'URL/token unchanged. Reconnect your MCP host to load the new tools.'
