@@ -8,21 +8,22 @@ Reader, Player, and SpatialEMU provide the reading, viewing, and retro gaming ex
 
 **Other clients are welcome.** Build your own reader, catalog browser, game frontend, or media client using the [stable Client API v1](docs/api/client-v1.md#external-client-quick-start). Keep feature discovery and compatibility checks in your client; Library is a shared content service, not a full Plex, Jellyfin, or Immich replacement.
 
-Current release: [`1.03`](https://github.com/funland/foliospace-Library/releases/tag/v1.03).
+Current release: [`1.10`](https://github.com/funland/foliospace-Library/releases/tag/v1.10).
 
-## What's new in 1.03: a stronger movie and TV library
+## What's new in 1.10: clearer libraries and more reliable reading
 
-- Browse a paginated **poster wall**, with consistent artwork in the home video library, recently added items, works, and collection surfaces.
-- Keep files separate from works: local NFO/artwork, manual title and metadata corrections, season/episode associations, and multiple file versions without rewriting media.
-- Optionally search TMDB, review candidates, and explicitly confirm metadata/artwork. Local-only browsing works without TMDB; unavailable or expired provider data falls back locally.
-- Give compatible clients library filters, recent sorting, stable season/episode IDs, and version selection, plus profile-scoped playback state, explicit watched/unwatched, continue watching, and next-up. Retried events are idempotent; conflicts do not silently overwrite another device.
-- Explicitly refresh one confirmed TMDB series season to distinguish locally available, missing, unreleased, and unknown episodes. No automatic whole-library provider scan.
+- Switch between **ebooks and comics**, filter EPUB/PDF, and browse nested comic collections without duplicate parent/child listings.
+- Import Calibre titles, authors and covers; clean generated book/comic/video labels while preserving manual corrections.
+- Move library administration into settings, use consistent video titles across home surfaces, and keep finished books out of Continue Reading.
+- Restore EPUB arrow-key navigation, improve two-column width and progress restoration, and correct chapter labels, character images and footnote links.
+- Preserve item identities, progress, favorites and manual metadata during rescans, collection ownership reconciliation and game analysis. Mixed libraries no longer trigger the legacy game analyzer accidentally.
+- Label confirmed empty, zero-filled or structurally damaged book files; hide them from Recently Added while retaining the record, error reason and original path. Repaired files can recover without losing error history.
 
 The server primarily catalogs and delivers original files; dedicated clients decode and play them. Existing HLS remains an optional compatibility path, not a new always-on transcoding service. All earlier reader/game, CIA, MAME/FBNeo, PC-98 font, Triforce, and resumable-download features remain included.
 
 **TMDB is optional and bring-your-own-credential.** Apply through your own TMDB account and configure your own **API Read Access Token** on the server. We provide no shared developer key. A personal token or this project's software license does **not** automatically authorize commercial use; review TMDB's terms, applicable commercial licensing, and attribution requirements. Keep tokens out of Git, URLs, logs and screenshots. See the [TMDB setup and licensing notes](docs/tmdb-setup.md) · [中文](docs/tmdb-setup.zh-CN.md).
 
-See [release notes](docs/releases/1.03.md), [movie-library API](docs/api/video-library-v1.md), and [season/progress API](docs/api/video-library-p1-p2.md). Client integration was built/tested separately; Mac/iPad development packages were installed, while cross-device playback acceptance and visionOS/tvOS device checks remain distinct. No App Store update is implied by this server release.
+See [release notes](docs/releases/1.10.md), [movie-library API](docs/api/video-library-v1.md), and [season/progress API](docs/api/video-library-p1-p2.md). Client integration was built/tested separately; Mac/iPad development packages were installed, while cross-device playback acceptance and visionOS/tvOS device checks remain distinct. No App Store update is implied by this server release.
 
 ## Start here: SpatialEMU + FolioSpace
 
@@ -319,6 +320,10 @@ Release `0.975` is a stability and performance hotfix for large game libraries:
 - Game list sorting and filtering add SQLite expression indexes for title and platform-heavy browsing.
 - Service, Client API, and MCP metadata report version `0.975`.
 
+## Release 1.10
+
+Calibre metadata, ebook/comic filters, cleaner home presentation, EPUB navigation and progress fixes, safe rescans and explicit book-file diagnostics. [Release notes and upgrade instructions](docs/releases/1.10.md).
+
 ## Release 1.03
 
 Movie-library P0/P1/P2 is now included: consistent posters, local metadata and optional TMDB matching, seasons/episodes/versions, profile-scoped playback state, continue/next-up and explicit episode availability. Previous reader/game features remain intact. [Full release notes and upgrade cautions](docs/releases/1.03.md).
@@ -576,7 +581,7 @@ curl -fsSL https://foliospace.app/install-mcp.sh | sh
 Release maintainers can build macOS/Linux MCP packages with:
 
 ```bash
-VERSION=1.03 ./scripts/build-mcp-release.sh
+VERSION=1.03.1 ./scripts/build-mcp-release.sh
 ```
 
 ## Product Direction
@@ -623,7 +628,7 @@ an access key and lets you choose a container path such as `/library`, `/books`,
 The default deployment currently pins this image:
 
 ```bash
-docker pull funland/foliospace-library:1.03
+docker pull funland/foliospace-library:1.10
 ```
 
 To upgrade later, change `FOLIOSPACE_IMAGE` in `.env`, then run:
@@ -663,7 +668,7 @@ docker run -p 8080:8080 \
   -v /volume2/GameROMS:/games:ro \
   -v /volume2/MovieCollection/Movies:/videos:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games,/videos \
-  funland/foliospace-library:1.03
+  funland/foliospace-library:1.10
 ```
 
 If a directory is missing from the setup page, add its Docker volume mapping
@@ -685,11 +690,11 @@ Docker Hub releases are built by GitHub Actions from Git tags. Configure these r
 Then create and push a version tag:
 
 ```bash
-git tag v1.03
-git push github v1.03
+git tag v1.10
+git push github v1.10
 ```
 
-The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:1.03` and `funland/foliospace-library:latest`.
+The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:1.10` and `funland/foliospace-library:latest`.
 
 ## Current MVP Support
 
