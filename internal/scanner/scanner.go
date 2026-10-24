@@ -243,7 +243,21 @@ func (s *Scanner) runScanJob(library domain.Library, job domain.ScanJob, scope s
 			_ = s.store.UpdateScanJob(job)
 			return nil
 		}
-		if info.Size() == 0 {
+		if kind == "book" {
+			if result, err := s.checkBookFile(library, path, info, ext, scope.bookMetadata); err != nil {
+				if result.MetadataUpdated {
+					job.MetadataUpdatedFiles++
+				}
+				if result.Reclassified {
+					job.ReclassifiedFiles++
+				}
+				job.ErrorCount++
+				_ = s.recordPathError(library.ID, job.ID, path, bookHealthErrorCode(err), err.Error())
+				_ = s.store.UpdateScanJob(job)
+				return nil
+			}
+		}
+		if info.Size() == 0 && kind != "book" {
 			job.ErrorCount++
 			_ = s.recordPathError(library.ID, job.ID, path, domain.ErrorEmptyFile, "empty file")
 			_ = s.store.AddJobEvent(job.ID, "error", "empty file: "+path)
@@ -823,7 +837,7 @@ func (s *Scanner) runScanJobConcurrent(library domain.Library, job domain.ScanJo
 			})
 			return nil
 		}
-		if info.Size() == 0 {
+		if info.Size() == 0 && kind != "book" {
 			_ = s.recordPathError(library.ID, job.ID, path, domain.ErrorEmptyFile, "empty file")
 			updateJob(func(job *domain.ScanJob) {
 				job.ErrorCount++
@@ -907,6 +921,20 @@ func (s *Scanner) runScanJobConcurrent(library domain.Library, job domain.ScanJo
 func (s *Scanner) processScanTask(library domain.Library, jobID int64, task scanFileTask, scope scanScope, fileIndexes map[string]store.FileIndex, updateJob func(func(*domain.ScanJob))) {
 	setCurrent := func(job *domain.ScanJob) {
 		job.CurrentPath = task.path
+	}
+	if task.kind == "book" {
+		if result, err := s.checkBookFile(library, task.path, task.info, task.ext, scope.bookMetadata); err != nil {
+			updateJob(func(job *domain.ScanJob) {
+				if result.MetadataUpdated {
+					job.MetadataUpdatedFiles++
+				}
+				if result.Reclassified {
+					job.ReclassifiedFiles++
+				}
+			})
+			s.recordTaskError(library.ID, jobID, task.path, bookHealthErrorCode(err), "book validation failed: ", err, updateJob)
+			return
+		}
 	}
 	if task.kind == "game" {
 		updateJob(func(job *domain.ScanJob) { job.GameFiles++ })
@@ -1073,14 +1101,6 @@ func (s *Scanner) scanTaskNeedsIndex(library domain.Library, task scanFileTask, 
 	case "video":
 		return !s.store.CanSkipVideo(task.path, task.info.Size(), task.info.ModTime())
 	default:
-		if task.ext != ".epub" {
-			if index, ok := s.unchangedMetadataOnlyFile(fileIndexes, task.path, task.info, task.ext); ok && canSkipUnchangedBook(library, task.path, index, task.ext) {
-				return false
-			}
-		}
-		if index, ok := s.unchangedFileIndex(fileIndexes, task.path, task.info, task.ext); ok && canSkipUnchangedBook(library, task.path, index, task.ext) {
-			return false
-		}
 		return true
 	}
 }
@@ -4901,13 +4921,18 @@ func sameStringList(left []string, right []string) bool {
 }
 
 func (s *Scanner) recordPathError(libraryID int64, jobID int64, path string, code domain.ErrorCode, message string) error {
-	return s.store.RecordFileError(domain.FileErrorInput{
+	input := domain.FileErrorInput{
 		LibraryID: libraryID,
 		JobID:     jobID,
 		Path:      path,
 		Code:      code,
 		Message:   message,
-	})
+	}
+	if index, err := s.store.FileIndexByPath(path); err == nil {
+		input.BookID = index.Book.ID
+		input.FileID = index.File.ID
+	}
+	return s.store.RecordFileError(input)
 }
 
 func shouldSkipScanDir(library domain.Library, path string) bool {

@@ -2870,12 +2870,15 @@ func (s *Service) BookForProfile(id int64, profileID int64) (domain.Book, error)
 }
 
 func (s *Service) AnalyzeBook(id int64) ([]domain.Page, error) {
-	book, err := s.store.BookByID(id)
+	book, err := s.ValidateBookFile(id)
 	if err != nil {
 		return nil, err
 	}
 	if book.FilePath == "" {
 		return nil, fmt.Errorf("book has no indexed file")
+	}
+	if book.FileErrorCode != "" {
+		return nil, fmt.Errorf("%s", book.FileErrorMessage)
 	}
 	var pages []domain.Page
 	if book.Format == "epub" {
@@ -3126,7 +3129,7 @@ func pdfCoverPlaceholder() string {
 }
 
 func (s *Service) EPUBManifest(bookID int64) (domain.EPUBManifest, error) {
-	book, err := s.store.BookByID(bookID)
+	book, err := s.ValidateBookFile(bookID)
 	if err != nil {
 		return domain.EPUBManifest{}, err
 	}
@@ -3135,6 +3138,9 @@ func (s *Service) EPUBManifest(bookID int64) (domain.EPUBManifest, error) {
 	}
 	if book.FilePath == "" {
 		return domain.EPUBManifest{}, fmt.Errorf("book has no indexed file")
+	}
+	if book.FileErrorCode != "" {
+		return domain.EPUBManifest{}, fmt.Errorf("%s", book.FileErrorMessage)
 	}
 	return archive.ReadEPUBManifest(book.FilePath)
 }

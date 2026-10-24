@@ -395,7 +395,7 @@ func TestScanLibraryUsesEmbeddedComicJSONMetadata(t *testing.T) {
 	}
 }
 
-func TestScanLibraryDoesNotReopenUnchangedEPUBWhenMetadataExists(t *testing.T) {
+func TestScanLibraryDetectsDamagedEPUBEvenWhenMetadataAndStatAreUnchanged(t *testing.T) {
 	root := t.TempDir()
 	epubPath := filepath.Join(root, "Books", "cached.epub")
 	makeZip(t, epubPath, sampleEPUBEntriesWithMetadata("Cached Title", "Cached Author", "Cached description."))
@@ -437,8 +437,8 @@ func TestScanLibraryDoesNotReopenUnchangedEPUBWhenMetadataExists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if secondJob.Status != "completed" || secondJob.ErrorCount != 0 || secondJob.SkippedFiles != 1 {
-		t.Fatalf("second job = %#v, want unchanged EPUB skipped without reopening metadata", secondJob)
+	if secondJob.Status != "completed" || secondJob.ErrorCount != 1 || secondJob.SkippedFiles != 0 {
+		t.Fatalf("second job = %#v, want damaged EPUB flagged while retaining metadata", secondJob)
 	}
 }
 
@@ -505,7 +505,7 @@ func TestScanLibrarySkipsUnchangedComicWithoutReclassification(t *testing.T) {
 	}
 }
 
-func TestScanLibrarySkipsUnchangedComicWithoutPageIndex(t *testing.T) {
+func TestScanLibraryFlagsDamagedComicWithoutReplacingItsIndex(t *testing.T) {
 	root := t.TempDir()
 	comicPath := filepath.Join(root, "Series A", "book1.cbz")
 	makeZip(t, comicPath, map[string]string{"001.jpg": "image"})
@@ -550,8 +550,8 @@ func TestScanLibrarySkipsUnchangedComicWithoutPageIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if job.Status != "completed" || job.ErrorCount != 0 || job.SkippedFiles != 1 || job.IndexedFiles != 0 {
-		t.Fatalf("job = %#v, want unchanged comic skipped without opening archive", job)
+	if job.Status != "completed" || job.ErrorCount != 1 || job.SkippedFiles != 0 || job.IndexedFiles != 0 {
+		t.Fatalf("job = %#v, want invalid comic flagged without replacing its index", job)
 	}
 }
 

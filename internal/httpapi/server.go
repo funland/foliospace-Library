@@ -2041,6 +2041,16 @@ func (s *Server) handleBookAction(w http.ResponseWriter, r *http.Request) {
 		writeJSONOrError(w, bookWithThumbnail(book), err)
 		return
 	}
+	if tail == "validate" && r.Method == http.MethodPost {
+		_, err := s.service.ValidateBookFile(id)
+		if err != nil {
+			writeJSONOrError(w, nil, err)
+			return
+		}
+		book, err := s.service.BookForProfile(id, s.requestProfileID(r))
+		writeJSONOrError(w, bookWithThumbnail(book), err)
+		return
+	}
 	if tail == "analyze" && r.Method == http.MethodPost {
 		pages, err := s.service.AnalyzeBook(id)
 		writeJSONOrError(w, pages, err)
@@ -2632,6 +2642,8 @@ type clientCollectionListPageResponse struct {
 }
 
 type clientBook struct {
+	FileErrorCode          string   `json:"fileErrorCode,omitempty"`
+	FileErrorMessage       string   `json:"fileErrorMessage,omitempty"`
 	CollectionDisplayTitle string   `json:"collectionDisplayTitle,omitempty"`
 	DisplayCreator         string   `json:"displayCreator,omitempty"`
 	ID                     int64    `json:"id"`
@@ -3478,6 +3490,8 @@ func clientBookItem(book domain.Book) clientBook {
 		ManifestURL:            fmt.Sprintf("/api/client/books/%d/manifest", book.ID),
 		DownloadURL:            clientBookDownloadURL(book.ID),
 		Analyzed:               book.Analyzed,
+		FileErrorCode:          book.FileErrorCode,
+		FileErrorMessage:       book.FileErrorMessage,
 		AddedAt:                formatClientTime(book.AddedAt),
 		UpdatedAt:              formatClientTime(book.UpdatedAt),
 		CurrentPage:            book.CurrentPage,

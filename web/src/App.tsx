@@ -1,3 +1,4 @@
+import { bookFileIssueLabel, bookFileIssueReason, bookHealthCopy } from "./book-health";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ComicBrowser, ComicTitleRules } from "./ComicBrowser";
 import { VideoLibrary } from "./VideoLibrary";
@@ -1736,6 +1737,11 @@ export function App() {
   }, [authRequired, view]);
 
   async function openBook(book: Book) {
+    if (book.fileErrorCode) {
+      setStatus(bookFileIssueReason(book.fileErrorCode, locale));
+      await openErrorsView();
+      return;
+    }
     const intent = ++readerOpenIntent.current;
     readerTransition.current = true;
     const sessions = readerProgressSessions.current;
@@ -2695,7 +2701,7 @@ export function App() {
                     {globalBooks.map((book) => (
                       <button className="searchResult" key={`search-${book.id}`} onClick={() => openBook(book)} title={book.title}>
                         <span className="searchCover">
-                          <BookCover book={book} />
+                          <BookCover book={book} locale={locale} />
                           <span className="coverBadge">{book.format.toUpperCase()}</span>
                         </span>
                         <span>
@@ -2721,6 +2727,7 @@ export function App() {
                 {hasPersonalShelves && <div className="quickShelfColumn">
                   {visibleContinueBooks.length > 0 && (
                     <BookShelf
+                      locale={locale}
                       title={t.continueReading}
                       subtitle={t.continueSubtitle}
                       books={visibleContinueBooks}
@@ -2734,6 +2741,7 @@ export function App() {
                   )}
                   {favoriteBooks.length > 0 && (
                     <BookShelf
+                      locale={locale}
                       title={t.favorites}
                       subtitle={t.favoriteSubtitle}
                       books={favoriteBooks.slice(0, 4)}
@@ -2745,6 +2753,7 @@ export function App() {
                   )}
                   {wantBooks.length > 0 && (
                     <BookShelf
+                      locale={locale}
                       title={t.wantToRead}
                       subtitle={t.wantSubtitle}
                       books={wantBooks.slice(0, 4)}
@@ -2788,6 +2797,7 @@ export function App() {
                   )}
                   {showRecentBooks && (
                     <BookShelf
+                      locale={locale}
                       title={t.recentlyAddedTitle}
                       subtitle={t.recentSubtitle}
                       books={recentBooks.slice(0, 4)}
@@ -2942,7 +2952,7 @@ export function App() {
                   {books.map((book) => (
                     <button className="book" key={book.id} onClick={() => openBook(book)} title={book.title}>
                       <span className="coverFrame">
-                        <BookCover book={book} />
+                        <BookCover book={book} locale={locale} />
                         <span className="coverBadge">{book.format.toUpperCase()}</span>
                       </span>
                       <strong>{displayText(book.title)}</strong>
@@ -3113,7 +3123,7 @@ export function App() {
                     {favoriteBooks.map((book) => (
                       <button className="book" key={`favorite-book-${book.id}`} onClick={() => openBook(book)} title={book.title}>
                         <span className="coverFrame">
-                          <BookCover book={book} />
+                          <BookCover book={book} locale={locale} />
                           <span className="coverBadge">{book.format.toUpperCase()}</span>
                         </span>
                         <strong>{displayText(book.title)}</strong>
@@ -4017,9 +4027,9 @@ export function App() {
                   <div className="table compact">
                     {jobErrors.map((item) => (
                       <div className="errorRow" key={item.id}>
-                        <code>{item.code}</code>
-                        <span>{item.path}</span>
-                        <small>{item.message}</small>
+                        <code>{item.resolved ? bookHealthCopy(locale).resolved : bookFileIssueLabel(item.code, locale)}</code>
+                        <span className="errorPath" title={item.path}>{item.path}</span>
+                        <small>{bookFileIssueReason(item.code, locale)}<br />{item.message}</small>
                       </div>
                     ))}
                   </div>
@@ -4034,12 +4044,13 @@ export function App() {
         {view === "errors" && (
           <section className="panel">
             <h1>{t.errors}</h1>
+            <p>{bookHealthCopy(locale).hint}</p>
             <div className="table">
               {errors.map((item) => (
                 <div className="errorRow" key={item.id}>
-                  <code>{item.code}</code>
-                  <span>{item.path}</span>
-                  <small>{item.message}</small>
+                  <code>{item.resolved ? bookHealthCopy(locale).resolved : bookFileIssueLabel(item.code, locale)}</code>
+                  <span className="errorPath" title={item.path}>{item.path}</span>
+                  <small>{bookFileIssueReason(item.code, locale)}<br />{item.message}</small>
                 </div>
               ))}
             </div>
@@ -4278,6 +4289,7 @@ function CollectionCover({ series }: { series: Series }) {
 }
 
 function BookShelf({
+  locale,
   title,
   subtitle,
   books,
@@ -4288,6 +4300,7 @@ function BookShelf({
   largeCovers = false,
   progress = false,
 }: {
+  locale: string;
   title: string;
   subtitle: string;
   books: Book[];
@@ -4311,7 +4324,7 @@ function BookShelf({
           <div className="shelfBookShell" key={`${title}-${book.id}`}>
             <button className="shelfBook" onClick={() => onOpen(book)} title={book.title}>
               <span className="shelfCover">
-                <BookCover book={book} largeCover={largeCovers} />
+                <BookCover book={book} locale={locale} largeCover={largeCovers} />
                 <span className="coverBadge">{book.format.toUpperCase()}</span>
               </span>
               <span>
@@ -4438,7 +4451,7 @@ function CollectionCard({
   );
 }
 
-function BookCover({ book, largeCover = false }: { book: Book; largeCover?: boolean }) {
+function BookCover({ book, locale, largeCover = false }: { book: Book; locale: string; largeCover?: boolean }) {
   const src = book.thumbnailUrl || `/api/books/${book.id}/thumbnail?size=small`;
   return (
     <>
@@ -4449,6 +4462,7 @@ function BookCover({ book, largeCover = false }: { book: Book; largeCover?: bool
         loading="lazy"
       />
       <SourceCoverOverlay sourceCoverUrl={largeCover ? book.coverUrl || `/api/books/${book.id}/cover` : undefined} />
+      {book.fileErrorCode && <span className="bookHealthBadge" title={bookFileIssueReason(book.fileErrorCode, locale)}>{bookFileIssueLabel(book.fileErrorCode, locale)}</span>}
     </>
   );
 }

@@ -3232,7 +3232,7 @@ button.danger:hover {
 
 .errorRow code {
   color: #9b2c2c;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .errorRow span,
@@ -4494,3 +4494,18 @@ button.danger:hover {
 
 /* Keep edition and compatibility labels readable on compact game cards. */
 .gameCard .gameCardButton > small { display: block; white-space: normal; overflow-wrap: anywhere; line-height: 1.4; font-size: 11px; margin-top: 4px; }
+
+.bookHealthBadge {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  right: 8px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: #922f22;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  z-index: 3;
+}
+.errorPath { white-space: pre-wrap; user-select: text; }

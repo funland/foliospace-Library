@@ -84,6 +84,8 @@ type CollectionListPage struct {
 }
 
 type Book struct {
+	FileErrorCode          string    `json:"fileErrorCode,omitempty"`
+	FileErrorMessage       string    `json:"fileErrorMessage,omitempty"`
 	ID                     int64     `json:"id"`
 	SeriesID               int64     `json:"seriesId"`
 	CollectionTitle        string    `json:"collectionTitle,omitempty"`
@@ -844,6 +846,7 @@ type ReadingPosition struct {
 }
 
 type FileError struct {
+	Resolved  bool      `json:"resolved"`
 	ID        int64     `json:"id"`
 	LibraryID int64     `json:"libraryId"`
 	BookID    int64     `json:"bookId,omitempty"`

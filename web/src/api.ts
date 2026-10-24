@@ -45,6 +45,8 @@ export type Series = {
 };
 
 export type Book = {
+  fileErrorCode?: string;
+  fileErrorMessage?: string;
   id: number;
   seriesId: number;
   collectionTitle?: string;
@@ -509,6 +511,8 @@ export type ScanJob = {
 };
 
 export type FileError = {
+  resolved?: boolean;
+  bookId?: number;
   id: number;
   path: string;
   code: string;

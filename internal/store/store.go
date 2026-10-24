@@ -1472,6 +1472,7 @@ func (s *Store) ListRecentBooksForProfile(profileID int64, limit int) ([]domain.
 		limit = 12
 	}
 	rows, err := s.db.Query(bookSelectSQL(profileID)+`
+		WHERE COALESCE(json_extract(fh.value, '$.code'), '') = ''
 		ORDER BY b.created_at DESC, b.id DESC
 		LIMIT ?`, limit)
 	if err != nil {
@@ -4650,7 +4651,7 @@ func (s *Store) ProgressForProfile(bookID int64, profileID int64) (domain.ReadPr
 
 func (s *Store) RecordFileError(input domain.FileErrorInput) error {
 	_, err := s.db.Exec(`INSERT INTO file_errors(library_id, book_id, file_id, job_id, path, code, message) VALUES(?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(path, code) DO UPDATE SET message = excluded.message, job_id = excluded.job_id, last_seen = CURRENT_TIMESTAMP`,
+		ON CONFLICT(path, code) DO UPDATE SET book_id = CASE WHEN excluded.book_id > 0 THEN excluded.book_id ELSE file_errors.book_id END, file_id = CASE WHEN excluded.file_id > 0 THEN excluded.file_id ELSE file_errors.file_id END, message = excluded.message, job_id = excluded.job_id, last_seen = CURRENT_TIMESTAMP`,
 		input.LibraryID, input.BookID, input.FileID, input.JobID, input.Path, string(input.Code), input.Message)
 	return err
 }
@@ -4660,13 +4661,16 @@ func (s *Store) ListFileErrors() ([]domain.FileError, error) {
 }
 
 func (s *Store) ListFileErrorsByJob(jobID int64) ([]domain.FileError, error) {
-	query := `SELECT id, library_id, book_id, file_id, job_id, path, code, message, first_seen, last_seen FROM file_errors`
+	query := `SELECT e.id, e.library_id, e.book_id, e.file_id, e.job_id, e.path, e.code, e.message, e.first_seen, e.last_seen,
+        CASE WHEN e.code IN ('empty_file','zero_filled_file','invalid_book_container','invalid_epub','archive_open_failed','archive_empty')
+         AND h.value IS NOT NULL AND COALESCE(json_extract(h.value,'$.code'),'') = '' THEN 1 ELSE 0 END
+        FROM file_errors e LEFT JOIN app_settings h ON h.key = 'book-file-health:' || COALESCE(NULLIF(e.book_id,0),(SELECT f.book_id FROM files f WHERE f.abs_path=e.path))`
 	args := []any{}
 	if jobID > 0 {
-		query += ` WHERE job_id = ?`
+		query += ` WHERE e.job_id = ?`
 		args = append(args, jobID)
 	}
-	query += ` ORDER BY last_seen DESC, id DESC`
+	query += ` ORDER BY e.last_seen DESC, e.id DESC`
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
@@ -4679,7 +4683,7 @@ func (s *Store) ListFileErrorsByJob(jobID int64) ([]domain.FileError, error) {
 		var code string
 		var firstSeen string
 		var lastSeen string
-		if err := rows.Scan(&item.ID, &item.LibraryID, &item.BookID, &item.FileID, &item.JobID, &item.Path, &code, &item.Message, &firstSeen, &lastSeen); err != nil {
+		if err := rows.Scan(&item.ID, &item.LibraryID, &item.BookID, &item.FileID, &item.JobID, &item.Path, &code, &item.Message, &firstSeen, &lastSeen, &item.Resolved); err != nil {
 			return nil, err
 		}
 		item.Code = domain.ErrorCode(code)
@@ -4927,6 +4931,8 @@ func scanBook(row scanner) (domain.Book, error) {
 		&book.Rating,
 		&tags,
 		&book.Summary,
+		&book.FileErrorCode,
+		&book.FileErrorMessage,
 	); err != nil {
 		return book, err
 	}
@@ -5007,10 +5013,11 @@ func bookSelectSQL(profileID int64) string {
 					WHEN COALESCE(b.tags, '') <> '' AND COALESCE(ps.tags, '') <> '' THEN ',' || COALESCE(ps.tags, '')
 					ELSE COALESCE(ps.tags, '')
 				END, ','),
-			COALESCE(ps.summary, '')
+			COALESCE(ps.summary, ''), COALESCE(json_extract(fh.value, '$.code'), ''), COALESCE(json_extract(fh.value, '$.message'), '')
 		FROM books b
 		JOIN series s ON s.id = b.series_id
 		LEFT JOIN files f ON f.book_id = b.id
+        LEFT JOIN app_settings fh ON fh.key = 'book-file-health:' || b.id
 		LEFT JOIN profile_read_progress rp ON rp.book_id = b.id AND rp.profile_id = ` + profileIDValue + `
 		LEFT JOIN book_private_states ps ON ps.book_id = b.id AND ps.profile_id = ` + profileIDValue
 }

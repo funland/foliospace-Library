@@ -236,7 +236,7 @@ func TestCalibreOPFRescanPreservesIdentityAndReaderState(t *testing.T) {
 			}
 			writeCalibreOPF(t, path, "Renamed", "New creator", "updated")
 			job, err = scanner.ScanLibrary(lib)
-			if err != nil || job.ErrorCount != 0 || job.MetadataUpdatedFiles != 1 {
+			if err != nil || job.ErrorCount != 1 || job.MetadataUpdatedFiles != 1 {
 				t.Fatalf("rescan=%#v err=%v", job, err)
 			}
 			index, err = st.FileIndexByPath(path)
@@ -291,7 +291,7 @@ func TestCalibreTargetedScanImportsWithoutExpandingArchiveAndKeepsID(t *testing.
 	}
 	scanner := NewWithWorkerCount(st, func() int { return 4 })
 	first, err := scanner.ScanLibraryPath(lib, path)
-	if err != nil || first.ErrorCount != 0 {
+	if err != nil || first.ErrorCount != 1 {
 		t.Fatalf("first=%#v err=%v", first, err)
 	}
 	index, err := st.FileIndexByPath(path)
@@ -307,7 +307,7 @@ func TestCalibreTargetedScanImportsWithoutExpandingArchiveAndKeepsID(t *testing.
 		t.Fatal(err)
 	}
 	second, err := scanner.ScanLibraryPath(lib, path)
-	if err != nil || second.ErrorCount != 0 {
+	if err != nil || second.ErrorCount != 1 {
 		t.Fatalf("second=%#v err=%v", second, err)
 	}
 	index, err = st.FileIndexByPath(path)
@@ -607,9 +607,13 @@ func TestCalibreLegacyImportPreservesUnprovenSharedValuesAndReaderState(t *testi
 					t.Fatal(err)
 				}
 			}
+			expectedErrors := 0
+			if mode == "unreadable" {
+				expectedErrors = 1
+			}
 			for _, title := range []string{"Calibre title", "Updated Calibre title"} {
 				writeCalibreOPF(t, path, title, "New author", "source-tag")
-				if job, err := scanner.ScanLibraryPath(lib, path); err != nil || job.ErrorCount != 0 {
+				if job, err := scanner.ScanLibraryPath(lib, path); err != nil || job.ErrorCount != expectedErrors {
 					t.Fatalf("refresh=%#v err=%v", job, err)
 				}
 			}
