@@ -38,6 +38,8 @@ import (
 )
 
 type Service struct {
+	metadataWorkflowMu       sync.Mutex
+	metadataWorkflowReceipts map[string]metadataWorkflowReceipt
 	videoAvailabilityMu      sync.Mutex
 	videoAvailabilityNext    time.Time
 	videoWorker              *videoMetadataWorker

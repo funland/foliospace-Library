@@ -52,7 +52,7 @@ type Resource struct {
 	MimeType    string `json:"mimeType,omitempty"`
 }
 
-const serviceVersion = "1.03.1"
+const serviceVersion = "1.04"
 
 func New(baseURL string, token string) *Server {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
@@ -86,7 +86,11 @@ func (s *Server) Handle(ctx context.Context, req Request) Response {
 			},
 		})
 	case "tools/list":
-		return ok(req.ID, map[string]any{"tools": append(tools(), videoTools()...)})
+		allTools := append(tools(), videoTools()...)
+		allTools = append(allTools, catalogTools()...)
+		allTools = append(allTools, diagnosticTools()...)
+		allTools = append(allTools, metadataWorkflowTools()...)
+		return ok(req.ID, map[string]any{"tools": allTools})
 	case "resources/list":
 		return ok(req.ID, map[string]any{"resources": resources()})
 	case "resources/read":
@@ -254,6 +258,15 @@ func (s *Server) callTool(ctx context.Context, raw json.RawMessage) (any, error)
 	}
 	if params.Arguments == nil {
 		params.Arguments = map[string]any{}
+	}
+	if spec, exists := catalogSpecs[params.Name]; exists {
+		return s.callCatalogTool(ctx, spec, params.Arguments), nil
+	}
+	if spec, exists := diagnosticSpecs[params.Name]; exists {
+		return s.callDiagnosticTool(ctx, spec, params.Arguments), nil
+	}
+	if spec, exists := metadataWorkflowSpecs[params.Name]; exists {
+		return s.callMetadataWorkflowTool(ctx, spec, params.Arguments), nil
 	}
 	if spec, exists := videoSpecs[params.Name]; exists {
 		return s.callVideoTool(ctx, spec, params.Arguments), nil

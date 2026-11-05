@@ -38,7 +38,7 @@ type Options struct {
 }
 
 const authCookieName = "foliospace_api_token"
-const serviceVersion = "1.10"
+const serviceVersion = "1.11"
 
 func New(service *service.Service, static http.Handler) *Server {
 	return NewWithOptions(service, static, Options{})
@@ -50,6 +50,9 @@ func NewWithOptions(service *service.Service, static http.Handler, options Optio
 
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
+	s.registerMCPDiagnosticRoutes(mux)
+	s.registerMCPCatalogRoutes(mux)
+	mux.HandleFunc("/api/client/metadata/videos/", s.handleVideoMetadataWorkflow)
 	s.registerComicRoutes(mux)
 	mux.HandleFunc("/api/auth/status", s.handleAuthStatus)
 	mux.HandleFunc("/api/auth/check", s.handleAuthCheck)
@@ -484,6 +487,9 @@ func (s *Server) handleClientInfo(w http.ResponseWriter, r *http.Request) {
 			"py1",
 		},
 		Capabilities: clientCapabilities{
+			CatalogSearchV1:            true,
+			StoredDiagnosticsV1:        true,
+			VideoMetadataWorkflowV1:    true,
 			ClientHome:                 true,
 			UnifiedManifest:            true,
 			ProgressSync:               true,
@@ -2552,6 +2558,9 @@ type clientInfoResponse struct {
 }
 
 type clientCapabilities struct {
+	CatalogSearchV1            bool `json:"catalogSearchV1"`
+	StoredDiagnosticsV1        bool `json:"storedDiagnosticsV1"`
+	VideoMetadataWorkflowV1    bool `json:"videoMetadataWorkflowV1"`
 	VideoLibraryV1             bool `json:"videoLibraryV1"`
 	VideoSeasonsV1             bool `json:"videoSeasonsV1"`
 	VideoPlaybackStateV1       bool `json:"videoPlaybackStateV1"`

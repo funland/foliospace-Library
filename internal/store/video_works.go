@@ -59,6 +59,16 @@ func (s *Store) matchVideo(id int64, in domain.VideoMatchInput, manual bool) err
 		return err
 	}
 	defer tx.Rollback()
+	if err := matchVideoTx(tx, id, in, manual, false); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// preserveExistingWork limits a confirmed candidate to this file association.
+// Metadata belonging to an already existing work remains untouched.
+func matchVideoTx(tx *sql.Tx, id int64, in domain.VideoMatchInput, manual, preserveExistingWork bool) error {
+	var err error
 	var libraryID int64
 	var format string
 	if err = tx.QueryRow(`SELECT library_id,format FROM videos WHERE id=?`, id).Scan(&libraryID, &format); err != nil {
@@ -69,7 +79,7 @@ func (s *Store) matchVideo(id int64, in domain.VideoMatchInput, manual bool) err
 		return err
 	}
 	if !manual && (status == "confirmed" || status == "unlinked") {
-		return tx.Commit()
+		return nil
 	}
 	if manual && generation != in.Generation {
 		return ErrVideoRevision
@@ -101,7 +111,7 @@ func (s *Store) matchVideo(id int64, in domain.VideoMatchInput, manual bool) err
 				return err
 			}
 			if handled {
-				return tx.Commit()
+				return nil
 			}
 		}
 		err = tx.QueryRow(`SELECT work_id FROM video_work_details WHERE identity_key=?`, identity).Scan(&workID)
@@ -126,7 +136,7 @@ func (s *Store) matchVideo(id int64, in domain.VideoMatchInput, manual bool) err
 		if err = tx.QueryRow(`SELECT COUNT(*) FROM video_file_links l JOIN video_versions v ON v.id=l.version_id JOIN video_match_state m ON m.video_id=l.video_id WHERE v.work_id=? AND m.status='confirmed'`, workID).Scan(&protected); err != nil {
 			return err
 		}
-		if manual || protected == 0 {
+		if !preserveExistingWork && (manual || protected == 0) {
 			expires := int64(0)
 			if in.Provider == "tmdb" {
 				expires = time.Now().Add(150 * 24 * time.Hour).Unix()
@@ -181,7 +191,7 @@ func (s *Store) matchVideo(id int64, in domain.VideoMatchInput, manual bool) err
 	if err != nil {
 		return err
 	}
-	return tx.Commit()
+	return nil
 }
 
 // A title/year correction must not change the version/episode IDs in playback keys.
@@ -280,7 +290,7 @@ const videoWorkAdded = `COALESCE((SELECT MAX(a.created_at) FROM video_versions v
 // Movie cards and file rows resolve the same representative title without changing grouping keys.
 const videoWorkRepresentative = `(SELECT MIN(f.video_id) FROM video_versions v JOIN video_file_links f ON f.version_id=v.id WHERE v.work_id=w.id)`
 const videoWorkDisplayTitle = `CASE WHEN w.kind='movie' THEN COALESCE((SELECT ` + videoDisplayTitleSQL + ` FROM videos WHERE videos.id=` + videoWorkRepresentative + `),w.title) ELSE w.title END`
-const videoWorkDisplayYear = `COALESCE(NULLIF((SELECT json_extract(o.value_json,'$') FROM video_metadata_overrides o WHERE o.video_id=` + videoWorkRepresentative + ` AND o.field='year'),0),NULLIF(w.year,0),NULLIF((SELECT json_extract(m.local_json,'$.year') FROM video_metadata_inputs m WHERE m.video_id=` + videoWorkRepresentative + `),0),0)`
+const videoWorkDisplayYear = `COALESCE((SELECT json_extract(o.value_json,'$') FROM video_metadata_overrides o WHERE o.video_id=` + videoWorkRepresentative + ` AND o.field='year'),NULLIF(w.year,0),NULLIF((SELECT json_extract(m.local_json,'$.year') FROM video_metadata_inputs m WHERE m.video_id=` + videoWorkRepresentative + `),0),0)`
 const videoWorkSelect = `SELECT w.id,w.library_id,w.kind,` + videoWorkDisplayTitle + `,` + videoWorkDisplayYear + `,COALESCE((SELECT json_extract(o.value_json,'$') FROM video_metadata_overrides o WHERE o.video_id=` + videoWorkRepresentative + ` AND o.field='overview'),d.overview),d.provider,d.provider_id,
  (SELECT MIN(f.video_id) FROM video_versions v JOIN video_file_links f ON f.version_id=v.id WHERE v.work_id=w.id),
  (SELECT COUNT(DISTINCT f.video_id) FROM video_versions v JOIN video_file_links f ON f.version_id=v.id WHERE v.work_id=w.id),

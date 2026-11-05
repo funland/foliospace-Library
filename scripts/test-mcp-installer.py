@@ -14,7 +14,7 @@ SCRIPT = Path(__file__).resolve().with_name("install-mcp.sh")
 
 
 class InstallerTests(unittest.TestCase):
-    def run_fixture(self, failure=""):
+    def run_fixture(self, failure="", use_default_version=False):
         with tempfile.TemporaryDirectory(prefix="mcp-installer-test-") as root:
             root = Path(root)
             fixture, commands, install = [root / x for x in ("fixture", "commands", "install")]
@@ -22,10 +22,12 @@ class InstallerTests(unittest.TestCase):
                 path.mkdir()
             osname = platform.system().lower()
             arch = "arm64" if platform.machine() in ("arm64", "aarch64") else "amd64"
-            name = f"foliospace-mcp_1.03.1_{osname}_{arch}"
-            payload = b'#!/bin/sh\nread input\nprintf \'%s\\n\' \'{"result":{"serverInfo":{"name":"foliospace-library","version":"1.03.1"}}}\'\n'
+            name = f"foliospace-mcp_1.04_{osname}_{arch}"
+            payload = b'#!/bin/sh\nread input\nprintf \'%s\\n\' \'{"result":{"serverInfo":{"name":"foliospace-library","version":"1.04"}}}\'\n'
             if failure == "smoke":
                 payload = b"#!/bin/sh\nexit 1\n"
+            elif failure == "version":
+                payload = payload.replace(b'"version":"1.04"', b'"version":"1.03.1"')
             archive = fixture / (name + ".tar.gz")
             with tarfile.open(archive, "w:gz") as tar:
                 entry = tarfile.TarInfo(name + "/foliospace-mcp")
@@ -50,7 +52,9 @@ class InstallerTests(unittest.TestCase):
             env = dict(os.environ, PATH=str(commands) + os.pathsep + os.environ["PATH"],
                        FIXTURE=str(fixture), FOLIOSPACE_MCP_INSTALL_DIR=str(install),
                        FOLIOSPACE_MCP_RELEASE_BASE_URL="https://fixture.invalid",
-                       FOLIOSPACE_MCP_VERSION="1.03.1")
+                       FOLIOSPACE_MCP_VERSION="1.04")
+            if use_default_version:
+                env.pop("FOLIOSPACE_MCP_VERSION", None)
             result = subprocess.run(["sh", str(SCRIPT)], env=env, capture_output=True)
             if failure:
                 self.assertNotEqual(result.returncode, 0)
@@ -66,8 +70,11 @@ class InstallerTests(unittest.TestCase):
     def test_success(self):
         self.run_fixture()
 
+    def test_default_version(self):
+        self.run_fixture(use_default_version=True)
+
     def test_fail_closed(self):
-        for failure in ("missing", "entry", "duplicate", "checksum", "smoke"):
+        for failure in ("missing", "entry", "duplicate", "checksum", "smoke", "version"):
             with self.subTest(failure=failure):
                 self.run_fixture(failure)
 

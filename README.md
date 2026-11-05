@@ -8,9 +8,20 @@ Reader, Player, and SpatialEMU provide the reading, viewing, and retro gaming ex
 
 **Other clients are welcome.** Build your own reader, catalog browser, game frontend, or media client using the [stable Client API v1](docs/api/client-v1.md#external-client-quick-start). Keep feature discovery and compatibility checks in your client; Library is a shared content service, not a full Plex, Jellyfin, or Immich replacement.
 
-Current release: [`1.10`](https://github.com/funland/foliospace-Library/releases/tag/v1.10).
+Current release: [`1.11`](https://github.com/funland/foliospace-Library/releases/tag/v1.11), with standalone MCP `1.04`.
 
-## What's new in 1.10: clearer libraries and more reliable reading
+## What's new in 1.11: library workflows for agents
+
+- Add SQL-backed book listing and cross-media search, plus paged comic navigation.
+- Read stored book/game diagnostics without opening media files or starting repairs.
+- Search single-video TMDB candidates, review a metadata preview, then apply only with an explicit confirmation and a valid receipt.
+- Advertise `catalogSearchV1`, `storedDiagnosticsV1`, and `videoMetadataWorkflowV1` through `/api/client/info`. MCP 1.04 adds nine tools for these capabilities, bringing the total to 71 while preserving the previous 62 tools.
+
+Official Library 1.10 does not provide these new APIs. Upgrade both Library and MCP for the new workflows; clients must check capabilities. These additions reuse the existing database schema. Back up `/config` and choose an idle upgrade window: normal startup can process existing background work, and metadata search/application can write state. Publishing or pulling a release does not automatically replace your container.
+
+See [1.11 release notes and upgrade guidance](docs/releases/1.11.md) and [MCP workflow details](docs/mcp/library-workflows.md).
+
+## Previous release 1.10: clearer libraries and more reliable reading
 
 - Switch between **ebooks and comics**, filter EPUB/PDF, and browse nested comic collections without duplicate parent/child listings.
 - Import Calibre titles, authors and covers; clean generated book/comic/video labels while preserving manual corrections.
@@ -76,7 +87,7 @@ FolioSpace Library is the server layer. Your files stay on the Docker host or co
 Platform availability and app features were checked against the official websites and App Store listings on 2026-10-10; current device/region availability is determined by the store. The Reader website describes the native app; Library's bundled web reader is served by your own Library instance.
 
 - **Web UI and third-party clients**: Use the built-in interface or follow the [external-client quick start](docs/api/client-v1.md#external-client-quick-start) · [中文接入摘要](docs/api/client-v1.zh-CN.md).
-- **AI agents**: Configure the existing [MCP tools](docs/mcp/usage.md) for catalog discovery, manifests, and supported state/scan operations. One-command download-and-play orchestration is not an implemented product capability.
+- **AI agents**: Configure the [MCP tools](docs/mcp/usage.md) for catalog search, stored diagnostics, reviewed video metadata updates, manifests, and supported state/scan operations. One-command download-and-play orchestration is not an implemented product capability.
 
 All three apps can be used independently of Library. Library serves files you provide and control; it does not supply a third-party content catalog, books, films, ROMs, BIOS, or firmware. Player's app-level Blu-ray support is not a promise that Library scans or serves disc menus through its video API.
 
@@ -319,6 +330,10 @@ Release `0.975` is a stability and performance hotfix for large game libraries:
 - Game and collection private-state lookups now only read state for the current page of items.
 - Game list sorting and filtering add SQLite expression indexes for title and platform-heavy browsing.
 - Service, Client API, and MCP metadata report version `0.975`.
+
+## Release 1.11
+
+Library lookup, stored diagnostics, and a preview/confirmation workflow for single-video metadata. Library 1.11 supplies the three new API capabilities used by standalone MCP 1.04; existing tools remain compatible. [Release notes and upgrade instructions](docs/releases/1.11.md).
 
 ## Release 1.10
 
@@ -572,6 +587,8 @@ Release `0.976` is a T0 memory-safety and reader ergonomics release:
 
 Agent integration docs are in [`docs/mcp/usage.md`](docs/mcp/usage.md). The MCP server wraps the stable Client API for diagnostics, library lookup, manifests, favorites/private-status shelves, preferences, private reader state, game private state, progress, scan jobs, recent-file scans, scan worker settings, job control, manual collections, and collection access. Heavy media streams still use the HTTP URLs returned by the API.
 
+Standalone MCP **1.04** exposes 71 tools. Its nine new tools cover book/comic lookup, cross-media search, stored book/game diagnostics, and single-video metadata search, job reading, preview, and confirmed application. These workflows require the corresponding Library **1.11** capabilities; discovery alone does not establish server support. [Workflow semantics and confirmation requirements](docs/mcp/library-workflows.md).
+
 End users can install the MCP binary on the machine where their agent client runs:
 
 ```bash
@@ -581,7 +598,7 @@ curl -fsSL https://foliospace.app/install-mcp.sh | sh
 Release maintainers can build macOS/Linux MCP packages with:
 
 ```bash
-VERSION=1.03.1 ./scripts/build-mcp-release.sh
+VERSION=1.04 ./scripts/build-mcp-release.sh
 ```
 
 ## Product Direction
@@ -628,7 +645,7 @@ an access key and lets you choose a container path such as `/library`, `/books`,
 The default deployment currently pins this image:
 
 ```bash
-docker pull funland/foliospace-library:1.10
+docker pull funland/foliospace-library:1.11
 ```
 
 To upgrade later, change `FOLIOSPACE_IMAGE` in `.env`, then run:
@@ -641,6 +658,8 @@ docker compose up -d
 The `/config` host directory is writable and persistent. Media directories are
 mounted read-only. Back up `/config` before an upgrade because it contains the
 SQLite database, generated covers, preferences, and runtime cache.
+Use an idle maintenance window: normal startup may continue existing background
+jobs and update stored state. The 1.11 workflows introduce no new database DDL.
 
 Example Synology-style `.env` paths:
 
@@ -668,7 +687,7 @@ docker run -p 8080:8080 \
   -v /volume2/GameROMS:/games:ro \
   -v /volume2/MovieCollection/Movies:/videos:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games,/videos \
-  funland/foliospace-library:1.10
+  funland/foliospace-library:1.11
 ```
 
 If a directory is missing from the setup page, add its Docker volume mapping
@@ -690,11 +709,11 @@ Docker Hub releases are built by GitHub Actions from Git tags. Configure these r
 Then create and push a version tag:
 
 ```bash
-git tag v1.10
-git push github v1.10
+git tag v1.11
+git push github v1.11
 ```
 
-The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:1.10` and `funland/foliospace-library:latest`.
+The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:1.11` and `funland/foliospace-library:latest`.
 
 ## Current MVP Support
 

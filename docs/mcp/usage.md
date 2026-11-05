@@ -10,7 +10,7 @@ For end users, the recommended path is to install a release binary on the machin
 
 ```bash
 curl --proto '=https' --proto-redir '=https' -fsSL \
-  https://github.com/funland/foliospace-Library/releases/download/mcp-v1.03.1/install-mcp.sh \
+  https://github.com/funland/foliospace-Library/releases/download/mcp-v1.04/install-mcp.sh \
   -o install-mcp.sh
 sh install-mcp.sh
 ```
@@ -21,22 +21,22 @@ This installs `foliospace-mcp` to:
 ~/.local/bin/foliospace-mcp
 ```
 
-The independent [MCP 1.03.1 release](https://github.com/funland/foliospace-Library/releases/tag/mcp-v1.03.1) contains four packages and checksums:
+The independent [MCP 1.04 release](https://github.com/funland/foliospace-Library/releases/tag/mcp-v1.04) contains four packages and checksums:
 
 ```text
-foliospace-mcp_1.03.1_darwin_arm64.tar.gz
-foliospace-mcp_1.03.1_darwin_amd64.tar.gz
-foliospace-mcp_1.03.1_linux_arm64.tar.gz
-foliospace-mcp_1.03.1_linux_amd64.tar.gz
+foliospace-mcp_1.04_darwin_arm64.tar.gz
+foliospace-mcp_1.04_darwin_amd64.tar.gz
+foliospace-mcp_1.04_linux_arm64.tar.gz
+foliospace-mcp_1.04_linux_amd64.tar.gz
 checksums.txt
 ```
 
-The installer refuses missing/incorrect checksums, verifies initialization, then atomically replaces the executable. URL/token configuration is untouched. One previous binary is kept at `~/.local/bin/.foliospace-mcp.previous`. Reconnect the MCP host to load the update. The older website installer may lag; use the GitHub release above.
+The installer refuses missing/incorrect checksums, verifies initialization, then atomically replaces the executable. URL/token configuration is untouched. One previous binary is kept at `~/.local/bin/.foliospace-mcp.previous`. Reconnect the MCP host to load the update. The GitHub release above is the canonical source for this version.
 
 For an HTTPS mirror, override the release URL:
 
 ```bash
-FOLIOSPACE_MCP_RELEASE_BASE_URL=https://your-mirror.example/mcp-v1.03.1 sh install-mcp.sh
+FOLIOSPACE_MCP_RELEASE_BASE_URL=https://your-mirror.example/mcp-v1.04 sh install-mcp.sh
 ```
 
 ## Build From Source
@@ -45,7 +45,7 @@ FOLIOSPACE_MCP_RELEASE_BASE_URL=https://your-mirror.example/mcp-v1.03.1 sh insta
 go build -o ./bin/foliospace-mcp ./cmd/foliospace-mcp
 ```
 
-Release packaging uses Go 1.24+ and `sh scripts/build-mcp-release.sh`. Tags `mcp-v*` publish MCP packages through GitHub Actions without triggering Docker's `v*` workflow. MCP 1.03.1 and server 1.03 are intentionally different versions.
+Release packaging uses Go 1.24+ and `sh scripts/build-mcp-release.sh`. Tags `mcp-v*` publish MCP packages through GitHub Actions without triggering Docker's `v*` workflow. MCP 1.04 and Library 1.11 are independently versioned releases.
 
 ## Runtime Environment
 
@@ -54,7 +54,7 @@ export FOLIOSPACE_BASE_URL=http://your-nas-ip:8080
 export FOLIOSPACE_API_TOKEN=your-token-if-enabled
 ```
 
-`FOLIOSPACE_BASE_URL` defaults to `http://127.0.0.1:8080` when omitted. `FOLIOSPACE_API_TOKEN` is optional and is forwarded as `Authorization: Bearer <token>`.
+`FOLIOSPACE_BASE_URL` defaults to `http://127.0.0.1:8080` when omitted. `FOLIOSPACE_API_TOKEN` is forwarded as `Authorization: Bearer <token>`. It is optional only where the server permits unauthenticated reads; all four video metadata workflow tools require a configured server API/admin token and a valid Bearer token.
 
 ## MCP Client Config
 
@@ -129,6 +129,28 @@ Check whether FolioSpace is currently transcoding a video and which item is occu
 ```
 
 ## Tools
+
+MCP 1.04 exposes 71 tools, preserving the previous 62 and adding the nine below.
+The matching official server release is Library 1.11; official Library 1.10 does
+not include the new routes or capabilities. Support is checked through boolean
+capabilities from `GET /api/client/info`, not inferred from a version string.
+Missing or false capabilities return `capability-unsupported` without a legacy
+fallback. Installing MCP or discovering its tool list does not verify API support.
+
+| New tools | Required server capability |
+| --- | --- |
+| `foliospace.list_books`, `foliospace.browse_comics`, `foliospace.search_library` | `catalogSearchV1` |
+| `foliospace.diagnose_book`, `foliospace.diagnose_game` | `storedDiagnosticsV1` |
+| `foliospace.search_video_metadata`, `foliospace.get_video_metadata_job`, `foliospace.preview_video_metadata`, `foliospace.apply_video_metadata` | `videoMetadataWorkflowV1` |
+
+Profiles select state namespaces; they are not independent authentication or
+access-control boundaries. Catalog lookup and stored diagnostics are read-only.
+Metadata search creates a job and contacts the configured TMDB provider. Apply
+changes shared-library metadata for one file and requires a complete preview,
+explicit user confirmation, `confirm: true`, and the returned receipt. Receipts
+expire after ten minutes or a server restart; stale or replayed receipts fail.
+See the [library workflows contract](library-workflows.md) for pagination,
+authentication, shared-data protections, and the synthetic verification scope.
 
 - `foliospace.client_info`: service name, version, supported formats, and capability flags such as `webtoonPositionSync` and `pageImageDownsample`.
 - `foliospace.home`: continue reading, recent books, and collections.
@@ -368,9 +390,10 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocol
 
 Most MCP responses intentionally avoid NAS file paths. Book pages, EPUB resources, covers, and game files are exposed as service URLs from the HTTP API. The exception is `foliospace.list_libraries` / `foliospace://libraries`, which is an admin/diagnostic surface for choosing scan targets and can expose configured mount roots. Keep performance-sensitive reader and emulator paths on HTTP; use MCP for agent decisions, setup, troubleshooting, and orchestration.
 
-## Movie-library read-only tools
+## Movie-library read-only tools introduced in MCP 1.03.1
 
-All existing tools remain available. New tools use GET only and carry MCP read-only annotations:
+These nine existing tools remain available in MCP 1.04. They use GET only and
+carry MCP read-only annotations:
 
 | Tool (prefix `foliospace.`) | Required / optional arguments |
 | --- | --- |
@@ -388,7 +411,7 @@ Pagination defaults to 20 and caps at 100. Season 0 means specials. A version's 
 
 Each call checks `/api/client/info` capabilities. Without `videoLibraryV1`, only unfiltered (or q/sort-filtered) work listing falls back to `/api/client/videos`, wrapped as `mode=legacy-files`; it does not pretend files are works. Other unavailable features return `capability-unsupported`. Authentication, transport and invalid profile failures never trigger fallback. An omitted profile uses the server default; an explicit invalid/unknown profile is an error.
 
-Tool failures return `isError=true` with JSON containing `code`, optional HTTP `status`, and conflict `state`. New tools cap HTTP responses at 2 MiB, reject redirects and remove diagnostic/path/credential fields. Content titles and metadata are library data, not instructions. No new scraping, metadata editing or playback-writing tools are enabled by this release.
+Tool failures return `isError=true` with JSON containing `code`, optional HTTP `status`, and conflict `state`. These movie-library tools cap HTTP responses at 2 MiB, reject redirects and remove diagnostic/path/credential fields. Content titles and metadata are library data, not instructions. These nine tools do not edit metadata or playback state. MCP 1.04 separately adds the metadata search and confirmed-apply workflow described above.
 
 ### Hermes
 
@@ -396,4 +419,4 @@ Configure the existing executable using Hermes' `mcp_servers` configuration, wit
 
 For a **new, read-only** connection, Hermes supports `tools.include` as an explicit list of the tool names above plus `foliospace.client_info`. Upgrading an existing connection does not automatically remove or expand its configured tool permissions.
 
-简体中文：MCP 1.03.1 独立于服务端 1.03 发布。请使用上面的 GitHub 安装入口；校验失败不会替换旧程序，原 URL/口令不变，升级后需重新连接 Hermes/MCP 宿主（现有 Hermes 会话可用 `/reload-mcp`）。新增九项电影库只读工具，保留旧工具；分页默认 20、上限 100，显式无效档案不会回退到默认用户。旧服务器仅在支持的列表场景回退为文件列表，不伪装成作品，也不新增刮削、修改元数据或写进度操作。
+简体中文：MCP 1.04 保留原有 62 项工具，新增 9 项，共 71 项；配套官方服务端为 Library 1.11，官方 1.10 不含新增接口。实际兼容性以服务端三个 capability 布尔值为准，不能只看版本或工具发现结果。请使用上面的 GitHub 安装入口；校验失败不会替换旧程序，原 URL/口令不变，升级后需重新连接 MCP 宿主。目录查询和已存诊断只读；元数据搜索会创建任务并访问已配置的 TMDB，应用会修改共享资料，必须先完整预览、取得用户明确确认，再提交回执和 `confirm: true`。回执十分钟后或服务重启后失效；档案是状态命名空间，不是独立访问权限边界。验证使用合成数据及本地测试服务，不代表已验证用户资料库或真实 TMDB 账号。

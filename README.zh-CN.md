@@ -8,9 +8,20 @@ FolioSpace Library 是串联 **FolioSpace Reader、FolioLume Player、SpatialEMU
 
 **欢迎其他客户端接入。** 你可以用 [Client API v1](docs/api/client-v1.md#external-client-quick-start) 开发阅读器、目录浏览器、游戏前端或媒体客户端。已有接口保持稳定兼容，新增字段按能力发现处理；具体互通仍需验证实际客户端与媒体。
 
-当前版本：[1.10](https://github.com/funland/foliospace-Library/releases/tag/v1.10)。完整开发说明、环境配置与历史版本记录见 [英文 README](README.md)。
+当前版本：[Library 1.11](https://github.com/funland/foliospace-Library/releases/tag/v1.11)，独立 MCP 版本为 **1.04**。完整开发说明、环境配置与历史版本记录见 [英文 README](README.md)。
 
-## 1.10：目录更清晰，阅读更可靠
+## 1.11：面向 Agent 的资料库工作流
+
+- 增加基于 SQL 的书目列表与跨媒体检索，以及分页漫画导航。
+- 读取已存储的书籍和游戏诊断，不打开媒体文件、不启动修复。
+- 为单个视频检索 TMDB 候选，展示元数据预览，再凭有效回执和明确确认应用选择。
+- `/api/client/info` 新增 `catalogSearchV1`、`storedDiagnosticsV1`、`videoMetadataWorkflowV1` 三项能力。MCP 1.04 新增 9 个工具，总计 71 个，保留此前 62 个工具。
+
+官方 Library 1.10 没有这些新增 API；使用新工作流需要同时更新 Library 与 MCP，并检查能力标记。新增工作流复用现有数据库结构。升级前备份 `/config`，选择空闲维护窗口：正常启动可能处理既有后台任务，元数据检索和应用也会写入状态。发布或拉取镜像不会自动替换你的容器。
+
+参见 [1.11 双语发布说明与升级注意事项](docs/releases/1.11.md) 和 [MCP 工作流说明](docs/mcp/library-workflows.md)。
+
+## 历史版本 1.10：目录更清晰，阅读更可靠
 
 - 增加“电子书 / 漫画”切换和 EPUB/PDF 筛选，整理漫画目录层级，减少父子目录重复展示。
 - 接入 Calibre 书名、作者和封面，清洗自动生成的书籍、漫画和视频标题，保留手动修正。
@@ -33,7 +44,7 @@ Mac/iPad 开发测试包已安装；跨设备联调和其他平台实机验收�
 | **FolioLume Player** | 管理和观看个人影片收藏，支持兼容的本地/网络来源及蓝光 ISO/BDMV 播放和菜单。当前商店列出 iPhone、iPad、Mac、Apple Vision Pro、Apple TV，实际能力受设备、编码与版本影响。 | [App Store](https://apps.apple.com/app/id6812153528) · [产品官网](https://foliolume.app/) |
 | **SpatialEMU** | 使用自己的兼容复古游戏文件，可本地导入，也可浏览 Library 目录、同步支持的存档和游玩记录。Apple 客户端覆盖 iPhone、iPad、Vision Pro、Apple TV、Apple silicon Mac；Windows 为独立下载。 | [App Store](https://apps.apple.com/app/id6771768889) · [产品官网](https://spatialemu.com/) · [下载页](https://spatialemu.com/downloads/) |
 
-平台信息于 2026-10-10 对照官方站点与商店核实，当前设备和地区可用性以 App Store 为准。Reader 官网介绍的是原生应用；Library 自带的 Web 阅读器由你自己的服务提供。Player 的蓝光能力不代表 Library 视频 API 已支持原盘目录和菜单。MCP 现有能力用于目录发现、manifest、状态和扫描操作，一句话下载并播放仍不是已实现的产品能力。
+平台信息于 2026-10-10 对照官方站点与商店核实，当前设备和地区可用性以 App Store 为准。Reader 官网介绍的是原生应用；Library 自带的 Web 阅读器由你自己的服务提供。Player 的蓝光能力不代表 Library 视频 API 已支持原盘目录和菜单。MCP 支持目录检索、已存储诊断、经预览确认的视频元数据更新，以及 manifest、状态和扫描操作；一句话下载并播放仍不是已实现的产品能力。
 
 Library 不提供第三方内容目录、书籍、影片、ROM、BIOS 或固件。它只索引和传输你提供、拥有合法使用权限的文件。照片和更广泛的空间媒体索引仍属产品方向。许可见 [LICENSE](LICENSE)，英文 README 保留完整许可说明。
 

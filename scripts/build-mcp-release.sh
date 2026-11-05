@@ -1,6 +1,6 @@
 #!/usr/bin/env sh
 set -eu
-VERSION="${VERSION:-1.03.1}"
+VERSION="${VERSION:-1.04}"
 OUT_DIR="${OUT_DIR:-dist/releases/mcp-$VERSION}"
 GO_CMD="${GO:-go}"
 case "$VERSION" in ''|*[!0-9.]*) echo 'Invalid version' >&2; exit 1;; esac

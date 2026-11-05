@@ -20,6 +20,7 @@ jobs:
         run: |
           version="${GITHUB_REF_NAME#mcp-v}"
           grep -F "const serviceVersion = \"$version\"" internal/mcp/server.go
+          test -f "docs/mcp/release-$version.md"
           VERSION="$version" OUT_DIR=dist/mcp-release sh scripts/build-mcp-release.sh
           cd dist/mcp-release
           sha256sum -c checksums.txt
@@ -27,6 +28,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          version="${GITHUB_REF_NAME#mcp-v}"
           gh release create "$GITHUB_REF_NAME" dist/mcp-release/* \
-            --verify-tag --latest=false --title "FolioSpace MCP ${GITHUB_REF_NAME#mcp-v}" \
-            --notes-file docs/mcp/release-1.03.1.md
+            --verify-tag --latest=false --title "FolioSpace MCP $version" \
+            --notes-file "docs/mcp/release-$version.md"

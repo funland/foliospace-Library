@@ -1,6 +1,6 @@
 #!/usr/bin/env sh
 set -eu
-VERSION="${FOLIOSPACE_MCP_VERSION:-1.03.1}"
+VERSION="${FOLIOSPACE_MCP_VERSION:-1.04}"
 BASE_URL="${FOLIOSPACE_MCP_RELEASE_BASE_URL:-https://github.com/funland/foliospace-Library/releases/download/mcp-v$VERSION}"
 INSTALL_DIR="${FOLIOSPACE_MCP_INSTALL_DIR:-$HOME/.local/bin}"
 case "$VERSION" in ''|*[!0-9.]*) echo 'Invalid MCP version' >&2; exit 1;; esac
