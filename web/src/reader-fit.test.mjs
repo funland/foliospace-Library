@@ -18,14 +18,14 @@ async function loadReaderFitModule() {
   return import(`data:text/javascript;base64,${Buffer.from(transpiled).toString("base64")}`);
 }
 
-test("fullscreen image fit expands high resolution art without exceeding source-aware clarity", async () => {
+test("fullscreen webtoon cap stays source-aware for high resolution art", async () => {
   const { fullscreenImageFit } = await loadReaderFitModule();
 
   const fit = fullscreenImageFit({
     naturalWidth: 2400,
     naturalHeight: 3600,
     devicePixelRatio: 2,
-    mode: "single",
+    mode: "webtoon",
   });
 
   assert.equal(fit.maxCssWidth, 1620);
@@ -46,22 +46,22 @@ test("fullscreen image fit keeps lower resolution art from being stretched acros
   assert.equal(fit.maxCssHeight, 810);
 });
 
-test("fullscreen reader css uses source-aware fit variables for paged and webtoon images", async () => {
+test("fullscreen paged images contain within viewport slots and only webtoon keeps the source cap", async () => {
   const styleSource = await readFile(path.join(srcDir, "styles.css"), "utf8");
   const appSource = await readFile(path.join(srcDir, "App.tsx"), "utf8");
 
+  assert.match(styleSource, /\.pageSpread img\s*\{[^}]*object-fit:\s*contain/);
   assert.match(
     styleSource,
-    /\.reader\.immersiveMode\s+\.pageSpread\s+img\s*\{[\s\S]*var\(--reader-fit-width/s,
-    "fullscreen paged images should use a source-aware max width variable",
+    /\.reader\.immersiveMode \.pageStage\.double \.pageSpread\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/,
   );
   assert.match(
     styleSource,
-    /\.reader\.immersiveMode\s+\.webtoonPage\s+img\s*\{[\s\S]*var\(--reader-fit-width/s,
-    "fullscreen webtoon images should use a source-aware width variable",
+    /\.reader\.immersiveMode \.pageStage\.single\.fit-contain \.pageSpread img,\s*\.reader\.immersiveMode \.pageStage\.double \.pageSpread img\s*\{[^}]*width:\s*100%;[^}]*height:\s*100%;[^}]*max-width:\s*none;[^}]*max-height:\s*none/,
   );
-  assert.ok(appSource.includes("fullscreenImageFit"), "reader should calculate image fit from natural dimensions");
-  assert.ok(appSource.includes("--reader-fit-width"), "reader should pass fit width through CSS variables");
+  assert.match(styleSource, /\.reader\.immersiveMode \.webtoonPage img\s*\{[^}]*var\(--reader-fit-width/);
+  assert.match(appSource, /function webtoonImageFitStyle\(page: Page\)[\s\S]*?fullscreenImageFit\(\{[\s\S]*?mode: "webtoon"/);
+  assert.equal(appSource.match(/webtoonImageFitStyle\(/g)?.length, 2, "only the webtoon image wrapper uses the source cap");
 });
 
 test("fullscreen webtoon reader uses a subtle scrollbar", async () => {

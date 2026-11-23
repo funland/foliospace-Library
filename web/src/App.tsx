@@ -23,7 +23,7 @@ import {
   type WebtoonPageMetric,
   type WebtoonPosition,
 } from "./webtoon-position";
-import { fullscreenImageFit, type ReaderImageFitMode } from "./reader-fit";
+import { fullscreenImageFit } from "./reader-fit";
 import {
   normalizeReaderDevicePreferences,
   pagePathWithMaxWidth,
@@ -2272,10 +2272,6 @@ export function App() {
     updateWebtoonPosition();
   }
 
-  function handleComicImageLoad(event: SyntheticEvent<HTMLImageElement>, page: Page | undefined) {
-    recordReaderImageSize(page, event.currentTarget);
-  }
-
   function recordReaderImageSize(page: Page | undefined, image: HTMLImageElement) {
     if (!page || image.naturalWidth <= 0 || image.naturalHeight <= 0) return;
     const next = { width: image.naturalWidth, height: image.naturalHeight };
@@ -2286,15 +2282,15 @@ export function App() {
     });
   }
 
-  function comicImageFitStyle(page: Page | undefined, mode: ReaderImageFitMode): CSSProperties {
-    if (!readerFullscreen || !page) return {};
+  function webtoonImageFitStyle(page: Page): CSSProperties {
+    if (!readerFullscreen) return {};
     const size = readerImageSizes[page.index];
     if (!size) return {};
     const fit = fullscreenImageFit({
       naturalWidth: size.width,
       naturalHeight: size.height,
       devicePixelRatio: typeof window === "undefined" ? 1 : window.devicePixelRatio || 1,
-      mode,
+      mode: "webtoon",
     });
     return {
       "--reader-fit-width": `${fit.maxCssWidth}px`,
@@ -3804,7 +3800,7 @@ export function App() {
                             data-page-index={page.index}
                             data-page-key={webtoonPageKey(page)}
                             key={`${selectedBook.id}-${page.index}`}
-                            style={{ ...(shouldRenderImage ? {} : { minHeight: measuredHeight }), ...comicImageFitStyle(page, "webtoon") }}
+                            style={{ ...(shouldRenderImage ? {} : { minHeight: measuredHeight }), ...webtoonImageFitStyle(page) }}
                           >
                             {shouldRenderImage ? (
                               <img
@@ -3829,8 +3825,6 @@ export function App() {
                           src={authenticatedResourcePath(comicPageDisplayPath(selectedBook.id, pages[visibleIndex], visibleIndex))}
                           alt={pages[visibleIndex]?.name ?? ""}
                           draggable={false}
-                          style={comicImageFitStyle(pages[visibleIndex], readerPageMode)}
-                          onLoad={(event) => handleComicImageLoad(event, pages[visibleIndex])}
                         />
                       ))}
                     </div>
