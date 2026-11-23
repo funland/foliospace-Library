@@ -6,6 +6,10 @@ Library connects [FolioSpace Reader](https://reader.foliospace.app/), [FolioLume
 
 This is not a hosted cloud service, a native macOS server app or a third-party media catalog. No books, movies, ROMs, BIOS or firmware are bundled or supplied. Only index files you have the right to use. Book/game/video DTOs omit source paths; legacy collection and administration responses can still carry directory paths.
 
+## 1.12: fullscreen comics
+
+The web comic reader scales paged comics to fit the fullscreen reading area, preserving proportions and keeping every page visible. [1.12 release notes](https://github.com/funland/foliospace-Library/blob/v1.12/docs/releases/1.12.md)
+
 ## 1.11: library workflows for agents
 
 Library **1.11** supplies three new Client API capabilities for standalone MCP **1.04**:
@@ -31,17 +35,17 @@ The server primarily indexes and delivers original files; dedicated clients deco
 
 ## Quick Start
 
-Use the [Compose quick start](https://github.com/funland/foliospace-Library/blob/v1.11/COMPOSE-QUICKSTART.md) for configurable media folders and resource limits. The default web/API port is **8080**.
+Use the [Compose quick start](https://github.com/funland/foliospace-Library/blob/v1.12/COMPOSE-QUICKSTART.md) for configurable media folders and resource limits. The default web/API port is **8080**.
 
 For a minimal new installation, replace the example host paths below with your own existing directories. Keep the config directory writable and media read-only:
 
 ```sh
-docker pull funland/foliospace-library:1.11
+docker pull funland/foliospace-library:1.12
 docker run -d --name foliospace-library --restart unless-stopped \
   -p 8080:8080 \
   -v /absolute/path/to/config:/config \
   -v /absolute/path/to/media:/library:ro \
-  funland/foliospace-library:1.11
+  funland/foliospace-library:1.12
 ```
 
 Open `http://localhost:8080` on the Docker host, or `http://<host-address>:8080` from another device. Complete first-run setup to create your access token and select the mounted container path `/library`. In a compatible client, enter that service URL and the same token, then test the connection.
@@ -52,7 +56,7 @@ The SpatialEMU Mac app is a client, not this Docker server. [Beginner guide](htt
 
 TMDB matching is **disabled by default**. Apply through your own TMDB account and configure your own **API Read Access Token** on the server. We supply no shared developer key. This is not the shorter v3 API key or your FolioSpace connection token.
 
-The 1.11 Compose template passes these optional settings from a private `.env`:
+The Compose template passes these optional settings from a private `.env`:
 
 ```dotenv
 FOLIOSPACE_VIDEO_METADATA_PROVIDER=tmdb
@@ -70,7 +74,7 @@ TMDB supplies metadata/artwork, not movie files. Candidate confirmation, artwork
 
 ## Upgrading and persistent data
 
-Tags `1.11` and `latest` support **Linux AMD64 and ARM64**. Pin a version for repeatable deployments.
+Tags `1.12` and `latest` support **Linux AMD64 and ARM64**. Pin a version for repeatable deployments.
 
 Before upgrading, back up the persistent `/config` directory and preserve your existing access token, media mounts and custom environment. Choose an idle maintenance window: normal startup can process existing background jobs and update stored state. The 1.11 workflows reuse the existing schema and introduce no new DDL; this does not disable ordinary startup work or migrations required by older installations. Retain a prior image and stopped-state backup; do not restore an old database over new user progress without reconciliation. Keep `FOLIOSPACE_PRESERVE_GAME_CATALOG_ON_START=1` if your existing installation uses it.
 
@@ -89,6 +93,8 @@ Publishing or pulling an image does not replace an existing container automatica
 An empty API-token environment variable does **not** disable a token previously saved during setup. Use HTTPS across untrusted networks. Profiles partition state within a shared-token household; they are not separate authenticated accounts.
 
 ## 简体中文
+
+Library 1.12 修复网页漫画双页全屏偏小的问题，按比例利用全屏阅读区域。
 
 Library 1.11 配合独立 MCP 1.04，新增 SQL 书目列表与跨媒体检索、分页漫画导航、只读已存储诊断，以及单个视频 TMDB 候选检索、预览和明确确认应用。MCP 总计 71 个工具，保留此前 62 个；官方 Library 1.10 没有这些新增 API，请同时升级并检查三项能力标记。检索会创建任务，预览生成内存回执，确认应用会写入共享元数据。
 

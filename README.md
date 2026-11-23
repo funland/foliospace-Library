@@ -8,9 +8,13 @@ Reader, Player, and SpatialEMU provide the reading, viewing, and retro gaming ex
 
 **Other clients are welcome.** Build your own reader, catalog browser, game frontend, or media client using the [stable Client API v1](docs/api/client-v1.md#external-client-quick-start). Keep feature discovery and compatibility checks in your client; Library is a shared content service, not a full Plex, Jellyfin, or Immich replacement.
 
-Current release: [`1.11`](https://github.com/funland/foliospace-Library/releases/tag/v1.11), with standalone MCP `1.04`.
+Current release: [`1.12`](https://github.com/funland/foliospace-Library/releases/tag/v1.12), with standalone MCP `1.04`.
 
-## What's new in 1.11: library workflows for agents
+## What's new in 1.12: fullscreen comics
+
+Paged comics now use the available fullscreen space while keeping each page in proportion and fully visible. Spreads sit side by side on wide screens and stack on narrow screens. A lone final page uses the full reading area. [1.12 release notes](docs/releases/1.12.md)
+
+## Release 1.11: library workflows for agents
 
 - Add SQL-backed book listing and cross-media search, plus paged comic navigation.
 - Read stored book/game diagnostics without opening media files or starting repairs.
@@ -645,7 +649,7 @@ an access key and lets you choose a container path such as `/library`, `/books`,
 The default deployment currently pins this image:
 
 ```bash
-docker pull funland/foliospace-library:1.11
+docker pull funland/foliospace-library:1.12
 ```
 
 To upgrade later, change `FOLIOSPACE_IMAGE` in `.env`, then run:
@@ -687,7 +691,7 @@ docker run -p 8080:8080 \
   -v /volume2/GameROMS:/games:ro \
   -v /volume2/MovieCollection/Movies:/videos:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games,/videos \
-  funland/foliospace-library:1.11
+  funland/foliospace-library:1.12
 ```
 
 If a directory is missing from the setup page, add its Docker volume mapping
@@ -709,11 +713,11 @@ Docker Hub releases are built by GitHub Actions from Git tags. Configure these r
 Then create and push a version tag:
 
 ```bash
-git tag v1.11
-git push github v1.11
+git tag v1.12
+git push github v1.12
 ```
 
-The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:1.11` and `funland/foliospace-library:latest`.
+The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:1.12` and `funland/foliospace-library:latest`.
 
 ## Current MVP Support
 
