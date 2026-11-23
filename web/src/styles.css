@@ -2210,9 +2210,14 @@ button.danger:hover {
 }
 
 .reader.immersiveMode .epubFrame {
-  width: min(1760px, calc(100vw - clamp(8px, 1vw, 18px)));
-  height: min(100%, calc(100dvh - clamp(4px, 1vw, 16px)));
+  width: 100%;
+  height: 100%;
   border-radius: 6px;
+}
+
+/* Keep page-turn targets in the EPUB side margins so they don't cover text. */
+.reader.immersiveMode .pageStage.epub .pageEdge {
+  width: 24px;
 }
 
 .reader.immersiveMode .webtoonReader {
