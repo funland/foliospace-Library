@@ -6,6 +6,10 @@ Library connects [FolioSpace Reader](https://reader.foliospace.app/), [FolioLume
 
 This is not a hosted cloud service, a native macOS server app or a third-party media catalog. No books, movies, ROMs, BIOS or firmware are bundled or supplied. Only index files you have the right to use. Book/game/video DTOs omit source paths; legacy collection and administration responses can still carry directory paths.
 
+## 1.12.1 — Fullscreen EPUB
+
+The web EPUB reader uses the available fullscreen reading area in single-page and spread layouts. [1.12.1 release notes](https://github.com/funland/foliospace-Library/blob/v1.12.1/docs/releases/1.12.1.md)
+
 ## 1.12: fullscreen comics
 
 The web comic reader scales paged comics to fit the fullscreen reading area, preserving proportions and keeping every page visible. [1.12 release notes](https://github.com/funland/foliospace-Library/blob/v1.12/docs/releases/1.12.md)
@@ -35,17 +39,17 @@ The server primarily indexes and delivers original files; dedicated clients deco
 
 ## Quick Start
 
-Use the [Compose quick start](https://github.com/funland/foliospace-Library/blob/v1.12/COMPOSE-QUICKSTART.md) for configurable media folders and resource limits. The default web/API port is **8080**.
+Use the [Compose quick start](https://github.com/funland/foliospace-Library/blob/v1.12.1/COMPOSE-QUICKSTART.md) for configurable media folders and resource limits. The default web/API port is **8080**.
 
 For a minimal new installation, replace the example host paths below with your own existing directories. Keep the config directory writable and media read-only:
 
 ```sh
-docker pull funland/foliospace-library:1.12
+docker pull funland/foliospace-library:1.12.1
 docker run -d --name foliospace-library --restart unless-stopped \
   -p 8080:8080 \
   -v /absolute/path/to/config:/config \
   -v /absolute/path/to/media:/library:ro \
-  funland/foliospace-library:1.12
+  funland/foliospace-library:1.12.1
 ```
 
 Open `http://localhost:8080` on the Docker host, or `http://<host-address>:8080` from another device. Complete first-run setup to create your access token and select the mounted container path `/library`. In a compatible client, enter that service URL and the same token, then test the connection.
@@ -74,7 +78,7 @@ TMDB supplies metadata/artwork, not movie files. Candidate confirmation, artwork
 
 ## Upgrading and persistent data
 
-Tags `1.12` and `latest` support **Linux AMD64 and ARM64**. Pin a version for repeatable deployments.
+Tags `1.12.1` and `latest` support **Linux AMD64 and ARM64**. Pin a version for repeatable deployments.
 
 Before upgrading, back up the persistent `/config` directory and preserve your existing access token, media mounts and custom environment. Choose an idle maintenance window: normal startup can process existing background jobs and update stored state. The 1.11 workflows reuse the existing schema and introduce no new DDL; this does not disable ordinary startup work or migrations required by older installations. Retain a prior image and stopped-state backup; do not restore an old database over new user progress without reconciliation. Keep `FOLIOSPACE_PRESERVE_GAME_CATALOG_ON_START=1` if your existing installation uses it.
 
@@ -93,6 +97,8 @@ Publishing or pulling an image does not replace an existing container automatica
 An empty API-token environment variable does **not** disable a token previously saved during setup. Use HTTPS across untrusted networks. Profiles partition state within a shared-token household; they are not separate authenticated accounts.
 
 ## 简体中文
+
+Library 1.12.1 修复网页版 EPUB 全屏时阅读区域偏小的问题，适用于单页和双页模式。
 
 Library 1.12 修复网页漫画双页全屏偏小的问题，按比例利用全屏阅读区域。
 

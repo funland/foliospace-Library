@@ -8,7 +8,11 @@ FolioSpace Library 是串联 **FolioSpace Reader、FolioLume Player、SpatialEMU
 
 **欢迎其他客户端接入。** 你可以用 [Client API v1](docs/api/client-v1.md#external-client-quick-start) 开发阅读器、目录浏览器、游戏前端或媒体客户端。已有接口保持稳定兼容，新增字段按能力发现处理；具体互通仍需验证实际客户端与媒体。
 
-当前版本：[Library 1.12](https://github.com/funland/foliospace-Library/releases/tag/v1.12)，独立 MCP 版本为 **1.04**。完整开发说明、环境配置与历史版本记录见 [英文 README](README.md)。
+当前版本：[Library 1.12.1](https://github.com/funland/foliospace-Library/releases/tag/v1.12.1)，独立 MCP 版本为 **1.04**。完整开发说明、环境配置与历史版本记录见 [英文 README](README.md)。
+
+## 1.12.1 网页 EPUB 全屏
+
+网页版 EPUB 阅读器在全屏时会充分利用可用阅读区域，支持单页和双页模式。退出全屏后恢复窗口布局。[1.12.1 发布说明](docs/releases/1.12.1.md)
 
 ## 1.12 网页漫画全屏
 
